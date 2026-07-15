@@ -209,10 +209,13 @@ for bipartitions that are used only once.
 
 `ReductionPlan` remains immutable and may be shared between tasks.
 `ReductionWorkspace` owns the mutable product-block, multiplication,
-partial-trace, partial-transpose, and reduced-block buffers. Use one workspace
-per task. `reduced_state` still allocates its returned `PIState`, whereas
-`reduced_state!` also reuses caller-owned output. Spectral routines necessarily
-allocate their returned eigenvalue arrays.
+partial-trace, partial-transpose, and reduced-block buffers, plus recoupling
+matrices matched once to its working scalar type. Compact real qubit matrices
+are therefore copied into a complex workspace, while already matching qudit
+matrices are shared read-only. Use one workspace per task. `reduced_state`
+still allocates its returned `PIState`, whereas `reduced_state!` also reuses
+caller-owned output. Spectral routines necessarily allocate their returned
+eigenvalue arrays.
 
 ## Validation before analysis
 

@@ -386,9 +386,13 @@ tableaux; forbidden weights are removed before sparse simple-root assembly and
 SPQR nullspace recovery. Very large qudit irreps can still require substantial
 temporary and retained memory. `ReductionWorkspace(plan,rho)` separately owns
 reusable product-block, multiplication, partial-trace, partial-transpose, and
-reduced-sector scratch. `reduced_state!` additionally reuses the output state;
-eigensolver result vectors remain per-call allocations. Plans stay immutable
-and shareable, while each concurrent task requires its own workspace.
+reduced-sector scratch. It also converts compact real qubit recouplers once to
+the workspace's complex scalar type, avoiding Julia 1.10's allocating
+mixed-eltype matrix-multiplication fallback. Already type-matched qudit LR
+matrices are shared read-only instead of copied. `reduced_state!` additionally
+reuses the output state; eigensolver result vectors remain per-call
+allocations. Plans stay immutable and shareable, while each concurrent task
+requires its own workspace.
 
 Collective-observable quantum Fisher information is evaluated sector by sector
 from the eigenvalues of each physical density block. Each sector contribution
@@ -595,9 +599,10 @@ wider multiplication for severe dot-product or intra-complex cancellation.
 Physical Schur visualization
 metrics similarly retain the direct aggregate-first path and scale entries
 before the Frobenius norm or SVD only when that aggregate cannot be converted.
-`ReductionWorkspace` retains prepared exact parent scales and a parent-block
-buffer; warmed in-place marginal allocation is below the prior small-system
-baseline instead of rebuilding BigInts on every call.
+`ReductionWorkspace` retains prepared exact parent scales, scalar-matched
+recouplers, and a parent-block buffer; warmed in-place marginal allocation is
+below the prior small-system baseline instead of rebuilding BigInts or
+allocating mixed-real/complex multiplication scratch on every call.
 
 Static collective p-body blocks and local-gain sector-pair groups detect
 ill-conditioned path cancellation and recompute only the affected data with

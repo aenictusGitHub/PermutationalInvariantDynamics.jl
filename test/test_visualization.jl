@@ -260,8 +260,10 @@
                                          normalize=:global,title=title)
     @test visualization isa SchurBlockVisualization
     @test visualization.show_young_diagrams
-    visualization_docs=sprint(show,MIME("text/plain"),
-        @doc visualize_schur_blocks)
+    # Julia versions wrap displayed docstrings at different columns. Test the
+    # content after normalizing presentation-only whitespace.
+    visualization_docs=replace(sprint(show,MIME("text/plain"),
+        @doc visualize_schur_blocks),r"\s+"=>" ")
     @test occursin("show_young_diagrams=true",visualization_docs)
     @test occursin("PI operators sum over that multiplicity label",visualization_docs)
     svg=sprint(show,MIME("image/svg+xml"),visualization)

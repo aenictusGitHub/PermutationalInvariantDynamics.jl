@@ -447,8 +447,13 @@ exact `PIBasis` object used at construction. A qudit reduction plan can retain
 many dense LR intertwiners: benchmark setup and retained RAM before caching a
 large collection of bipartitions. `ReductionWorkspace(plan,rho)` owns the
 mutable product-block, multiplication, partial-trace, partial-transpose, and
-reduced-sector buffers; use one per task. Pass it through `workspace=` or use
-`reduced_state!` to reuse caller-owned output as well.
+reduced-sector buffers; use one per task. It also owns scalar-type-matched
+recoupling matrices for homogeneous hot-loop multiplication. Qubit plans keep
+their compact real Float64 CG matrices and convert them once per workspace;
+already matching qudit LR matrices are shared read-only rather than copied.
+This separation is required on Julia 1.10, whose mixed real/complex `mul!`
+fallback allocates substantial packing scratch. Pass the workspace through
+`workspace=` or use `reduced_state!` to reuse caller-owned output as well.
 
 ## Mean-field closure
 
@@ -653,8 +658,9 @@ julia --project=quality -e 'using Pkg; Pkg.develop(path=pwd()); Pkg.instantiate(
 julia --project=quality quality/quality.jl
 ```
 
-The latest complete single-thread suite had **4027 passing tests** on Julia
-1.12.6 (2026-07-15), including exact large combinatorics, scaled Schur
+The latest complete single-thread suites had **4037 passing tests** on both
+Julia 1.10.11 and Julia 1.12.6 (2026-07-15), including exact large
+combinatorics, scaled Schur
 branch/path factors, stable large-`N` product amplitudes, the strict population
 backend, six-rate qubit model, spin/state conveniences, Schur construction
 helpers, and spin phase space. Treat that count as historical after further
@@ -700,6 +706,9 @@ explicit plans and workspaces rather than adding global mutable caches.
 Exact `BigInt`/rational work remains setup-only and is not retained in hot
 Liouvillian workspaces. Large-`N` stability fallbacks are guarded so the
 ordinary small-system kernels keep their native floating-point algorithms.
+The matching Julia 1.10.11 four-thread gate reports 31,936 B for
+`reduced_state!` after the workspace recouplers are converted once to the
+working complex type; never restore mixed real/complex workspace `mul!` calls.
 
 When changing representation theory:
 
@@ -770,8 +779,11 @@ The previous closure checklist is implemented and regression-tested:
   extensive stored collective operator first.
 - Public `local_kernel_element` risk-gates large-`N` one-box cancellation and
   selectively rebuilds only its retained endpoint sectors at wider precision;
-  keep its ordinary loop unchanged. Preallocated one-body schedules instead
-  reject a risky native geometry at compilation with wider-prototype guidance.
+  keep its ordinary loop unchanged. Its final `::S` assertion records the
+  already-established scalar contract and is needed for Julia 1.10 to infer
+  through the data-dependent guarded-wide branch. Preallocated one-body
+  schedules instead reject a risky native geometry at compilation with
+  wider-prototype guidance.
   Dynamic direct-PI blocks use prepared fused inverse Schur-multiplicity scales
   when `sqrt(f^nu)` is not representable, while ordinary sectors retain direct
   division without per-call exact-combinatoric setup.

@@ -1,5 +1,6 @@
 using LinearAlgebra
-# import Pkg; Pkg.add("PermutationalInvariantDynamics")
+import Pkg
+Pkg.add(url="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl")
 using PermutationalInvariantDynamics
 include("paper_models.jl")
 using .PaperModels

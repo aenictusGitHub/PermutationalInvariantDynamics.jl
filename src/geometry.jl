@@ -408,8 +408,11 @@ function local_kernel_element(cache::OneBodyGeometry{T},X,Y,l::Partition,a,b,n::
             absolute_sum>R(8)*abs(z)||
             R(64)*R(operations)*R(eps(T))*absolute_sum>=
                 (iszero(z) ? nextfloat(zero(R)) : eps(abs(z)))/R(4)))
-    uncertified ? _wide_local_kernel_element(
-        cache,X,Y,l,a,b,n,c,d,S) : z
+    # Julia 1.10 does not infer the guarded-wide closure's scalar return type
+    # through this data-dependent branch.  Both paths are contractually `S`;
+    # keep that contract explicit without converting or widening the fast path.
+    (uncertified ? _wide_local_kernel_element(
+        cache,X,Y,l,a,b,n,c,d,S) : z)::S
 end
 
 """

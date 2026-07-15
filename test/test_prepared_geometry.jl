@@ -62,6 +62,25 @@
     # A caller-owned workspace reuses every product-block contraction buffer.
     # The in-place entry point additionally reuses the returned PI state.
     reduction_work=ReductionWorkspace(reduction,general)
+    plan_recouplers=[U for c in reduction.couplings
+                       for (_,intertwiners) in c.intertwiners
+                       for U in intertwiners]
+    workspace_recouplers=[U for connections in reduction_work.recoupling_intertwiners
+                            for intertwiners in connections
+                            for U in intertwiners]
+    @test !isempty(plan_recouplers)
+    @test length(workspace_recouplers)==length(plan_recouplers)
+    # Keep the immutable qubit plan compact and real, but give every hot
+    # contraction a homogeneous matrix eltype inside its task-local workspace.
+    @test all(U->eltype(U)===Float64,plan_recouplers)
+    @test all(U->eltype(U)===reduction_work.Ttype,workspace_recouplers)
+    @test all(pair->pair[1]!==pair[2],zip(plan_recouplers,workspace_recouplers))
+    # A Float32 request cannot narrow the plan's Float64 CG convention.
+    reduction_work32=ReductionWorkspace(reduction;T=Float32)
+    @test reduction_work32.Ttype===ComplexF64
+    @test all(U->eltype(U)===ComplexF64,
+        (U for connections in reduction_work32.recoupling_intertwiners
+           for intertwiners in connections for U in intertwiners))
     workspace_state=reduced_state(general,2;plan=reduction,
                                   workspace=reduction_work)
     @test workspace_state.data≈planned_state.data atol=3e-10
@@ -103,6 +122,12 @@
     anti=Partition((1,1,0));entangled=basis_state(b3,anti,first(b3.patterns[b3.index[anti]]))
     @test negativity(entangled,1;plan=reduction3)≈0.5 atol=3e-10
     reduction_work3=ReductionWorkspace(reduction3,rho3)
+    plan_recoupler3=first(first(first(reduction3.couplings).intertwiners)[2])
+    workspace_recoupler3=first(first(reduction_work3.recoupling_intertwiners)[1])
+    @test eltype(plan_recoupler3)===reduction_work3.Ttype===ComplexF64
+    # The LR plan already stores the required homogeneous type, so its dense
+    # matrix is shared with the workspace rather than duplicated.
+    @test workspace_recoupler3===plan_recoupler3
     @test reduced_state(rho3,1;plan=reduction3,
                         workspace=reduction_work3).data≈
           reduced_state(rho3,1;plan=reduction3).data atol=3e-9
@@ -110,6 +135,8 @@
                          workspace=reduction_work3)≈1/3 atol=3e-9
     @test negativity(entangled,1;plan=reduction3,
                      workspace=reduction_work3)≈0.5 atol=3e-10
+    @test first(first(reduction_work3.recoupling_intertwiners)[1])===
+          workspace_recoupler3
     reduced_state(rho3,1;plan=reduction3);reduced_state(rho3,1)
     planned_alloc=@allocated reduced_state(rho3,1;plan=reduction3)
     direct_alloc=@allocated reduced_state(rho3,1)

@@ -213,8 +213,13 @@ plans may retain many dense intertwiners and their construction performs
 sparse weight-restricted nullspaces, so they are intended for repeated
 fixed-`k` analysis rather than every one-off bipartition. Plans contain no mutable scratch and may be
 shared read-only. A `ReductionWorkspace` belongs to one exact plan and reuses
-the product-block application buffers; it must not be shared concurrently.
-Use `reduced_state!` when the output `PIState` should also be reused.
+the product-block application buffers; it must not be shared concurrently. It
+also converts the compact real qubit recouplers once to its complex working
+type so repeated multiplication stays allocation-light on every supported
+Julia release. Already type-matched qudit intertwiners are shared read-only.
+This conversion increases retained qubit workspace memory in exchange for a
+homogeneous hot loop. Use `reduced_state!` when the output `PIState` should
+also be reused.
 
 For repeated one-body marginals, `one_body_rdm(rho; cache=geometry)` contracts
 all matrix units in one pass instead of preparing `d^2` independent collective

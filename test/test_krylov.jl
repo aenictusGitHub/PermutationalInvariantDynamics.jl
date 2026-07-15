@@ -50,10 +50,17 @@
     @test kgap.stationary_multiplicity_certified
     @test_throws ArgumentError pi_liouvillian_gap(model;method=:krylov,symmetry=:auto)
 
+    harmonic_seed=randn(MersenneTwister(10),ComplexF64,length(b))
     harmonic=harmonic_arnoldi_spectrum(Lm;nev=3,krylovdim=length(b),
-        vectors=true,rng=MersenneTwister(11),atol=1e-9,rtol=1e-7)
+        initial_vector=harmonic_seed,vectors=true,rng=MersenneTwister(11),
+        atol=1e-9,rtol=1e-7)
     @test maximum(harmonic.residuals)<2e-7
-    @test sort(abs.(harmonic.values))[1]<2e-7
+    stationary_index=argmin(abs.(harmonic.values .- dense[1]))
+    # This nonnormal stationary eigenvalue has condition number sqrt(8), so
+    # its forward error can exceed its right residual by that factor.
+    stationary_floor=eps(Float64)*max(1.0,harmonic.residual_scale)
+    @test abs(harmonic.values[stationary_index]-dense[1])<=
+          3harmonic.residuals[stationary_index]+stationary_floor
     @test harmonic.algorithm===:harmonic
     restarted=harmonic_arnoldi_spectrum(Lm;nev=2,krylovdim=8,
         maxrestarts=2,require_convergence=false,atol=0,rtol=0,

@@ -499,8 +499,11 @@ Allocate mutable scratch for repeated applications of a [`ReductionPlan`](@ref).
 The workspace reuses the largest product-Schur block, multiplication
 intermediate, parent block, partial trace, partial transpose, and all
 reduced-sector blocks. It also prepares the exact parent multiplicity factors
-once in the workspace scalar precision, so repeated applications do not redo
-`BigInt`/rational setup.
+and scalar-type-matched recoupling matrices once in the workspace precision,
+so repeated applications do not redo `BigInt`/rational setup or trigger
+mixed-eltype matrix-multiplication fallbacks. The immutable plan keeps its
+compact recoupling representation (real for qubits); an already type-matched
+plan matrix is shared rather than copied into the workspace.
 It belongs to the exact `ReductionPlan` used at construction and must be used
 by only one task at a time.
 
@@ -517,9 +520,13 @@ mutable struct ReductionWorkspace{T,P<:ReductionPlan,S}
     partial_trace::Matrix{T}
     partial_transpose::Matrix{T}
     reduced_blocks::Vector{Matrix{T}}
+    recoupling_intertwiners::Vector{Vector{Vector{Matrix{T}}}}
     reduction_parent_scales::S
     negativity_parent_scales::S
 end
+
+_workspace_intertwiner(::Type{T},U::Matrix{T}) where T=U
+_workspace_intertwiner(::Type{T},U::AbstractMatrix) where T=Matrix{T}(U)
 
 function ReductionWorkspace(plan::ReductionPlan{G};T::Type{R}=Float64) where {G,R<:AbstractFloat}
     CT=promote_type(Complex{R},G)
@@ -529,6 +536,7 @@ function ReductionWorkspace(plan::ReductionPlan{G};T::Type{R}=Float64) where {G,
     max_output=maximum((length(patterns) for patterns in plan.output_basis.patterns);init=1)
     reduced=[zeros(CT,length(patterns),length(patterns))
              for patterns in plan.output_basis.patterns]
+    recouplers=Vector{Vector{Vector{Matrix{CT}}}}(undef,length(plan.couplings))
     Scale=_PreparedExactScale{_real_float_type(CT),true}
     reduction_scales=Vector{Vector{Scale}}(undef,length(plan.couplings))
     negativity_scales=Vector{Vector{Scale}}(undef,length(plan.couplings))
@@ -536,9 +544,14 @@ function ReductionWorkspace(plan::ReductionPlan{G};T::Type{R}=Float64) where {G,
         reduction_numerator=coupling.alpha_multiplicity*
             coupling.beta_multiplicity^2
         negativity_numerator=coupling.product_multiplicity^2
+        recouplers[coupling_index]=Vector{Vector{Matrix{CT}}}(
+            undef,length(coupling.intertwiners))
         reduction_scales[coupling_index]=Scale[]
         negativity_scales[coupling_index]=Scale[]
-        for (sector_index,_) in coupling.intertwiners
+        for (connection_index,(sector_index,intertwiners)) in
+            pairs(coupling.intertwiners)
+            recouplers[coupling_index][connection_index]=
+                [_workspace_intertwiner(CT,U) for U in intertwiners]
             denominator=symmetric_group_dimension(
                 plan.basis.sectors[sector_index])
             push!(reduction_scales[coupling_index],_prepare_exact_scale(
@@ -553,8 +566,8 @@ function ReductionWorkspace(plan::ReductionPlan{G};T::Type{R}=Float64) where {G,
         plan,CT,zeros(CT,max_product,max_product),
         zeros(CT,max_product,max_parent),zeros(CT,max_parent,max_parent),
         zeros(CT,max_output,max_output),
-        zeros(CT,max_product,max_product),reduced,reduction_scales,
-        negativity_scales)
+        zeros(CT,max_product,max_product),reduced,recouplers,
+        reduction_scales,negativity_scales)
 end
 
 function ReductionWorkspace(plan::ReductionPlan,rho::PIState)
@@ -723,13 +736,17 @@ end
 
 function _product_block!(rho::PIState,c::_ProductSchurCoupling,
                          work::ReductionWorkspace,
+                         recouplers::AbstractVector,
                          parent_scales::AbstractVector)
     n=c.da*c.db
     block=view(work.product_block,1:n,1:n)
     fill!(block,zero(eltype(block)))
     length(parent_scales)==length(c.intertwiners)||error(
         "internal reduction parent-scale count mismatch")
-    for (connection_index,(s,Ts)) in pairs(c.intertwiners)
+    length(recouplers)==length(c.intertwiners)||error(
+        "internal reduction recoupler count mismatch")
+    for (connection_index,(s,_)) in pairs(c.intertwiners)
+        Ts=recouplers[connection_index]
         C=_scaled_reduction_parent_block!(work.parent_block,
             rho,rho.basis.sectors[s],parent_scales[connection_index])
         dl=size(C,1)
@@ -789,6 +806,7 @@ function _accumulate_reduced_blocks!(rho::PIState,plan::ReductionPlan,
         # factor sqrt(f_alpha)*f_beta/sqrt(f_lambda) into the parent
         # coefficient block before floating conversion.
         block=_product_block!(rho,c,work,
+            work.recoupling_intertwiners[coupling_index],
             work.reduction_parent_scales[coupling_index])
         partial=_fill_partial_trace!(work.partial_trace,block,c.da,c.db)
         ai=plan.output_basis.index[c.alpha]
@@ -819,6 +837,7 @@ function _plan_negativity(rho::PIState,plan::ReductionPlan,
     R=_real_float_type(work.Ttype);total_norm=zero(R)
     for (coupling_index,c) in pairs(plan.couplings)
         block=_product_block!(rho,c,work,
+            work.recoupling_intertwiners[coupling_index],
             work.negativity_parent_scales[coupling_index])
         pt=_fill_partial_transpose!(work.partial_transpose,block,c.da,c.db)
         _hermitianize_reduction_roundoff!(pt;atol=atol,rtol=rtol,
