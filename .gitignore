@@ -1,0 +1,23 @@
+# Julia package environments generated at the repository root
+/Manifest.toml
+/quality/Manifest.toml
+
+# Built documentation and coverage output
+/docs/build/
+/coverage/
+*.cov
+*.mem
+
+# Generated examples and benchmark output
+/examples/*.svg
+/examples/*.png
+/benchmark/*.csv
+
+# Editors and operating systems
+.DS_Store
+*.code-workspace
+.vscode/
+.idea/
+
+# Local publisher copy; link the DOI from public documentation instead
+/JPhysA58_ 275301(2025).pdf

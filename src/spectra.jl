@@ -1,0 +1,373 @@
+function _spectrum_order(values,sortby,rev)
+    sortby===:none&&return collect(eachindex(values))
+    by=sortby===:real ? real : sortby===:imaginary ? imag : sortby===:magnitude ? abs :
+       throw(ArgumentError("sortby must be :real, :imaginary, :magnitude, or :none"))
+    sortperm(values;by=by,rev=rev)
+end
+
+function _require_autonomous_spectral_input(x)
+    if isdefined(@__MODULE__,:isautonomous)
+        f=getfield(@__MODULE__,:isautonomous)
+        applicable(f,x)&&!f(x)&&throw(ArgumentError("stationary spectra and gaps require an autonomous Liouvillian; call freeze(...; time=..., parameters=...) explicitly"))
+    end
+    nothing
+end
+
+function _matrixfree_projector_for_spectrum(L,basis,symmetry,charge;atol,rtol,
+                                             rng=Random.MersenneTwister(0))
+    symmetry===nothing&&return (nothing,nothing,nothing)
+    basis===nothing&&throw(ArgumentError("matrix-free symmetry projection requires basis=... or a PIModel"))
+    candidates = symmetry===:auto ? _usual_unitary_candidates(basis.d) : [nothing=>symmetry]
+    for (name,U) in candidates
+        P=try matrixfree_symmetry_projector(basis,U;charge=charge,atol=atol,rtol=rtol) catch;continue;end
+        check=_projected_symmetry_residual(L,P;probes=4,rng=rng,atol=atol,rtol=rtol)
+        check.symmetric&&return (P,name,check)
+    end
+    throw(ArgumentError("no invariant matrix-free unitary symmetry projector was found for the requested charge"))
+end
+
+"""
+    pi_liouvillian_spectrum(L; sortby=:real, rev=true, vectors=false)
+
+With `method=:dense`, compute the complete spectrum in the polynomial-size PI
+operator space. With `method=:krylov`, compute selected ordinary Ritz modes;
+`method=:harmonic` computes thick-restarted harmonic Ritz modes near zero,
+`method=:iram` applies implicit-QR restarting, and `method=:jd` uses
+hard-locking Jacobi--Davidson near `target`.
+`L`
+may be a static `PIModel`, an assembled matrix, or a matrix-free PI
+Liouvillian. Set `vectors=true` to also return consistently sorted right
+eigenvectors. Matrix-free inputs are materialized in PI coordinates, never in
+the full `d^(2N)` Liouville space, only when `method=:dense`; Krylov,
+harmonic, IRAM, and Jacobi--Davidson methods apply them without materializing
+the PI Liouvillian.
+"""
+function pi_liouvillian_spectrum(x;sortby=:real,rev::Bool=true,vectors::Bool=false,
+                                 method=:dense,nev::Integer=6,krylovdim::Integer=max(20,2nev+4),
+                                 atol::Real=1e-10,rtol::Real=1e-8,
+                                 require_convergence::Bool=true,basis=nothing,
+                                 symmetry=nothing,charge=1,thickdim::Integer=max(nev+2,2nev),
+                                 maxrestarts::Integer=20,target=nothing,
+                                 retained_dimension::Integer=max(nev,min(2nev,krylovdim-1)),
+                                 rng=Random.MersenneTwister(0),kwargs...)
+    method in (:dense,:krylov,:arnoldi,:harmonic,:iram,:implicit_qr,
+               :jd,:jacobi_davidson)||throw(ArgumentError(
+        "method must be :dense, :krylov, :harmonic, :iram, or :jd"))
+    _require_autonomous_spectral_input(x)
+    x isa PIModel&&basis===nothing&&(basis=x.basis)
+    if method===:harmonic
+        L=x isa PIModel ? liouvillian(x;representation=:matrixfree) : x
+        P,sname,scheck=_matrixfree_projector_for_spectrum(L,basis,symmetry,charge;
+            atol=atol,rtol=rtol,rng=rng)
+        info=harmonic_arnoldi_spectrum(L;nev=nev,krylovdim=krylovdim,
+            thickdim=thickdim,maxrestarts=maxrestarts,projector=P,vectors=vectors,
+            target=target===nothing ? 0 : target,
+            atol=atol,rtol=rtol,require_convergence=require_convergence,rng=rng,kwargs...)
+        info=merge(info,(symmetry_used=P!==nothing,symmetry_name=sname,
+                         symmetry_charge=P===nothing ? nothing : P.charge,
+                         symmetry_residual=scheck))
+        return vectors ? info : info.values
+    end
+    if method in (:iram,:implicit_qr)
+        symmetry===nothing||throw(ArgumentError("implicit-QR Arnoldi does not implement matrix-free symmetry projection; use method=:harmonic"))
+        haskey(kwargs,:which)&&throw(ArgumentError("pi_liouvillian_spectrum maps sortby to implicit-QR selection; pass sortby instead of which"))
+        sortby in (:real,:magnitude)||throw(ArgumentError("implicit-QR spectra support sortby=:real or :magnitude"))
+        which=sortby===:real ? (rev ? :LR : throw(ArgumentError("ascending-real implicit-QR selection is not supported"))) : (rev ? :LM : :SM)
+        L=x isa PIModel ? liouvillian(x;representation=:matrixfree) : x
+        info=implicitly_restarted_arnoldi_spectrum(L;nev=nev,krylovdim=krylovdim,
+            retained_dimension=retained_dimension,maxrestarts=maxrestarts,which=which,
+            target=target,vectors=vectors,atol=atol,rtol=rtol,
+            require_convergence=require_convergence,rng=rng,kwargs...)
+        info=merge(info,(method=:iram,selection=target===nothing ? which : :near_target))
+        return vectors ? info : info.values
+    end
+    if method in (:jd,:jacobi_davidson)
+        symmetry===nothing||throw(ArgumentError("Jacobi--Davidson does not implement matrix-free symmetry projection; use method=:harmonic"))
+        haskey(kwargs,:subspace_dim)&&throw(ArgumentError("pi_liouvillian_spectrum maps krylovdim to the Jacobi--Davidson subspace; pass krylovdim instead of subspace_dim"))
+        L=x isa PIModel ? liouvillian(x;representation=:matrixfree) : x
+        info=jacobi_davidson_spectrum(L;nev=nev,target=target===nothing ? 0 : target,
+            subspace_dim=krylovdim,vectors=vectors,atol=atol,rtol=rtol,
+            require_convergence=require_convergence,rng=rng,kwargs...)
+        info=merge(info,(method=:jd,selection=:near_target))
+        return vectors ? info : info.values
+    end
+    if method in (:krylov,:arnoldi)
+        symmetry===nothing||throw(ArgumentError("use method=:harmonic for matrix-free symmetry projection"))
+        sortby in (:real,:magnitude)||throw(ArgumentError("Krylov spectra support sortby=:real or :magnitude"))
+        which=sortby===:real ? (rev ? :LR : throw(ArgumentError("ascending-real Krylov selection is not supported"))) : (rev ? :LM : :SM)
+        L=x isa PIModel ? liouvillian(x;representation=:matrixfree) : x
+        info=krylov_liouvillian_spectrum(L;nev=nev,krylovdim=krylovdim,which=which,
+            vectors=vectors,atol=atol,rtol=rtol,require_convergence=require_convergence,rng=rng,kwargs...)
+        return vectors ? info : info.values
+    end
+    L=x isa PIModel ? liouvillian(x;representation=:sparse) : x
+    M=_materialize(L);size(M,1)==size(M,2)||throw(DimensionMismatch("Liouvillian must be square"))
+    if vectors
+        E=eigen(Matrix(M));order=_spectrum_order(E.values,sortby,rev)
+        return (values=E.values[order],vectors=E.vectors[:,order],dimension=size(M,1))
+    end
+    values=eigvals(Matrix(M));values[_spectrum_order(values,sortby,rev)]
+end
+
+@doc """
+    pi_liouvillian_gap(L; atol=1e-12, rtol=1e-10,
+                       check_stability=true, return_info=false)
+
+Return the asymptotic Liouvillian decay gap
+`-max(real(lambda))` after excluding the numerical stationary cluster around
+zero. Unlike selecting the second sorted eigenvalue, this handles degenerate
+stationary spaces and oscillatory decay modes. `return_info=true` also reports
+the controlling eigenvalue, oscillation frequency, stationary multiplicity,
+stability, tolerance, and PI dimension.
+
+`method=:harmonic` is deliberately not accepted for a global gap: harmonic
+Ritz values are selected by distance to zero, so they can miss a slow mode
+with a large oscillation frequency. With a unitary `symmetry` and
+`return_info=true`, it instead reports a near-zero decay estimate for the
+selected `charge` sector. A nontrivial charge sector is not required to
+contain a stationary eigenvalue. The estimate is certified only when the
+complete selected sector was extracted; inspect `gap_certified`,
+`sector_dimension`, and `scope` in the returned information.
+
+`method=:iram` is a bounded-memory global-gap route because it selects
+largest-real Ritz values. `method=:jd` is rejected here: near-target
+Jacobi--Davidson has the same large-imaginary slow-mode caveat as harmonic
+selection and currently has no charge-projector specialization.
+""" pi_liouvillian_gap
+function _liouvillian_gap_info(values;atol,rtol,check_stability)
+    scale=max(maximum(abs,values;init=0.0),1.0);tol=atol+rtol*scale
+    stationary=abs.(values).<=tol;nullity=count(stationary)
+    nullity>0||throw(ArgumentError("no stationary eigenvalue was found within tolerance $tol"))
+    spectral_abscissa=maximum(real,values)
+    stable=spectral_abscissa<=tol
+    check_stability&&!stable&&throw(ArgumentError("Liouvillian is unstable: spectral abscissa is $spectral_abscissa"))
+    candidates=values[.!stationary]
+    if isempty(candidates)
+        gap=Inf;mode=nothing;frequency=NaN
+    else
+        j=argmax(real.(candidates));mode=candidates[j];gap=-real(mode)
+        abs(gap)<=tol&&(gap=zero(gap));frequency=imag(mode)
+    end
+    info=(gap=gap,decay_eigenvalue=mode,oscillation_frequency=frequency,
+          stationary_multiplicity=nullity,unique_stationary_mode=nullity==1,
+          stable=stable,spectral_abscissa=spectral_abscissa,tolerance=tol,
+          dimension=length(values))
+    info
+end
+
+# A nontrivial unitary charge sector need not contain a stationary mode.  Its
+# asymptotic decay rate is therefore determined from the sector spectral
+# abscissa directly, excluding a zero cluster only when one is actually
+# present (for example in a symmetry-broken stationary manifold).
+function _sector_decay_info(values;atol,rtol,check_stability,
+                            require_stationary::Bool=false)
+    isempty(values)&&throw(ArgumentError("no eigenvalues were returned for the selected charge sector"))
+    scale=max(maximum(abs,values;init=0.0),1.0);tol=atol+rtol*scale
+    stationary=abs.(values).<=tol;nullity=count(stationary)
+    require_stationary&&nullity==0&&throw(ArgumentError("the trivial charge sector did not contain a stationary eigenvalue within tolerance $tol"))
+    spectral_abscissa=maximum(real,values);stable=spectral_abscissa<=tol
+    check_stability&&!stable&&throw(ArgumentError("selected symmetry sector is unstable: spectral abscissa is $spectral_abscissa"))
+    candidates=values[.!stationary]
+    if isempty(candidates)
+        gap=Inf;mode=nothing;frequency=NaN
+    else
+        j=argmax(real.(candidates));mode=candidates[j];gap=-real(mode)
+        abs(gap)<=tol&&(gap=zero(gap));frequency=imag(mode)
+    end
+    (gap=gap,decay_eigenvalue=mode,oscillation_frequency=frequency,
+     stationary_multiplicity=nullity,unique_stationary_mode=nullity==1,
+     stable,spectral_abscissa,tolerance=tol,dimension=length(values))
+end
+
+function _group_unitary_eigenvalues(values,tol)
+    groups=Vector{Vector{Int}}();labels=ComplexF64[]
+    for i in eachindex(values)
+        j=findfirst(z->abs(values[i]-z)<=tol,labels)
+        if j===nothing;push!(labels,values[i]);push!(groups,[i]);else;push!(groups[j],i);end
+    end
+    labels,groups
+end
+
+function _symmetry_superoperator_for_gap(U,basis,n;atol,rtol,cache=nothing)
+    if basis===nothing
+        D=_check_unitary_matrix(U;atol=atol,rtol=rtol);D^2==n||throw(DimensionMismatch("Liouvillian dimension must equal size(U,1)^2"))
+        sandwich_superoperator(U)
+    else
+        length(basis)==n||throw(DimensionMismatch("PI basis and Liouvillian dimensions differ"))
+        _pi_conjugation_superoperator(basis,U;atol=atol,rtol=rtol,cache=cache)
+    end
+end
+
+function _symmetry_block_spectrum(M,S;atol,rtol)
+    residual=norm(M*S-S*M);scale=max(norm(M)*norm(S),1.0);symtol=atol+rtol*scale
+    residual<=symtol||throw(ArgumentError("candidate is not a Liouvillian weak symmetry: residual=$residual, tolerance=$symtol"))
+    svalues,W=_orthonormal_unitary_eigensystem(S;atol=atol,rtol=rtol)
+    grouptol=atol+rtol*max(maximum(abs,svalues;init=0.0),1.0)
+    labels,groups=_group_unitary_eigenvalues(svalues,grouptol)
+    values=ComplexF64[];sectors=NamedTuple[]
+    for (label,inds) in zip(labels,groups)
+        k=length(inds);V=W[:,inds]
+        B=adjoint(V)*M*V;vals=eigvals(Matrix(B));append!(values,vals)
+        tol=atol+rtol*max(maximum(abs,vals;init=0.0),1.0);stationary=count(x->abs(x)<=tol,vals)
+        abscissa=maximum(real,vals);nonzero=vals[abs.(vals).>tol]
+        gap=isempty(nonzero) ? Inf : max(0.0,-maximum(real,nonzero))
+        push!(sectors,(charge=label,dimension=k,stationary_multiplicity=stationary,
+                       spectral_abscissa=abscissa,gap=gap))
+    end
+    values,sectors,(residual=residual,relative_residual=residual/scale,tolerance=symtol)
+end
+
+function _auto_gap_symmetry(x,basis,M;atol,rtol)
+    basis===nothing&&return nothing
+    best=nothing;bestblocks=1;cache=OneBodyGeometry(basis)
+    for (name,U) in _usual_unitary_candidates(basis.d)
+        S=_symmetry_superoperator_for_gap(U,basis,size(M,1);atol=atol,rtol=rtol,cache=cache)
+        residual=norm(M*S-S*M);scale=max(norm(M)*norm(S),1.0)
+        residual<=atol+rtol*scale||continue
+        svalues,_=_orthonormal_unitary_eigensystem(S;atol=atol,rtol=rtol)
+        labels,_=_group_unitary_eigenvalues(svalues,atol+rtol)
+        length(labels)>bestblocks&&(best=(name,U,S);bestblocks=length(labels))
+    end
+    best
+end
+
+function pi_liouvillian_gap(x;atol::Real=1e-12,rtol::Real=1e-10,
+                            check_stability::Bool=true,return_info::Bool=false,
+                            symmetry=nothing,symmetry_kind=:unitary,basis=nothing,
+                            method=:dense,nev::Integer=6,
+                            krylovdim::Integer=max(20,2nev+4),
+                            require_convergence::Bool=true,charge=1,
+                            thickdim::Integer=max(nev+2,2nev),
+                            maxrestarts::Integer=20,
+                            retained_dimension::Integer=max(nev,min(2nev,krylovdim-1)),
+                            rng=Random.MersenneTwister(0),kwargs...)
+    symmetry_kind===:unitary||throw(ArgumentError("only unitary weak symmetries define linear charge blocks for gap reduction"))
+    _require_autonomous_spectral_input(x)
+    x isa PIModel&&basis===nothing&&(basis=x.basis)
+    method in (:dense,:krylov,:arnoldi,:harmonic,:iram,:implicit_qr,
+               :jd,:jacobi_davidson)||throw(ArgumentError(
+        "method must be :dense, :krylov, :harmonic, :iram, or :jd"))
+    method in (:jd,:jacobi_davidson)&&throw(ArgumentError(
+        "near-target Jacobi--Davidson cannot certify the global largest-real Liouvillian gap; use method=:iram or :krylov"))
+    method in (:iram,:implicit_qr)&&(haskey(kwargs,:target)||haskey(kwargs,:which))&&throw(ArgumentError(
+        "a Liouvillian gap requires largest-real implicit-QR selection; do not pass target or which"))
+    if method===:harmonic
+        L=x isa PIModel ? liouvillian(x;representation=:matrixfree) : x
+        P,sname,scheck=_matrixfree_projector_for_spectrum(L,basis,symmetry,charge;
+            atol=atol,rtol=rtol,rng=rng)
+        P===nothing&&throw(ArgumentError("method=:harmonic selects modes nearest zero in modulus and cannot certify the global largest-real Liouvillian gap; use method=:krylov or supply a unitary symmetry and request return_info=true for a charge-sector estimate with explicit certification metadata"))
+        sector_dimension=sum(count(mask) for mask in P.masks)
+        sector_nev=min(Int(nev),sector_dimension)
+        har=harmonic_arnoldi_spectrum(L;nev=sector_nev,krylovdim=krylovdim,
+            thickdim=thickdim,maxrestarts=maxrestarts,projector=P,
+            atol=atol,rtol=rtol,require_convergence=require_convergence,rng=rng)
+        qtol=atol+rtol
+        require_stationary=abs(P.charge-one(P.charge))<=qtol
+        info=_sector_decay_info(har.values;atol=atol,rtol=rtol,
+            check_stability=check_stability,require_stationary=require_stationary)
+        complete_sector=length(har.values)==sector_dimension&&all(har.converged)
+        stationary_complete=complete_sector||info.stationary_multiplicity<sector_nev
+        info=merge(info,(dimension=size(L,1),method=:harmonic,
+            symmetry_used=P!==nothing,symmetry_name=sname,
+            symmetry_charge=P===nothing ? nothing : P.charge,
+            symmetry_sectors=nothing,symmetry_residual=scheck,
+            ritz_residuals=har.residuals,restarts=har.restarts,
+            stationary_multiplicity_certified=stationary_complete,
+            krylov_dimension=har.krylov_dimension,
+            sector_dimension=sector_dimension,
+            scope=:charge_sector,selection=:near_zero,
+            gap_certified=complete_sector,stability_certified=complete_sector,
+            certification_message=complete_sector ?
+                "the complete selected charge sector was diagonalized" :
+                "harmonic Ritz extraction orders by distance to zero, not by real part"))
+        return_info&&return info
+        complete_sector&&return info.gap
+        throw(ArgumentError("a partial harmonic symmetry-sector calculation is a near-zero decay estimate, not a certified gap; set return_info=true and inspect gap_certified, or increase nev to the reported sector dimension"))
+    end
+    if method in (:krylov,:arnoldi,:iram,:implicit_qr)
+        symmetry===nothing||throw(ArgumentError("use method=:harmonic for matrix-free symmetry projection"))
+        L=x isa PIModel ? liouvillian(x;representation=:matrixfree) : x
+        arn = if method in (:iram,:implicit_qr)
+            implicitly_restarted_arnoldi_spectrum(L;nev=nev,krylovdim=krylovdim,
+                retained_dimension=retained_dimension,maxrestarts=maxrestarts,which=:LR,
+                atol=atol,rtol=rtol,require_convergence=require_convergence,rng=rng,kwargs...)
+        else
+            krylov_liouvillian_spectrum(L;nev=nev,krylovdim=krylovdim,which=:LR,
+                atol=atol,rtol=rtol,require_convergence=require_convergence,rng=rng,kwargs...)
+        end
+        info=_liouvillian_gap_info(arn.values;atol=atol,rtol=rtol,check_stability=check_stability)
+        # A partial spectrum certifies the returned slow mode, but not that all
+        # stationary modes have been counted if the requested window is full.
+        stationary_complete=info.stationary_multiplicity<nev
+        selected_method=method in (:iram,:implicit_qr) ? :iram : :krylov
+        info=merge(info,(dimension=size(L,1),symmetry_used=false,symmetry_name=nothing,
+            symmetry_sectors=nothing,symmetry_residual=nothing,method=selected_method,
+            ritz_residuals=arn.residuals,stationary_multiplicity_certified=stationary_complete,
+            krylov_dimension=arn.krylov_dimension,scope=:global,
+            selection=:largest_real,gap_certified=stationary_complete,
+            stability_certified=stationary_complete))
+        return return_info ? info : info.gap
+    end
+    L=x isa PIModel ? liouvillian(x;representation=:sparse) : x;M=_materialize(L)
+    size(M,1)==size(M,2)||throw(DimensionMismatch("Liouvillian must be square"))
+    selected_name=nothing;selected=symmetry;selected_S=nothing
+    if symmetry===:auto
+        found=_auto_gap_symmetry(x,basis,M;atol=atol,rtol=rtol)
+        if found===nothing;selected=nothing;else;selected_name,selected,selected_S=found;end
+    end
+    if selected===nothing
+        values=eigvals(Matrix(M));info=_liouvillian_gap_info(values;atol=atol,rtol=rtol,check_stability=check_stability)
+        info=merge(info,(symmetry_used=false,symmetry_name=selected_name,symmetry_sectors=nothing,symmetry_residual=nothing))
+    else
+        S=selected_S===nothing ? _symmetry_superoperator_for_gap(selected,basis,size(M,1);atol=atol,rtol=rtol) : selected_S
+        values,sectors,residual=_symmetry_block_spectrum(M,S;atol=atol,rtol=rtol)
+        info=_liouvillian_gap_info(values;atol=atol,rtol=rtol,check_stability=check_stability)
+        info=merge(info,(symmetry_used=true,symmetry_name=selected_name,symmetry_sectors=sectors,symmetry_residual=residual))
+    end
+    return_info ? info : info.gap
+end
+
+"""Alias for [`pi_liouvillian_gap`](@ref)."""
+liouvillian_gap(x;kwargs...)=pi_liouvillian_gap(x;kwargs...)
+
+"""
+    pi_density_spectrum(rho; expanded=false, max_expanded_dimension=10^7)
+
+Diagonalize every physical Schur block of a PI density operator. The default
+compressed result stores each irrep eigenvalue once together with its exact
+symmetric-group degeneracy. `expanded=true` returns the full eigenvalue list
+only when its size does not exceed `max_expanded_dimension`.
+"""
+function pi_density_spectrum(rho::PIState;expanded::Bool=false,
+                             max_expanded_dimension::Integer=10^7,
+                             sortby=:value,rev::Bool=true,atol::Real=1e-12)
+    ishermitian(rho;atol=atol,rtol=0)||throw(ArgumentError("density operator must be Hermitian"))
+    RT=typeof(real(zero(eltype(rho.data))))
+    values=RT[];degeneracies=BigInt[];sectors=Partition[];indices=Int[]
+    for p in rho.basis.sectors
+        R=physical_block(rho,p);vals=eigvals(Hermitian(R));f=symmetric_group_dimension(p)
+        for (i,v) in pairs(vals)
+            push!(values,v);push!(degeneracies,f);push!(sectors,p);push!(indices,i)
+        end
+    end
+    order = sortby===:value ? sortperm(values;rev=rev) :
+            sortby===:magnitude ? sortperm(values;by=abs,rev=rev) :
+            sortby===:none ? collect(eachindex(values)) :
+            throw(ArgumentError("sortby must be :value, :magnitude, or :none"))
+    values=values[order];degeneracies=degeneracies[order];sectors=sectors[order];indices=indices[order]
+    total=sum(degeneracies;init=big(0))
+    if expanded
+        total<=max_expanded_dimension||throw(ArgumentError("expanded spectrum has dimension $total; increase max_expanded_dimension explicitly"))
+        out=RT[];sizehint!(out,Int(total))
+        for (v,g) in zip(values,degeneracies);append!(out,Iterators.repeated(v,Int(g)));end
+        return out
+    end
+    (;values,degeneracies,sectors,sector_indices=indices,total_dimension=total,
+      trace=sum(BigFloat(g)*v for (v,g) in zip(values,degeneracies)),
+      minimum=minimum(values),maximum=maximum(values))
+end
+
+"""Alias for [`pi_density_spectrum`](@ref)."""
+const density_operator_spectrum=pi_density_spectrum
+"""Alias for [`pi_density_spectrum`](@ref)."""
+const pi_density_operator_spectrum=pi_density_spectrum

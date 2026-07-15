@@ -1,0 +1,180 @@
+"""
+    PermutationalInvariantDynamics
+
+Exact and matrix-free tools for time-local open-system dynamics in the
+permutationally invariant operator subspace of `N` identical `d`-level
+systems. The package represents PI states and operators in Schur--Weyl
+blocks, supports local, collective, and symmetric `p`-body processes, and
+provides dynamics, stationary-state, spectral, information-theoretic, and
+visualization routines without constructing the full `d^N` Hilbert space in
+production algorithms.
+
+Start with [`PIBasis`](@ref), [`PIModel`](@ref), [`compile`](@ref), and the
+high-level commands [`solve_dynamics`](@ref), [`stationary_state`](@ref), and
+[`liouvillian_spectrum`](@ref).
+"""
+module PermutationalInvariantDynamics
+
+using LinearAlgebra
+using SparseArrays
+using Random
+import LinearAlgebra: mul!, ldiv!, ishermitian
+import Base: *, +, -, adjoint, copy, eltype, getindex, length, size, show
+
+include("partitions.jl")
+include("gtpatterns.jl")
+include("cgc.jl")
+include("basis.jl")
+include("tensor_indices.jl")
+include("geometry.jl")
+include("pbody.jl")
+include("operators.jl")
+include("terms.jl")
+include("spin.jl")
+include("vectorization.jl")
+include("liouvillian.jl")
+include("krylov.jl")
+include("symmetries.jl")
+include("spectra.jl")
+include("evans.jl")
+include("entanglement.jl")
+include("observables.jl")
+include("information.jl")
+include("symmetry_information.jl")
+include("phase_space.jl")
+include("sciml.jl")
+include("meanfield.jl")
+include("evolution.jl")
+include("trajectories.jl")
+include("floquet.jl")
+include("response.jl")
+include("highlevel.jl")
+include("populations.jl")
+include("visualization.jl")
+include("spectral_visualization.jl")
+include("phase_space_visualization.jl")
+
+export Partition, partitions, weight, length_nonzero, removable_corners,
+       addable_corners, remove_corner, add_corner, minus_plus_neighbors,
+       reachable_sectors, symmetric_group_dimension, unitary_group_dimension,
+       commutant_dimension, exact_binomial, exact_multinomial,
+       GTPattern, gt_patterns, isvalid, shape, content,
+       gt_entry, triangular_shift, cgc, partition_triangle, three_nu_symbol,
+       PIBasis, PIOperator, PIState, coefficient_block, physical_block,
+       each_schur_block, operator_from_schur_blocks,
+       state_from_schur_blocks, sector_metadata,
+       sector_view, identity_operator, maximally_mixed_state, trace, purity,
+       normalize!, ispositive, isphysical, positivity_diagnostics,
+       state_diagnostics, validate_state,
+       sector_population,
+       sector_populations, basis_state, sector_density_matrix, iid_pure_state,
+       iid_state, thermal_state, computational_product_state, dicke_state,
+       dicke_operator,
+       ghz_state, spin_coherent_state, spin_matrices, collective_spin,
+       collective_block, collective_operator,
+       mean_local_operator, local_kernel_element, local_kernel_operator,
+       OneBodyGeometry,
+       PBodyGeometry, pbody_collective_block, pbody_collective_operator,
+       pbody_kernel_element, pbody_kernel_operator,
+       AbstractPITerm, InPlaceTimeOperator,
+       LocalHamiltonian, CollectiveHamiltonian, LocalJump,
+       CollectiveJump, DirectPIHamiltonian, DirectPIJump, PIModel,
+       PBodyHamiltonian, LocalPBodyJump, CollectivePBodyJump,
+       qubit_ensemble_model,
+       left_superoperator, right_superoperator, sandwich_superoperator,
+       commutator_superoperator, dissipator_superoperator,
+       is_pi_operator, is_pi_superoperator, is_permutationally_invariant,
+       liouvillian, MatrixFreeLiouvillian, LiouvillianPlan,
+       LiouvillianWorkspace, CompiledPIModel, compile, apply!, apply_adjoint!,
+       isautonomous, freeze, dynamics_problem, PISolution, state,
+       EvolutionWorkspace, evolve!, time_evolve, time_evolution,
+       QuantumTrajectory, TrajectoryWorkspace, quantum_trajectory,
+       quantum_trajectories, trajectory_average, jump_statistics,
+       trajectory_observable_statistics, trajectory_statistics,
+       expectation, variance, covariance, collective_expectation,
+       collective_variance, collective_moments, CollectiveObservablePlan,
+       one_body_rdm, trace_error,
+       collective_covariance, collective_covariance_matrix,
+       kitagawa_ueda_squeezing, wineland_squeezing, two_body_rdm,
+       two_body_expectation, connected_two_body_correlation,
+       normalized_second_order_correlation,
+       qfi_entanglement_depth, spin_squeezing_entangled,
+       quantum_fisher_information, qfi, quantum_fisher_information_matrix,
+       qfim,
+       symmetric_logarithmic_derivatives, sld_commutator_matrix,
+       mean_uhlmann_curvature, multiparameter_compatible,
+       MeanFieldPlan, MeanFieldWorkspace, MeanFieldResult,
+       meanfield_rhs!, meanfield_rhs, meanfield_problem,
+       meanfield_evolve!, solve_meanfield,
+       meanfield_jacobian, meanfield_stability,
+       meanfield_stationary_state,
+       meanfield_expectation, meanfield_collective_moments,
+       meanfield_pbody_expectation,
+       von_neumann_entropy, renyi_entropy, reduced_entropy,
+       mutual_information, conditional_entropy, trace_distance, fidelity,
+       bures_distance, quantum_relative_entropy, hilbert_schmidt_distance,
+       sector_resolved_entropy, entropy_decomposition,
+       sector_resolved_coherence, relative_entropy_of_coherence,
+       symmetry_twirl, relative_entropy_of_asymmetry,
+       relative_entropy_of_symmetry, wigner_yanase_asymmetry,
+       sector_resolved_qfi, relative_entropy_decomposition,
+       qfim_sector_decomposition,
+       SpinPhaseSpaceData, spin_husimi_q, spin_wigner,
+       hermiticity_error, minimum_sector_eigenvalue, check_generator,
+       negativity, logarithmic_negativity, ReductionPlan, ReductionWorkspace,
+       reduced_state, reduced_state!, reduced_purity,
+       reduced_purities,
+       partial_transpose_spectrum, minimum_partial_transpose_eigenvalue,
+       bipartition_negativities,
+       charge_resolved_negativity, number_resolved_negativity,
+       subduction_intertwiners,
+       littlewood_richardson_coefficient,
+       steady_state, krylov_steady_state, KrylovWorkspace, ArnoldiWorkspace,
+       JacobiDavidsonWorkspace,
+       SchurSectorPreconditioner, schur_sector_preconditioner,
+       preconditioner_cost,
+       krylov_liouvillian_spectrum, harmonic_arnoldi_spectrum,
+       implicitly_restarted_arnoldi_spectrum, jacobi_davidson_spectrum,
+       liouvillian_eigenvalues, liouvillian_gap,
+       pi_liouvillian_spectrum, pi_density_spectrum,
+       pi_liouvillian_gap,
+       pi_density_operator_spectrum, density_operator_spectrum,
+       evans_uniqueness, has_unique_steady_state_evans,
+       check_liouvillian_symmetry, is_liouvillian_symmetric,
+       usual_liouvillian_symmetries, MatrixFreeSymmetryProjector,
+       SymmetryProjectorWorkspace, matrixfree_symmetry_projector,
+       floquet_propagator, floquet_multipliers, floquet_exponents,
+       floquet_gap, floquet_steady_state, stroboscopic_evolution,
+       floquet_evolve,
+       liouvillian_modes, resolvent_norm, adjoint_evolve,
+       sensitivity_problem, sensitivity_state, classical_fisher_information,
+       observable_decay_modes, integrated_correlation_time,
+       steady_state_susceptibility, pseudospectral_abscissa,
+       qfim_from_derivatives,
+       estimate_basis_size, estimate_memory, basis_summary, model_summary,
+       value_at,
+       AbstractPIAlgorithm, AutoAlgorithm, DirectAlgorithm, SVDAlgorithm,
+       EigenAlgorithm, ShiftInvertAlgorithm, GMRESAlgorithm,
+       HarmonicArnoldiAlgorithm, SteadyStateResult, DynamicsResult,
+       SpectrumResult, stationary_state, solve_dynamics,
+       liouvillian_spectrum, diagnostics, pi_dimension,
+       estimate_state_bytes, estimate_basis_bytes,
+       estimate_liouvillian_bytes, estimate_geometry_bytes,
+       estimate_solver_bytes, recommend_solver,
+       PopulationInvarianceReport, PopulationPlan, PopulationWorkspace,
+       PopulationSolution, population_dimension, population_invariance,
+       diagonal_populations, diagonal_populations!, state_from_populations,
+       population_generator, evolve_populations!, solve_populations,
+       stationary_populations,
+       SchurBlockStructure, SchurBlockVisualization,
+       schur_block_structure, visualize_schur_blocks,
+       save_schur_block_visualization,
+       ComplexSpectrum, SpectrumVisualization, DensitySpectrumVisualization,
+       liouvillian_spectrum_data, floquet_spectrum_data,
+       visualize_spectrum, visualize_liouvillian_spectrum,
+       visualize_floquet_spectrum, save_spectrum_visualization,
+       visualize_density_spectrum, save_density_spectrum_visualization,
+       SpinPhaseSpaceVisualization, visualize_spin_phase_space,
+       save_spin_phase_space_visualization
+
+end

@@ -1,0 +1,25 @@
+cff-version: 1.2.0
+message: "Please cite the package and the underlying paper."
+title: "PermutationalInvariantDynamics.jl"
+type: software
+version: 0.1.0
+license: "GPL-3.0-only"
+repository-code: "https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl"
+url: "https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl"
+authors:
+  - family-names: "Bastin"
+    given-names: "Thierry"
+  - family-names: "Martin"
+    given-names: "John"
+references:
+  - type: article
+    title: "Permutationally invariant processes in open multiqudit systems"
+    authors:
+      - family-names: "Bastin"
+        given-names: "Thierry"
+      - family-names: "Martin"
+        given-names: "John"
+    journal: "Journal of Physics A: Mathematical and Theoretical"
+    volume: 58
+    year: 2025
+    doi: "10.1088/1751-8121/addfc1"
