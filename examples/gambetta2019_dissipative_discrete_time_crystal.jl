@@ -1,5 +1,7 @@
 using LinearAlgebra
 using PermutationalInvariantDynamics
+include(joinpath(@__DIR__, "utils", "makie_support.jl"))
+using .ExampleMakie
 
 # F. M. Gambetta et al., Phys. Rev. Lett. 122, 015701 (2019).
 # Energies and times are expressed in units with Gamma = 1.
@@ -134,6 +136,59 @@ function main()
     @assert isapprox(late_ratio, real(epsilon_fine); atol=2e-3, rtol=2e-3)
     @assert stationary_residual < 1e-10
     @assert report.valid
+
+    if makie_available()
+        M = makie_module()
+        multipliers = floquet_multipliers(Ffine)
+        stationary_index = argmin(abs.(multipliers .- 1))
+        angles = range(0.0, 2pi; length=361)
+        periods = 0:(length(stroboscopic)-1)
+        plotted_periods = periods[2:end]
+        deviations = sx[2:end] .- sx_stationary
+
+        figure = M.Figure(size=(1100, 470), fontsize=17)
+        spectrum_axis = M.Axis(
+            figure[1, 1]; xlabel="Re(ε)", ylabel="Im(ε)",
+            aspect=M.DataAspect(), title="Finite-N Floquet multipliers, N=$N")
+        signal_axis = M.Axis(
+            figure[1, 2]; xlabel="period number n",
+            ylabel="⟨Sx⟩ / N - stationary value",
+            title="Decaying subharmonic response")
+
+        M.lines!(spectrum_axis, cos.(angles), sin.(angles);
+                 color=:gray60, linestyle=:dash, linewidth=1.5,
+                 label="unit circle")
+        M.scatter!(spectrum_axis, real.(multipliers), imag.(multipliers);
+                   color=(:royalblue, 0.65), markersize=8,
+                   label="Floquet spectrum")
+        M.scatter!(spectrum_axis,
+                   [real(multipliers[stationary_index])],
+                   [imag(multipliers[stationary_index])];
+                   color=:seagreen, marker=:diamond, markersize=13,
+                   label="stationary ε₀")
+        M.scatter!(spectrum_axis, [real(epsilon_fine)], [imag(epsilon_fine)];
+                   color=:firebrick, marker=:star5, markersize=16,
+                   label="subharmonic ε₋")
+        M.axislegend(spectrum_axis; position=:lb, labelsize=11)
+
+        M.hlines!(signal_axis, [0.0];
+                  color=:gray50, linestyle=:dash,
+                  label="Floquet stationary reference")
+        M.lines!(signal_axis, plotted_periods, deviations;
+                 color=:black, linewidth=2.2)
+        M.scatter!(signal_axis, plotted_periods, deviations;
+                   color=[isodd(n) ? :firebrick : :royalblue
+                          for n in plotted_periods],
+                   markersize=10, label="stroboscopic PI dynamics")
+        M.axislegend(signal_axis; position=:rb, labelsize=11)
+
+        M.Label(
+            figure[2, 1:2],
+            "At N=4, |ε₋| < 1 and the alternating signal decays: this is a finite-size precursor.";
+            fontsize=14, color=:gray35, tellwidth=false)
+        save_example_figure(
+            figure, "gambetta2019_dissipative_discrete_time_crystal")
+    end
 end
 
 main()

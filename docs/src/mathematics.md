@@ -371,17 +371,41 @@ embedded Dormand--Prince 5(4) solve advances the normalized state and its
 integrated hazard together. Bisection locates each continuous hazard root, so
 jump times are not tied to sampling-grid endpoints. `abstol`, `reltol`,
 `dtmin`, `dtmax`, and `event_time_tolerance` control this adaptive path.
-`TrajectoryWorkspace` allows storage reuse, `quantum_trajectories` creates
-reproducible independent realizations while compiling geometry only once, and
-`trajectory_average` returns the
-sampled ensemble density matrices. Stochastic trajectories require
-nonnegative rates; negative time-local rates remain supported by deterministic
-evolution but do not define this jump process. Fixed-step `dt`, adaptive
-tolerances, and the number of trajectories must be convergence-tested for
-research results.
-Set `threaded=true` to use one independent workspace per available Julia
-thread; fixed child RNG seeds keep results reproducible for a fixed thread
-configuration.
+`TrajectoryPlan` compiles the immutable representation-theoretic geometry
+once. `TrajectoryWorkspace` owns the mutable integrator scratch for one path,
+and `TrajectoryBatchWorkspace` retains one such workspace and RNG per worker
+for reuse across ensembles. An empty model accepts `T=Float32` (or another
+concrete real floating type) because it has no term from which to infer that
+precision. During no-jump propagation, channel intensities are contracted
+directly from the prepared ``K^\dagger K`` Schur blocks; a full gain state is
+formed only for the channel selected at an actual jump.
+`quantum_trajectories` creates reproducible independent realizations and
+`trajectory_average` returns the sampled ensemble density matrices.
+Stochastic trajectories require finite, nonnegative real rates representable
+in the prepared precision; negative time-local rates remain supported by
+deterministic evolution but do not define this jump process. Time grids,
+fixed-step `dt`, and explicitly supplied adaptive controls must likewise be
+representable without narrowing. Defaults and every RK stage are formed in the
+prepared real precision. Fixed-step `dt`, adaptive tolerances, and the number
+of trajectories must be convergence-tested for research results.
+Set `threaded=true` to use dynamically scheduled, task-owned workspaces. The
+scheduler claims small chunks of paths to amortize atomic operations without
+turning a long realization into a static load imbalance.
+Random streams are seeded by trajectory index, so a fixed seed produces the
+same ordered paths in serial and threaded execution. For repeated ensembles,
+construct one `TrajectoryPlan` and `TrajectoryBatchWorkspace` and pass the
+latter as `workspace=`; plans may be shared, whereas batch workspaces may only
+be reused sequentially. Outer trajectory threading generally performs best
+when BLAS is not itself using several threads, but the package never changes
+the process-wide BLAS configuration.
+
+The returned trajectories intentionally own independent time grids, jump
+records, and saved PI states. Their unavoidable output payload therefore
+scales as ``O(n_{\rm traj} n_{\rm save} n_{\rm PI})`` even though plan and
+integrator storage are shared or reused. For large PI dimensions, save only
+the times required for the analysis; retaining a dense time history can
+dominate both the batch workspace and the simulation kernel's temporary
+memory.
 
 `jump_statistics` reports total and channel-resolved counts, unbiased count
 variances, empirical rates, Fano factors, no-jump probability, and pooled

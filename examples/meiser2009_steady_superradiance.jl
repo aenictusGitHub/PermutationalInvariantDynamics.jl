@@ -2,18 +2,76 @@ using LinearAlgebra
 using PermutationalInvariantDynamics
 include("paper_models.jl")
 using .PaperModels
+include(joinpath(@__DIR__, "utils", "makie_support.jl"))
+using .ExampleMakie
 
 # D. Meiser and M. J. Holland, PRA 81, 033847 (2010), Eqs. (1),(2),(8)-(10).
-N=10;GammaC=1.0;sm=ComplexF64[0 1;0 0];excited=ComplexF64[0 0;0 1]
-for pump in (0.1,1.0,N*GammaC/2,N*GammaC,30.0)
-    model=meiser2009_superradiance_model(N;GammaC=GammaC,pump=pump)
-    prepared=compile(model)
-    rho=stationary_state(prepared;algorithm=DirectAlgorithm())
-    Jm=collective_operator(model.basis,sm)
-    Neplan=CollectiveObservablePlan(model.basis,excited)
-    intensity=GammaC*real(expectation(rho,adjoint(Jm)*Jm))
-    Ne=real(collective_expectation(rho,Neplan))
-    enhancement=intensity/(max(Ne,eps())*GammaC)
-    println("w/GammaC=$(pump/GammaC): I/GammaC=$intensity, Ne=$Ne, I/(Ne GammaC)=$enhancement")
+N = 10
+GammaC = 1.0
+sm = ComplexF64[0 1; 0 0]
+excited = ComplexF64[0 0; 0 1]
+results = NamedTuple[]
+
+for pump in (0.1, 1.0, N * GammaC / 2, N * GammaC, 30.0)
+    model = meiser2009_superradiance_model(
+        N; GammaC=GammaC, pump=pump)
+    prepared = compile(model)
+    rho = stationary_state(prepared; algorithm=DirectAlgorithm())
+    Jm = collective_operator(model.basis, sm)
+    Neplan = CollectiveObservablePlan(model.basis, excited)
+    intensity = GammaC * real(expectation(rho, adjoint(Jm) * Jm))
+    Ne = real(collective_expectation(rho, Neplan))
+    enhancement = intensity / (max(Ne, eps()) * GammaC)
+    push!(results, (; pump, intensity, Ne, enhancement))
+    println("w/GammaC=$(pump / GammaC): I/GammaC=$intensity, " *
+            "Ne=$Ne, I/(Ne GammaC)=$enhancement")
 end
-println("large-N prediction at w=N GammaC/2: Imax/GammaC = ",N^2/8)
+large_N_maximum = N^2 / 8
+println("large-N prediction at w=N GammaC/2: Imax/GammaC = ",
+        large_N_maximum)
+
+if makie_available()
+    M = makie_module()
+    pump_ratios = [result.pump / GammaC for result in results]
+    figure = M.Figure(size=(1350, 430), fontsize=17)
+    intensity_axis = M.Axis(
+        figure[1, 1]; xlabel="w / Γc", ylabel="I / Γc",
+        xscale=log10, title="Steady radiated intensity")
+    excitation_axis = M.Axis(
+        figure[1, 2]; xlabel="w / Γc", ylabel="Ne / N",
+        xscale=log10, title="Excited-state fraction")
+    enhancement_axis = M.Axis(
+        figure[1, 3]; xlabel="w / Γc", ylabel="I / (Ne Γc)",
+        xscale=log10, title="Collective enhancement")
+
+    M.lines!(intensity_axis, pump_ratios,
+             [result.intensity / GammaC for result in results];
+             color=:firebrick, linewidth=2.7)
+    M.scatter!(intensity_axis, pump_ratios,
+               [result.intensity / GammaC for result in results];
+               color=:firebrick, markersize=11, label="finite N = $N")
+    M.hlines!(intensity_axis, [large_N_maximum];
+              color=:gray45, linestyle=:dash,
+              label="large-N peak N²/8")
+    M.axislegend(intensity_axis; position=:lt, labelsize=12)
+
+    M.lines!(excitation_axis, pump_ratios,
+             [result.Ne / N for result in results];
+             color=:royalblue, linewidth=2.7)
+    M.scatter!(excitation_axis, pump_ratios,
+               [result.Ne / N for result in results];
+               color=:royalblue, markersize=11)
+
+    M.lines!(enhancement_axis, pump_ratios,
+             [result.enhancement for result in results];
+             color=:seagreen, linewidth=2.7)
+    M.scatter!(enhancement_axis, pump_ratios,
+               [result.enhancement for result in results];
+               color=:seagreen, markersize=11, label="collective result")
+    M.hlines!(enhancement_axis, [1.0];
+              color=:gray45, linestyle=:dash,
+              label="independent emission")
+    M.axislegend(enhancement_axis; position=:rt, labelsize=12)
+
+    save_example_figure(figure, "meiser2009_steady_superradiance")
+end

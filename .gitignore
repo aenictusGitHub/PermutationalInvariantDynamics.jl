@@ -1,6 +1,7 @@
 # Julia package environments generated at the repository root
 /Manifest.toml
 /quality/Manifest.toml
+/examples/Manifest.toml
 
 # Built documentation and coverage output
 /docs/build/
@@ -11,6 +12,7 @@
 # Generated examples and benchmark output
 /examples/*.svg
 /examples/*.png
+/examples/figures/
 /benchmark/*.csv
 
 # Editors and operating systems

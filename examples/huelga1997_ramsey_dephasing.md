@@ -34,13 +34,23 @@ This workflow never expands the density matrix into the full computational
 basis. `diagnostics(last(solution))` verifies trace, Hermiticity, and
 positivity of the final numerical state without altering it.
 
+## Makie figure
+
+When CairoMakie is available, the script creates a two-panel figure. The first
+panel overlays the normalized PI Ramsey signal with the analytical exponential
+as a function of the dimensionless time `gamma*t`. The second shows the
+pointwise absolute discrepancy used in the printed convergence report. Vector
+PDF and raster PNG copies are saved as
+`huelga1997_ramsey_dephasing.pdf` and `.png`.
+
 ## Run and validation
 
 ```sh
-julia --project=. examples/huelga1997_ramsey_dephasing.jl
+julia --project=examples examples/huelga1997_ramsey_dephasing.jl
 ```
 
 The printed maximum error compares every saved numerical value with the
 analytic exponential. This is also a useful convention check for factors of
 two in a dephasing dissipator. Increase `steps_per_interval` until the reported
-error is converged when changing the time grid or rates.
+error is converged when changing the time grid or rates. Without CairoMakie,
+all numerical checks still run and only figure rendering is skipped.

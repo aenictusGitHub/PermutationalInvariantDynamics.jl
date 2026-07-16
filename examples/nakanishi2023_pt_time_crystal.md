@@ -86,8 +86,25 @@ infinite-size statement. The exact spectrum and uniform-state assertions in
 this example apply to the balanced case \(p=0\); they must not be reused for
 \(p\ne0\).
 
+## Makie figure
+
+With CairoMakie available, the script generates a two-panel comparison. The
+complex-plane panel overlays the complete `N=6` PI spectrum with every value
+of Eq. (14), retaining exact degeneracies. The dynamics panel overlays the
+matrix-free `N=24` magnetization with its exponentially damped analytical
+curve. The visible damping is essential: persistent oscillations are not
+claimed at either finite size.
+
+The vector and raster outputs are saved as
+`nakanishi2023_pt_time_crystal.pdf` and
+`nakanishi2023_pt_time_crystal.png` in the configured example-figure
+directory.
+
 ## Run
 
 ```sh
-julia --project=. examples/nakanishi2023_pt_time_crystal.jl
+julia --project=examples examples/nakanishi2023_pt_time_crystal.jl
 ```
+
+Running under the root package environment still performs the numerical
+validation; without CairoMakie, it logs that the optional figure was skipped.

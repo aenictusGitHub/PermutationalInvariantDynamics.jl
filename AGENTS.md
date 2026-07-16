@@ -30,6 +30,8 @@ Published validation models additionally use:
   recreate it locally; remove it before handing work back.
 - The isolated quality setup may similarly create `quality/Manifest.toml`;
   remove it after running Aqua/JET. Keep the tracked `docs/Manifest.toml`.
+- The optional CairoMakie setup creates `examples/Manifest.toml`; it is ignored
+  and must likewise be removed before handoff.
 - Preserve generic numeric types where practical. Do not introduce a blanket
   `ComplexF64` restriction into new mathematical APIs.
 - Never silently truncate sectors, normalize states, clip eigenvalues,
@@ -134,8 +136,9 @@ Published validation models additionally use:
   points, and traceless-Hermitian stability analysis.
 - `src/evolution.jl`: preallocated direct density-matrix propagation from an
   assembled or matrix-free Liouvillian.
-- `src/trajectories.jl`: PI quantum-jump trajectories, reusable stochastic
-  workspaces, ensembles, and density-matrix averaging.
+- `src/trajectories.jl`: PI quantum-jump trajectories, shared immutable
+  trajectory plans, task-owned batch workspaces/RNGs, direct channel-intensity
+  contractions, ensembles, and density-matrix averaging.
 - `src/floquet.jl`: preallocated one-period maps, multipliers, periodic states,
   and stroboscopic evolution.
 - `src/response.jl`: modes, resolvents, adjoint evolution and sensitivities.
@@ -552,16 +555,31 @@ Public dynamics and stochastic APIs include:
 - `time_evolve`, `time_evolution`, `evolve!`, `EvolutionWorkspace`
 - `floquet_propagator`, `floquet_steady_state`, `stroboscopic_evolution`
 - `quantum_trajectory`, `quantum_trajectories`, `trajectory_average`
+- `TrajectoryPlan`, `TrajectoryWorkspace`, `TrajectoryBatchWorkspace`
 - `jump_statistics`, `trajectory_observable_statistics`, `trajectory_statistics`
 
 PI trajectories use channel-resolved gain maps. Local particle labels are
 unresolved, so an individual local-jump trajectory can be mixed even though
-the ensemble converges to the PI master equation. Rates must be nonnegative
-for stochastic evolution. `algorithm=:fixed` uses preallocated RK4 with a
+the ensemble converges to the PI master equation. Rates must evaluate to
+finite, nonnegative real values representable in the prepared precision for
+stochastic evolution. Time grids and explicit integration controls must also
+be representable without narrowing; defaults and adaptive stages retain that
+precision. `algorithm=:fixed` uses preallocated RK4 with a
 maximum jump probability; `algorithm=:event`/`:adaptive` integrates the state
 and hazard with Dormand--Prince 5(4) and locates continuous jump times by root
-solving. Reuse one workspace sequentially or one per thread; convergence-test
-fixed steps or adaptive tolerances and the ensemble size.
+solving. `TrajectoryPlan` owns one fixed-operator kernel lowering; its direct
+`K'K` Schur contractions evaluate channel intensities without forming a gain
+state, which is materialized only for a selected jump. A
+`TrajectoryBatchWorkspace` shares that read-only plan while retaining one
+mutable workspace and RNG per task. Batch scheduling dynamically claims small
+chunks, and streams are seeded by trajectory index, so serial and threaded
+results agree for a fixed seed. Reuse a batch workspace sequentially, never concurrently; do not
+index mutable scratch by `Threads.threadid()`. Scalar rates may be driven, but
+operator-valued schedules are rejected. An empty model must select a concrete
+real precision through its initial state or `TrajectoryPlan(...; T=...)`.
+Returned histories still scale as `O(npaths * nsave * nPI)`; reduce saved times
+when output storage dominates. Convergence-test fixed steps or adaptive
+tolerances and the ensemble size.
 
 Public spectral and algebraic-diagnostic APIs include:
 
@@ -589,11 +607,39 @@ the Liouvillian, not strong term-by-term commutation.
 - PRA 94, 033838 (2016): correlated emission decomposes as
   `gamma*D[J_-] + (gamma0-gamma)*sum_i D[sigma_-^(i)]`.
   `examples/pra94_033838_superradiance.jl` compares Fig. 6 with equations
-  (41)--(43), reaching approximately machine precision.
-- PRA 110, 062208 (2024): the dissipative LMG Hamiltonian is constructed as a
-  `DirectPIHamiltonian` proportional to `Jx^2-Jy^2`; individual and collective
-  rate prefactors follow equation (3). The finite-N result must not be claimed
-  to equal the thermodynamic mean-field curve.
+  (41)--(43), reaching approximately machine precision. It also computes the
+  `N=30`, `delta_gamma/gamma0=0.4` pulse with the certified 256-coordinate
+  population backend and visualizes the peak state through physical
+  Schur-sector populations and Young diagrams; it never materializes a
+  length-`2^30` state vector or a `2^30`-by-`2^30` density matrix.
+- PRA 110, 062208 (2024): the dissipative LMG Hamiltonian is lowered exactly
+  as a one-body self term plus a symmetric two-body cross term, with pair rate
+  `2V/(N*j)`. This equals `V*(Jx^2-Jy^2)/(N*j)` but preserves body-order
+  provenance so the same model supports `MeanFieldPlan`. Individual and
+  collective rate prefactors follow equation (3). The example compares the
+  exact finite PI steady state, finite product closure, thermodynamic closure,
+  and the analytical fixed point following equations (10). Equation (11) is
+  instead the singular `gammaI=0` case. A unique finite-N steady state restores
+  the Z2 symmetry, so compare its branch-independent `Z` and parity-even
+  transverse pair order rather than its vanishing `X,Y` to one selected
+  broken-symmetry branch. Never claim the finite product closure is exact
+  correlated finite PI dynamics.
+- `examples/quantum_trajectories.jl` is the foundational
+  Dalibard--Castin--Mølmer / Mølmer--Castin--Dalibard independent-emitter
+  regression. It checks the exact tensor-power density state, binomial
+  excitation and photon counts, and no-jump law with statistical tolerances.
+- Zhang--Zhang--Mølmer, NJP 20, 112001 (2018):
+  `zhang2018_superradiant_trajectories.jl` compares cavity and free-space
+  intensities for `gammaL/GammaC=1,10` against a certified population-space
+  master equation. The default `N=10`, 256-path calculation is a finite-size
+  regression of their `N=50`, 512-path Fig. 2 model, not a digitization.
+  Their pure pseudo-state unraveling resolves `J -> J+s` local branches; this
+  package's unresolved local CP gain gives generally mixed paths. Compare
+  ensemble-linear observables, never identify individual paths or variances.
+- Lloyd--Ziolkowska--Keeling (2026) is directly relevant to future
+  sector-shift-resolved PI trajectories, but its published examples require a
+  shared bosonic cavity factor absent from the current spin-only package. Do
+  not claim a Keeling figure reproduction until that auxiliary space exists.
 - Additional examples cover Morrison--Parkins cooperative resonance
   fluorescence (including its exact steady state), Meiser--Holland
   steady-state superradiance, and four complementary time-crystal workflows:
@@ -631,22 +677,46 @@ small-system formula; explain that choice in the paired guide. Never replace a
 published analytical or finite-size assertion merely to demonstrate a newer
 API.
 
+The core package deliberately has no Makie dependency. Publication-style
+figures use the separate `examples/Project.toml` environment and the optional
+loader in `examples/utils/makie_support.jl`. From the repository root, prepare
+that environment with
+`julia --project=examples -e 'using Pkg; Pkg.develop(path="."); Pkg.instantiate()'`.
+Figure-enabled scripts display their `CairoMakie.Figure` and save PDF plus PNG
+copies under ignored `examples/figures/`, or under
+`ENV["PI_EXAMPLE_FIGURE_DIR"]` when set. Without CairoMakie they must still run
+all numerical checks and skip only rendering. Never move CairoMakie into the
+root dependencies merely for examples.
+Every standalone paper-specific example uses this optional path. Its figure
+must visualize arrays already produced by the checked numerical workflow,
+retain the guide's finite-size/mean-field caveats, and have a unique stable
+output stem. Keep the Makie block after the numerical assertions so plotting
+cannot replace validation.
+
 ## Verification workflow
 
 From the repository root:
 
 ```sh
 julia --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.test()'
-julia --project=. examples/pra94_033838_superradiance.jl
-julia --project=. examples/pra110_062208_lmg.jl
+julia --project=examples -e 'using Pkg; Pkg.develop(path="."); Pkg.instantiate()'
+julia --project=examples examples/pra94_033838_superradiance.jl
+julia --project=examples examples/pra110_062208_lmg.jl
+julia --project=examples examples/huelga1997_ramsey_dephasing.jl
+julia --project=examples examples/kitagawa1993_one_axis_twisting.jl
+julia --project=examples examples/shammah2018_local_pumping.jl
+julia --project=examples examples/morrison2008_cooperative_fluorescence.jl
+julia --project=examples examples/meiser2009_steady_superradiance.jl
+julia --project=examples examples/iemini2018_boundary_time_crystal.jl
 julia --project=. examples/pbody_pair_processes.jl
 julia --project=. examples/steady_state_methods.jl
 julia --project=. examples/floquet_periodic_decay.jl
-julia --project=. examples/quantum_trajectories.jl
-julia --project=. examples/piccitto2021_interacting_time_crystal.jl
-julia --project=. examples/nakanishi2023_pt_time_crystal.jl
-julia --project=. examples/gambetta2019_dissipative_discrete_time_crystal.jl
-julia --project=. examples/meanfield_time_crystal.jl
+julia --project=examples examples/quantum_trajectories.jl
+julia --project=examples examples/zhang2018_superradiant_trajectories.jl
+julia --project=examples examples/piccitto2021_interacting_time_crystal.jl
+julia --project=examples examples/nakanishi2023_pt_time_crystal.jl
+julia --project=examples examples/gambetta2019_dissipative_discrete_time_crystal.jl
+julia --project=examples examples/meanfield_time_crystal.jl
 julia --project=. examples/schur_block_visualization.jl
 julia --project=. examples/spectral_visualization.jl
 julia --project=. examples/qubit_population_dynamics.jl
@@ -658,9 +728,10 @@ julia --project=quality -e 'using Pkg; Pkg.develop(path=pwd()); Pkg.instantiate(
 julia --project=quality quality/quality.jl
 ```
 
-The latest complete single-thread suites had **4037 passing tests** on both
-Julia 1.10.11 and Julia 1.12.6 (2026-07-15), including exact large
-combinatorics, scaled Schur
+The latest complete single-thread suite passed on Julia 1.12.6 (2026-07-16)
+after the published-model and trajectory additions. The preceding
+cross-version baseline had **4037 passing tests** on both Julia 1.10.11 and
+Julia 1.12.6 (2026-07-15), including exact large combinatorics, scaled Schur
 branch/path factors, stable large-`N` product amplitudes, the strict population
 backend, six-rate qubit model, spin/state conveniences, Schur construction
 helpers, and spin phase space. Treat that count as historical after further
@@ -668,9 +739,10 @@ changes and report actual command output. The strict documentation build and
 its zero-undocumented-export gate passed after these additions. Aqua's 11
 package gates, JET's three
 public hot-path checks, and the public method-ambiguity check passed in the
-preceding quality audit. All 22 example scripts have same-basename guides; the
-new population-dynamics and spin-phase-space examples passed individually in
-this integration pass, alongside the previously audited published-model,
+preceding quality audit. All 23 example scripts have same-basename guides. The
+two trajectory comparisons passed individually on Julia 1.10.11 and 1.12.6;
+the new population-dynamics and spin-phase-space examples also passed in this
+integration pass, alongside the previously audited published-model,
 mean-field, time-crystal, Schur/density-, and complex-spectrum examples.
 Regression groups
 cover exact combinatorics, CG orthogonality, PI algebra/generators, Appendix-D,

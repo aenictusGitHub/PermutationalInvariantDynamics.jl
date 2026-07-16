@@ -6,66 +6,323 @@ struct QuantumTrajectory{T,S<:PIState}
     jump_channels::Vector{Int}
 end
 
-"""Preallocated vectors and channel kernels for PI quantum trajectories."""
-struct TrajectoryWorkspace{V,K,L,W}
+"""
+    TrajectoryPlan(model; T=nothing)
+    TrajectoryPlan(compiled; T=nothing)
+
+Immutable prepared geometry for PI quantum trajectories. A plan lowers the
+model once, separates Hamiltonian and jump kernels, and retains the
+sector-trace weights used to evaluate channel intensities without constructing
+gain states. It may be shared by tasks; each concurrent worker must use its
+own [`TrajectoryWorkspace`](@ref).
+
+Trajectory plans require fixed jump operators. Scalar rates may still depend
+on time and parameters. Rates must evaluate to finite, nonnegative real values
+representable in the prepared precision. An empty model has no scalar-bearing
+term from which to infer a precision; pass its desired concrete real floating
+type as `T` when it is not `Float64`. The same keyword is accepted for an
+empty compiled model.
+"""
+struct TrajectoryPlan{M,L,H,J,W}
+    model::M
+    liouvillian::L
+    hamiltonians::H
+    jumps::J
+    trace_weights::W
+end
+
+function _trajectory_plan(model::PIModel,liouvillian_plan::LiouvillianPlan)
+    all(term_has_fixed_operator,model.terms)||throw(ArgumentError(
+        "trajectory kernels require fixed operators; scalar rates may depend on time"))
+    kernels=liouvillian_plan.kernels
+    kernels===nothing&&throw(ArgumentError(
+        "trajectory kernels require terms that lower to prepared PI kernels"))
+    supported=Union{HamiltonianPIKernel,DissipatorPIKernel,LocalJumpPIKernel}
+    all(kernel->kernel isa supported,kernels)||throw(ArgumentError(
+        "trajectory kernels require Hamiltonian, collective/direct-jump, or local-jump lowerings"))
+    # Tuple filtering preserves the statically known kernel count and types;
+    # a generator comprehension widens these to an unknown-length Vararg.
+    hamiltonians=filter(kernel->kernel isa HamiltonianPIKernel,kernels)
+    jumps=filter(kernel->kernel isa Union{DissipatorPIKernel,LocalJumpPIKernel},
+                 kernels)
+    R=_real_float_type(eltype(liouvillian_plan.tracevec))
+    weights=Vector{R}(undef,length(model.basis.sectors))
+    for sector in eachindex(model.basis.sectors)
+        value=liouvillian_plan.tracevec[model.basis.offsets[sector]]
+        iszero(imag(value))||throw(ArgumentError(
+            "trajectory trace weights must be real"))
+        weights[sector]=real(value)
+    end
+    TrajectoryPlan(model,liouvillian_plan,hamiltonians,jumps,weights)
+end
+
+function _empty_trajectory_plan(model::PIModel,::Type{R}) where R<:AbstractFloat
+    isconcretetype(R)||throw(ArgumentError(
+        "the trajectory scalar type T must be a concrete AbstractFloat type"))
+    CT=Complex{R}
+    plan=LiouvillianPlan(model.basis,(),_trace_vector(model.basis,CT),
+                         nothing,CT,true)
+    _trajectory_plan(model,plan)
+end
+
+function TrajectoryPlan(model::PIModel;T=nothing)
+    if isempty(model.terms)&&T!==nothing
+        T isa Type&&T<:AbstractFloat||throw(ArgumentError(
+            "the trajectory scalar type T must be a concrete AbstractFloat type"))
+        return _empty_trajectory_plan(model,T)
+    end
+    T===nothing||throw(ArgumentError(
+        "T is only used to select the precision of an empty trajectory model; nonempty models infer it from their terms"))
+    _trajectory_plan(model,LiouvillianPlan(model))
+end
+function TrajectoryPlan(compiled::CompiledPIModel;T=nothing)
+    T===nothing&&return _trajectory_plan(compiled.model,compiled.plan)
+    isempty(compiled.model.terms)||throw(ArgumentError(
+        "T is only used to select the precision of an empty trajectory model; nonempty models infer it from their terms"))
+    T isa Type&&T<:AbstractFloat||throw(ArgumentError(
+        "the trajectory scalar type T must be a concrete AbstractFloat type"))
+    _empty_trajectory_plan(compiled.model,T)
+end
+
+function _trajectory_plan_for_state(model::PIModel,rho::PIState)
+    isempty(model.terms) ?
+        _empty_trajectory_plan(model,_real_float_type(eltype(rho.data))) :
+        TrajectoryPlan(model)
+end
+function _trajectory_plan_for_state(compiled::CompiledPIModel,rho::PIState)
+    isempty(compiled.model.terms) ?
+        _empty_trajectory_plan(compiled.model,
+                               _real_float_type(eltype(rho.data))) :
+        TrajectoryPlan(compiled)
+end
+_trajectory_plan_for_state(plan::TrajectoryPlan,rho::PIState)=plan
+
+"""
+    TrajectoryWorkspace(plan, rho)
+    TrajectoryWorkspace(model, rho)
+    TrajectoryWorkspace(compiled, rho)
+
+Preallocated mutable stage vectors and Schur-block scratch for one PI quantum
+trajectory at a time. Reuse it sequentially. Concurrent paths must have
+distinct workspaces, which may all refer to the same immutable
+[`TrajectoryPlan`](@ref).
+"""
+struct TrajectoryWorkspace{V,R,P,W}
     tmp::V;k1::V;k2::V;k3::V;k4::V;k5::V;k6::V;k7::V
     trial::V;embedded::V;start::V
-    gain::V;channel_gain::V
-    intensities::Vector{Float64}
-    kernels::K
-    liouvillian::L
+    current::V
+    channel_gain::V
+    intensities::Vector{R}
+    jump_scales::Vector{R}
+    plan::P
     liouvillian_work::W
 end
 
-function TrajectoryWorkspace(model::PIModel,rho::PIState)
-    rho.basis===model.basis||throw(ArgumentError("state and model use incompatible PI bases"))
-    all(t->!(t.operator isa Function),model.terms)||throw(ArgumentError("trajectory kernels require fixed operators; scalar rates may depend on time"))
-    L=liouvillian(model;representation=:matrixfree)
-    kernels=L.plan.kernels;jumps=Tuple(k for k in kernels if k isa Union{DissipatorPIKernel,LocalJumpPIKernel})
+function TrajectoryWorkspace(plan::TrajectoryPlan,rho::PIState)
+    rho.basis===plan.model.basis||throw(ArgumentError(
+        "state and trajectory plan use incompatible PI bases"))
+    _check_liouvillian_source_precision(plan.liouvillian,eltype(rho.data),
+                                        "trajectory state")
+    promote_type(eltype(rho.data),plan.liouvillian.Ttype)===eltype(rho.data)||
+        throw(ArgumentError("trajectory state scalar type $(eltype(rho.data)) cannot represent plan scalar type $(plan.liouvillian.Ttype)"))
     v=similar(rho.data)
+    R=_real_float_type(eltype(v));njumps=length(plan.jumps)
     TrajectoryWorkspace(similar(v),similar(v),similar(v),similar(v),similar(v),
-                        similar(v),similar(v),similar(v),similar(v),similar(v),similar(v),
-                        similar(v),similar(v),zeros(length(jumps)),
-                        (all=kernels,jumps=jumps),L,LiouvillianWorkspace(L))
+                        similar(v),similar(v),similar(v),similar(v),similar(v),
+                        similar(v),v,similar(v),zeros(R,njumps),
+                        zeros(R,njumps),plan,
+                        LiouvillianWorkspace(plan.liouvillian))
+end
+TrajectoryWorkspace(model::PIModel,rho::PIState)=
+    TrajectoryWorkspace(_trajectory_plan_for_state(model,rho),rho)
+TrajectoryWorkspace(compiled::CompiledPIModel,rho::PIState)=
+    TrajectoryWorkspace(_trajectory_plan_for_state(compiled,rho),rho)
+
+"""
+    TrajectoryBatchWorkspace(plan, rho; workers=Threads.nthreads())
+    TrajectoryBatchWorkspace(model, rho; workers=Threads.nthreads())
+    TrajectoryBatchWorkspace(compiled, rho; workers=Threads.nthreads())
+
+Reusable worker pool for [`quantum_trajectories`](@ref). The immutable
+trajectory plan is stored once, while every worker owns independent integrator
+scratch and a reusable random-number generator. A batch workspace may be
+reused sequentially but must not be used by concurrent ensemble calls.
+"""
+struct TrajectoryBatchWorkspace{P,W,R,S}
+    plan::P
+    workers::W
+    rngs::R
+    seeds::S
 end
 
-function _apply_gain!(y,x,k::DissipatorPIKernel,b,t,p,work)
-    raw=value_at(k.scale,t,p);iszero(imag(complex(raw)))||throw(ArgumentError(
-        "quantum trajectories require real jump rates"))
-    scale=Float64(real(raw));scale>=0||throw(ArgumentError("quantum trajectories require nonnegative jump rates"))
+function TrajectoryBatchWorkspace(plan::TrajectoryPlan,rho::PIState;
+                                  workers::Integer=Threads.nthreads())
+    workers>0||throw(ArgumentError("worker count must be positive"))
+    workspaces=[TrajectoryWorkspace(plan,rho) for _ in 1:Int(workers)]
+    rngs=[MersenneTwister(0) for _ in 1:Int(workers)]
+    TrajectoryBatchWorkspace(plan,workspaces,rngs,UInt64[])
+end
+TrajectoryBatchWorkspace(model::PIModel,rho::PIState;kwargs...)=
+    TrajectoryBatchWorkspace(_trajectory_plan_for_state(model,rho),rho;kwargs...)
+TrajectoryBatchWorkspace(compiled::CompiledPIModel,rho::PIState;kwargs...)=
+    TrajectoryBatchWorkspace(_trajectory_plan_for_state(compiled,rho),rho;kwargs...)
+
+function _trajectory_real_input(::Type{R},value,label) where R<:AbstractFloat
+    value isa Real||throw(ArgumentError("$label must be real"))
+    if value isa Integer
+        converted=R(value)
+        isfinite(converted)&&BigInt(converted)==BigInt(value)||throw(ArgumentError(
+            "$label=$value is not exactly representable in trajectory precision $R"))
+        return converted
+    end
+    promote_type(R,typeof(value))===R||throw(ArgumentError(
+        "$label scalar type $(typeof(value)) cannot be represented by trajectory precision $R without narrowing; use matching inputs or prepare the model and state at a wider precision"))
+    converted=R(value)
+    isfinite(converted)||throw(ArgumentError("$label must be finite"))
+    converted
+end
+
+function _trajectory_jump_scale(kernel,t,p,::Type{R}) where R<:AbstractFloat
+    raw=value_at(kernel.scale,t,p)
+    scale=_trajectory_real_input(R,raw,"jump rate")
+    scale>=zero(R)||throw(ArgumentError(
+        "quantum trajectories require nonnegative jump rates"))
+    scale
+end
+
+function _apply_gain!(y,x,k::DissipatorPIKernel,b,scale,work)
     fill!(y,zero(eltype(y)))
-    for (s,part) in pairs(b.sectors)
+    for s in eachindex(b.sectors)
         n=length(b.patterns[s]);r=b.offsets[s]:b.offsets[s+1]-1
         X=reshape(view(x,r),n,n);Y=reshape(view(y,r),n,n);A=work.blocks[s][1];K=k.blocks[s]
         mul!(A,K,X);mul!(Y,A,adjoint(K));Y .*= scale
     end
     y
 end
-function _apply_gain!(y,x,k::LocalJumpPIKernel,b,t,p,work)
-    raw=value_at(k.scale,t,p);iszero(imag(complex(raw)))||throw(ArgumentError(
-        "quantum trajectories require real jump rates"))
-    scale=Float64(real(raw));scale>=0||throw(ArgumentError("quantum trajectories require nonnegative jump rates"))
+function _apply_gain!(y,x,k::LocalJumpPIKernel,b,scale,work)
     fill!(y,zero(eltype(y)))
     @inbounds for q in eachindex(k.gain.V);y[k.gain.I[q]]+=scale*k.gain.V[q]*x[k.gain.J[q]];end
     y
 end
 
-function _channel_intensities!(w::TrajectoryWorkspace,x,b,t,p,tau)
-    for (i,k) in pairs(w.kernels.jumps)
-        _apply_gain!(w.channel_gain,x,k,b,t,p,w.liouvillian_work)
-        z=real(dot(tau,w.channel_gain));z>=-1e-11||throw(ArgumentError("jump gain has negative trace $z"))
-        w.intensities[i]=max(0.0,z)
+function _unscaled_channel_intensity(x,k,b,weights)
+    R=eltype(weights);value=zero(R)
+    for sector in eachindex(b.sectors)
+        n=length(b.patterns[sector]);r=b.offsets[sector]:b.offsets[sector+1]-1
+        X=reshape(view(x,r),n,n);Q=k.qblocks[sector]
+        sector_trace=zero(eltype(x))
+        @inbounds for column in 1:n,row in 1:n
+            sector_trace+=Q[row,column]*X[column,row]
+        end
+        # The trace-vector weight supplies sqrt(f^nu), so this is exactly
+        # tr(G_k[rho])=sqrt(f^nu)tr(Q_nu C_nu) without constructing the gain
+        # state. The explicit contraction does not assume Q is bitwise
+        # Hermitian after floating-point setup.
+        value+=weights[sector]*real(sector_trace)
     end
+    value
+end
+
+_intensity_tolerance(::Type{R}) where R=max(R(1e-11),100eps(R))
+function _store_intensity!(w,index,value)
+    R=eltype(w.intensities);tolerance=_intensity_tolerance(R)
+    isfinite(value)||throw(ArgumentError(
+        "jump intensity is nonfinite; use a wider scalar type or inspect the state and rate"))
+    value>=-tolerance||throw(ArgumentError("jump gain has negative trace $value"))
+    w.intensities[index]=max(zero(R),value)
+end
+
+@inline _channel_intensities!(w,x,b,t,p,::Tuple{},index)=nothing
+@inline function _channel_intensities!(w,x,b,t,p,
+        jumps::Tuple{K,Vararg{Any}},index) where K
+    kernel=first(jumps);R=eltype(w.intensities)
+    scale=_trajectory_jump_scale(kernel,t,p,R);w.jump_scales[index]=scale
+    if iszero(scale)
+        w.intensities[index]=zero(R)
+        return _channel_intensities!(w,x,b,t,p,Base.tail(jumps),index+1)
+    end
+    value=scale*_unscaled_channel_intensity(x,kernel,b,w.plan.trace_weights)
+    _store_intensity!(w,index,value)
+    _channel_intensities!(w,x,b,t,p,Base.tail(jumps),index+1)
+end
+
+function _channel_intensities!(w::TrajectoryWorkspace,x,b,t,p)
+    _channel_intensities!(w,x,b,t,p,w.plan.jumps,1)
     w.intensities
 end
 
-function _conditional_action_and_intensity!(y,x,w,b,t,p,tau)
-    apply!(y,w.liouvillian,x,t,p,w.liouvillian_work);fill!(w.gain,zero(eltype(w.gain)));lambda=0.0
-    for k in w.kernels.jumps
-        _apply_gain!(w.channel_gain,x,k,b,t,p,w.liouvillian_work);axpy!(1,w.channel_gain,w.gain)
-        lambda+=max(0.0,real(dot(tau,w.channel_gain)))
+function _total_intensity(rates)
+    lambda=sum(rates)
+    isfinite(lambda)||throw(ArgumentError(
+        "total jump intensity is nonfinite; use a wider scalar type or inspect the state and rates"))
+    lambda
+end
+
+function _select_jump_channel(rates,u)
+    cumulative=zero(eltype(rates));last_positive=0
+    @inbounds for index in eachindex(rates)
+        rate=rates[index]
+        rate>zero(rate)&&(last_positive=index)
+        cumulative+=rate
+        u<cumulative&&return index
     end
-    @. y=y-w.gain+lambda*x
+    last_positive>0||throw(ErrorException(
+        "cannot select a jump channel from zero total intensity"))
+    # Guard only against a final-roundoff mismatch between `sum(rates)` and
+    # the sequential cumulative sum. A trailing zero channel is never chosen.
+    last_positive
+end
+
+@inline _apply_trajectory_hamiltonians!(y,x,::Tuple{},b,t,p,work)=nothing
+@inline function _apply_trajectory_hamiltonians!(y,x,
+        kernels::Tuple{K,Vararg{Any}},b,t,p,work) where K
+    _apply_kernel!(y,x,first(kernels),b,t,p,work.blocks)
+    _apply_trajectory_hamiltonians!(y,x,Base.tail(kernels),b,t,p,work)
+end
+
+function _apply_jump_anticommutator_and_intensity!(y,x,k,b,scale,weights,work)
+    R=eltype(weights);unscaled=zero(R)
+    for sector in eachindex(b.sectors)
+        n=length(b.patterns[sector]);off=b.offsets[sector]
+        A,B,X=work.blocks[sector];Q=k.qblocks[sector]
+        copyto!(X,1,x,off,n*n)
+        mul!(A,Q,X)
+        unscaled+=weights[sector]*real(tr(A))
+        mul!(B,X,Q)
+        @inbounds for index in eachindex(A)
+            y[off+index-1]-=(scale/2)*(A[index]+B[index])
+        end
+    end
+    scale*unscaled
+end
+
+@inline _apply_conditional_jumps!(y,x,w,b,t,p,::Tuple{},index)=
+    zero(eltype(w.intensities))
+@inline function _apply_conditional_jumps!(y,x,w,b,t,p,
+        jumps::Tuple{K,Vararg{Any}},index) where K
+    kernel=first(jumps);R=eltype(w.intensities)
+    scale=_trajectory_jump_scale(kernel,t,p,R);w.jump_scales[index]=scale
+    if iszero(scale)
+        w.intensities[index]=zero(R)
+        return _apply_conditional_jumps!(
+            y,x,w,b,t,p,Base.tail(jumps),index+1)
+    end
+    value=_apply_jump_anticommutator_and_intensity!(
+        y,x,kernel,b,scale,w.plan.trace_weights,w.liouvillian_work)
+    _store_intensity!(w,index,value)
+    w.intensities[index]+_apply_conditional_jumps!(
+        y,x,w,b,t,p,Base.tail(jumps),index+1)
+end
+
+
+function _conditional_action_and_intensity!(y,x,w,b,t,p,tau)
+    fill!(y,zero(eltype(y)))
+    _apply_trajectory_hamiltonians!(y,x,w.plan.hamiltonians,b,t,p,
+                                    w.liouvillian_work)
+    lambda=_apply_conditional_jumps!(y,x,w,b,t,p,w.plan.jumps,1)
+    isfinite(lambda)||throw(ArgumentError(
+        "total jump intensity is nonfinite; use a wider scalar type or inspect the state and rates"))
+    @. y=y+lambda*x
     lambda
 end
 
@@ -80,7 +337,8 @@ function _conditional_rk4!(x,w,b,t,h,p,tau)
     @. w.tmp=x+(h/2)*w.k2;_conditional_action!(w.k3,w.tmp,w,b,t+h/2,p,tau)
     @. w.tmp=x+h*w.k3;_conditional_action!(w.k4,w.tmp,w,b,t+h,p,tau)
     @. x=x+(h/6)*(w.k1+2w.k2+2w.k3+w.k4)
-    z=dot(tau,x);abs(z)>eps()||throw(ArgumentError("conditional state acquired zero trace"));x./=z;x
+    z=dot(tau,x);R=_real_float_type(eltype(x))
+    abs(z)>eps(R)||throw(ArgumentError("conditional state acquired zero trace"));x./=z;x
 end
 
 # One Dormand--Prince 5(4) trial for the normalized conditional state together
@@ -88,56 +346,65 @@ end
 # an accepted step controls both errors and no time-grid Bernoulli
 # approximation enters the event time.
 function _conditional_dopri_trial!(w,x,b,t,h,p,tau,abstol,reltol)
+    R=typeof(h)
     l1=_conditional_action_and_intensity!(w.k1,x,w,b,t,p,tau)
-    @. w.tmp=x+h*(1/5)*w.k1
-    l2=_conditional_action_and_intensity!(w.k2,w.tmp,w,b,t+h*(1/5),p,tau)
-    @. w.tmp=x+h*((3/40)*w.k1+(9/40)*w.k2)
-    l3=_conditional_action_and_intensity!(w.k3,w.tmp,w,b,t+h*(3/10),p,tau)
-    @. w.tmp=x+h*((44/45)*w.k1-(56/15)*w.k2+(32/9)*w.k3)
-    l4=_conditional_action_and_intensity!(w.k4,w.tmp,w,b,t+h*(4/5),p,tau)
-    @. w.tmp=x+h*((19372/6561)*w.k1-(25360/2187)*w.k2+
-                  (64448/6561)*w.k3-(212/729)*w.k4)
-    l5=_conditional_action_and_intensity!(w.k5,w.tmp,w,b,t+h*(8/9),p,tau)
-    @. w.tmp=x+h*((9017/3168)*w.k1-(355/33)*w.k2+
-                  (46732/5247)*w.k3+(49/176)*w.k4-(5103/18656)*w.k5)
+    @. w.tmp=x+h*(1//5)*w.k1
+    l2=_conditional_action_and_intensity!(w.k2,w.tmp,w,b,t+h*(R(1)/R(5)),p,tau)
+    @. w.tmp=x+h*((3//40)*w.k1+(9//40)*w.k2)
+    l3=_conditional_action_and_intensity!(w.k3,w.tmp,w,b,t+h*(R(3)/R(10)),p,tau)
+    @. w.tmp=x+h*((44//45)*w.k1-(56//15)*w.k2+(32//9)*w.k3)
+    l4=_conditional_action_and_intensity!(w.k4,w.tmp,w,b,t+h*(R(4)/R(5)),p,tau)
+    @. w.tmp=x+h*((19372//6561)*w.k1-(25360//2187)*w.k2+
+                  (64448//6561)*w.k3-(212//729)*w.k4)
+    l5=_conditional_action_and_intensity!(w.k5,w.tmp,w,b,t+h*(R(8)/R(9)),p,tau)
+    @. w.tmp=x+h*((9017//3168)*w.k1-(355//33)*w.k2+
+                  (46732//5247)*w.k3+(49//176)*w.k4-(5103//18656)*w.k5)
     l6=_conditional_action_and_intensity!(w.k6,w.tmp,w,b,t+h,p,tau)
-    @. w.trial=x+h*((35/384)*w.k1+(500/1113)*w.k3+
-                    (125/192)*w.k4-(2187/6784)*w.k5+(11/84)*w.k6)
+    @. w.trial=x+h*((35//384)*w.k1+(500//1113)*w.k3+
+                    (125//192)*w.k4-(2187//6784)*w.k5+(11//84)*w.k6)
     l7=_conditional_action_and_intensity!(w.k7,w.trial,w,b,t+h,p,tau)
-    @. w.embedded=x+h*((5179/57600)*w.k1+(7571/16695)*w.k3+
-                       (393/640)*w.k4-(92097/339200)*w.k5+
-                       (187/2100)*w.k6+(1/40)*w.k7)
+    @. w.embedded=x+h*((5179//57600)*w.k1+(7571//16695)*w.k3+
+                       (393//640)*w.k4-(92097//339200)*w.k5+
+                       (187//2100)*w.k6+(1//40)*w.k7)
 
-    hazard5=h*((35/384)*l1+(500/1113)*l3+(125/192)*l4-
-               (2187/6784)*l5+(11/84)*l6)
-    hazard4=h*((5179/57600)*l1+(7571/16695)*l3+(393/640)*l4-
-               (92097/339200)*l5+(187/2100)*l6+(1/40)*l7)
-    state_scale=abstol+reltol*max(norm(x),norm(w.trial),1)
+    hazard5=h*((35//384)*l1+(500//1113)*l3+(125//192)*l4-
+               (2187//6784)*l5+(11//84)*l6)
+    hazard4=h*((5179//57600)*l1+(7571//16695)*l3+(393//640)*l4-
+               (92097//339200)*l5+(187//2100)*l6+(1//40)*l7)
+    state_scale=abstol+reltol*max(norm(x),norm(w.trial),one(R))
     @. w.tmp=w.trial-w.embedded
-    state_error=norm(w.tmp)/(sqrt(length(x))*state_scale)
+    state_error=norm(w.tmp)/(sqrt(R(length(x)))*state_scale)
     hazard_scale=abstol+reltol*max(abs(hazard5),one(hazard5))
     error=max(state_error,abs(hazard5-hazard4)/hazard_scale)
     hazard5,error
 end
 
-_adaptive_factor(error)=error==0 ? 5.0 : clamp(0.9*error^(-1/5),0.2,5.0)
+function _adaptive_factor(error::R) where R<:AbstractFloat
+    error==zero(R)&&return R(5)
+    clamp((R(9)/R(10))*error^(-one(R)/R(5)),R(1)/R(5),R(5))
+end
 
-function _event_driven_trajectory(model,rho0,ts,w,rng,parameters,dt,
+function _event_driven_trajectory(plan,rho0,ts,w,rng,parameters,dt,
                                   abstol,reltol,dtmin,dtmax,event_time_tolerance)
-    b=model.basis;tau=w.liouvillian.tracevec;x=copy(rho0)
-    states=typeof(x)[copy(x)];jt=eltype(ts)[];jc=Int[];t=ts[1]
-    threshold=-log(rand(rng));hazard=0.0;h=min(float(dt),float(dtmax))
-    for target in ts[2:end]
+    b=plan.model.basis;tau=plan.liouvillian.tracevec;x=w.current
+    copyto!(x,rho0.data)
+    states=Vector{typeof(rho0)}(undef,length(ts));states[1]=copy(rho0)
+    jt=eltype(ts)[];jc=Int[];t=ts[1]
+    R=typeof(dt)
+    threshold=randexp(rng,R);hazard=zero(threshold)
+    h=min(dt,dtmax)
+    for output_index in 2:length(ts)
+        target=ts[output_index]
         while t<target
             remaining_to_target=target-t
-            h=min(h,remaining_to_target,float(dtmax))
+            h=min(h,remaining_to_target,dtmax)
             # As in standard adaptive integrators, landing exactly on a saved
             # output time may require one final step shorter than dtmin.
-            minimum_step=min(float(dtmin),remaining_to_target)
+            minimum_step=min(dtmin,remaining_to_target)
             h>=minimum_step||throw(ErrorException(
                 "adaptive trajectory step fell below dtmin=$dtmin at t=$t"))
-            copyto!(w.start,x.data)
-            increment,error=_conditional_dopri_trial!(w,x.data,b,t,h,parameters,tau,abstol,reltol)
+            copyto!(w.start,x)
+            increment,error=_conditional_dopri_trial!(w,x,b,t,h,parameters,tau,abstol,reltol)
             if !(isfinite(error)&&isfinite(increment))
                 throw(ErrorException("non-finite adaptive trajectory trial at t=$t"))
             end
@@ -147,20 +414,20 @@ function _event_driven_trajectory(model,rho0,ts,w,rng,parameters,dt,
                 h=max(minimum_step,h*_adaptive_factor(error));continue
             end
             increment>=-10abstol||throw(ErrorException("jump hazard decreased by $increment"))
-            increment=max(0.0,increment)
+            increment=max(zero(increment),increment)
             if hazard+increment < threshold
-                copyto!(x.data,w.trial);z=dot(tau,x.data)
-                abs(z)>eps()||throw(ArgumentError("conditional state acquired zero trace"));x.data./=z
+                copyto!(x,w.trial);z=dot(tau,x)
+                abs(z)>eps(R)||throw(ArgumentError("conditional state acquired zero trace"));x./=z
                 t+=h;hazard+=increment
-                h=min(float(dtmax),max(float(dtmin),h*_adaptive_factor(error)))
+                h=min(dtmax,max(dtmin,h*_adaptive_factor(error)))
                 continue
             end
 
             # A continuous event occurred inside the accepted step. Locate the
             # hazard root from the unchanged step-start state, then apply the
             # selected channel at that physical event time.
-            remaining=threshold-hazard;lo=0.0;hi=h
-            time_tol=max(float(event_time_tolerance),8eps(float(t))*max(abs(float(t)),1.0))
+            remaining=threshold-hazard;lo=zero(h);hi=h
+            time_tol=max(event_time_tolerance,R(8)*eps(t)*max(abs(t),one(t)))
             for _ in 1:60
                 hi-lo<=time_tol&&break
                 mid=(lo+hi)/2
@@ -169,32 +436,167 @@ function _event_driven_trajectory(model,rho0,ts,w,rng,parameters,dt,
             end
             event_step=hi
             _conditional_dopri_trial!(w,w.start,b,t,event_step,parameters,tau,abstol,reltol)
-            copyto!(x.data,w.trial);z=dot(tau,x.data)
-            abs(z)>eps()||throw(ArgumentError("conditional state acquired zero trace"));x.data./=z
+            copyto!(x,w.trial);z=dot(tau,x)
+            abs(z)>eps(R)||throw(ArgumentError("conditional state acquired zero trace"));x./=z
             t+=event_step
-            rates=_channel_intensities!(w,x.data,b,t,parameters,tau);lambda=sum(rates)
+            rates=_channel_intensities!(w,x,b,t,parameters)
+            lambda=_total_intensity(rates)
             lambda>0||throw(ErrorException("hazard root has zero channel intensity at t=$t"))
-            u=rand(rng)*lambda;s=0.0;channel=lastindex(rates)
-            for i in eachindex(rates);s+=rates[i];if u<=s;channel=i;break;end;end
-            _apply_gain!(w.channel_gain,x.data,w.kernels.jumps[channel],b,t,parameters,w.liouvillian_work)
-            z=dot(tau,w.channel_gain);abs(z)>eps()||throw(ArgumentError("selected jump has zero probability"))
-            copyto!(x.data,w.channel_gain);x.data./=z;push!(jt,t);push!(jc,channel)
-            threshold=-log(rand(rng));hazard=0.0
-            h=min(float(dtmax),max(float(dtmin),h-event_step))
+            u=rand(rng,typeof(lambda))*lambda
+            channel=_select_jump_channel(rates,u)
+            _apply_gain!(w.channel_gain,x,plan.jumps[channel],b,
+                         w.jump_scales[channel],w.liouvillian_work)
+            z=dot(tau,w.channel_gain);abs(z)>eps(R)||throw(ArgumentError("selected jump has zero probability"))
+            copyto!(x,w.channel_gain);x./=z;push!(jt,t);push!(jc,channel)
+            threshold=randexp(rng,typeof(threshold));hazard=zero(threshold)
+            h=min(dtmax,max(dtmin,h-event_step))
         end
-        push!(states,copy(x))
+        states[output_index]=PIState(b,x)
+    end
+    QuantumTrajectory(ts,states,jt,jc)
+end
+
+function _prepare_trajectory_arguments(times,::Type{R};dt::Real,
+        parameters=nothing,max_jump_probability=nothing,
+        algorithm::Symbol=:fixed,abstol=nothing,reltol=nothing,
+        dtmin=nothing,dtmax=nothing,event_time_tolerance=nothing) where R<:AbstractFloat
+    dt=_trajectory_real_input(R,dt,"dt")
+    max_jump_probability=max_jump_probability===nothing ? R(0.05) :
+        _trajectory_real_input(R,max_jump_probability,"max_jump_probability")
+    abstol=abstol===nothing ? R(1e-9) :
+        _trajectory_real_input(R,abstol,"abstol")
+    reltol=reltol===nothing ? R(1e-7) :
+        _trajectory_real_input(R,reltol,"reltol")
+    dtmin=dtmin===nothing ? eps(R) : _trajectory_real_input(R,dtmin,"dtmin")
+    dtmax=dtmax===nothing ? dt : _trajectory_real_input(R,dtmax,"dtmax")
+    event_time_tolerance=event_time_tolerance===nothing ? R(1e-10) :
+        _trajectory_real_input(R,event_time_tolerance,"event_time_tolerance")
+    dt>0||throw(ArgumentError("dt must be positive"))
+    0<max_jump_probability<1||throw(ArgumentError(
+        "max_jump_probability must lie in (0,1)"))
+    algorithm in (:fixed,:event,:adaptive,:event_driven)||throw(ArgumentError(
+        "algorithm must be :fixed or :event"))
+    abstol>0||throw(ArgumentError("abstol must be positive"))
+    reltol>0||throw(ArgumentError("reltol must be positive"))
+    dtmin>0||throw(ArgumentError("dtmin must be positive"))
+    dtmax>=dtmin||throw(ArgumentError("dtmax must be at least dtmin"))
+    event_time_tolerance>0||throw(ArgumentError(
+        "event_time_tolerance must be positive"))
+    raw_times=collect(times)
+    isempty(raw_times)&&throw(ArgumentError("at least one output time is required"))
+    ts=Vector{R}(undef,length(raw_times))
+    for index in eachindex(raw_times)
+        ts[index]=_trajectory_real_input(R,raw_times[index],
+                                         "output time at index $index")
+    end
+    all(diff(ts).>=0)||throw(ArgumentError("times must be nondecreasing"))
+    options=(;dt,parameters,max_jump_probability,algorithm,abstol,reltol,
+             dtmin,dtmax,event_time_tolerance)
+    ts,options
+end
+
+_trajectory_source_matches(plan::TrajectoryPlan,source::PIModel)=
+    plan.model===source
+_trajectory_source_matches(plan::TrajectoryPlan,source::TrajectoryPlan)=
+    plan===source
+_trajectory_source_matches(plan::TrajectoryPlan,source::CompiledPIModel)=
+    plan.model===source.model&&
+    (plan.liouvillian===source.plan||isempty(source.model.terms))
+
+function _check_trajectory_workspace(work::TrajectoryWorkspace,
+                                     source,rho::PIState)
+    _trajectory_source_matches(work.plan,source)||throw(ArgumentError(
+        "trajectory workspace was prepared for a different model or plan"))
+    rho.basis===work.plan.model.basis||throw(ArgumentError(
+        "state and trajectory workspace use incompatible PI bases"))
+    eltype(work.tmp)===eltype(rho.data)||throw(ArgumentError(
+        "trajectory workspace has an incompatible scalar type"))
+    work
+end
+
+function _check_trajectory_batch_workspace(work::TrajectoryBatchWorkspace,
+                                           source,rho::PIState)
+    _trajectory_source_matches(work.plan,source)||throw(ArgumentError(
+        "trajectory batch workspace was prepared for a different model or plan"))
+    isempty(work.workers)&&throw(ArgumentError(
+        "trajectory batch workspace has no workers"))
+    length(work.workers)==length(work.rngs)||throw(ArgumentError(
+        "trajectory batch workspace has inconsistent worker storage"))
+    work.seeds isa Vector{UInt64}||throw(ArgumentError(
+        "trajectory batch workspace has incompatible seed storage"))
+    all(rng->rng isa AbstractRNG,work.rngs)||throw(ArgumentError(
+        "trajectory batch workspace has incompatible RNG storage"))
+    for worker in work.workers
+        worker.plan===work.plan||throw(ArgumentError(
+            "trajectory batch workers do not share its plan"))
+        rho.basis===worker.plan.model.basis||throw(ArgumentError(
+            "state and trajectory batch workspace use incompatible PI bases"))
+        eltype(worker.tmp)===eltype(rho.data)||throw(ArgumentError(
+            "trajectory batch workspace has an incompatible scalar type"))
+    end
+    work
+end
+
+_plan_for_source(source,rho)=_trajectory_plan_for_state(source,rho)
+
+function _validate_trajectory_initial_state(plan,rho0)
+    rho0.basis===plan.model.basis||throw(ArgumentError(
+        "state and trajectory plan use incompatible PI bases"))
+    R=_real_float_type(eltype(rho0.data))
+    tolerance=max(R(1e-10),R(100)*eps(R))
+    abs(trace(rho0)-one(R))<=tolerance||throw(ArgumentError(
+        "initial state must have unit trace"))
+    nothing
+end
+
+function _quantum_trajectory_prepared(plan,rho0,ts,w,rng,options)
+    b=plan.model.basis;tau=plan.liouvillian.tracevec
+    R=eltype(w.intensities)
+    options.algorithm!==:fixed&&return _event_driven_trajectory(
+        plan,rho0,ts,w,rng,options.parameters,options.dt,options.abstol,
+        options.reltol,options.dtmin,options.dtmax,
+        options.event_time_tolerance)
+    x=w.current;copyto!(x,rho0.data)
+    states=Vector{typeof(rho0)}(undef,length(ts));states[1]=copy(rho0)
+    jt=eltype(ts)[];jc=Int[];t=ts[1]
+    for output_index in 2:length(ts)
+        target=ts[output_index]
+        while t<target
+            h=min(options.dt,target-t)
+            rates=_channel_intensities!(w,x,b,t,options.parameters)
+            lambda=_total_intensity(rates)
+            lambda*h>options.max_jump_probability&&
+                (h=options.max_jump_probability/lambda)
+            _conditional_rk4!(x,w,b,t,h,options.parameters,tau);t+=h
+            rates=_channel_intensities!(w,x,b,t,options.parameters)
+            lambda=_total_intensity(rates)
+            jump_probability=-expm1(-lambda*h)
+            if lambda>0&&rand(rng,typeof(jump_probability))<jump_probability
+                u=rand(rng,typeof(lambda))*lambda
+                channel=_select_jump_channel(rates,u)
+                _apply_gain!(w.channel_gain,x,plan.jumps[channel],b,
+                             w.jump_scales[channel],w.liouvillian_work)
+                z=dot(tau,w.channel_gain)
+                abs(z)>eps(R)||throw(ArgumentError(
+                    "selected jump has zero probability"))
+                copyto!(x,w.channel_gain);x./=z
+                push!(jt,t);push!(jc,channel)
+            end
+        end
+        states[output_index]=PIState(b,x)
     end
     QuantumTrajectory(ts,states,jt,jc)
 end
 
 """
-    quantum_trajectory(model, rho0, times; dt, algorithm=:fixed, rng,
+    quantum_trajectory(source, rho0, times; dt, algorithm=:fixed, rng,
                        parameters=nothing, max_jump_probability=0.05,
                        abstol=1e-9, reltol=1e-7,
-                       dtmin=eps(Float64), dtmax=dt,
+                       dtmin=eps(R), dtmax=dt,
                        event_time_tolerance=1e-10, workspace=nothing)
 
-Simulate one PI quantum-jump trajectory. Local jump channels are unresolved
+Simulate one PI quantum-jump trajectory from a `PIModel`, `CompiledPIModel`,
+or reusable [`TrajectoryPlan`](@ref). Local jump channels are unresolved
 over particle labels and therefore generally produce mixed conditional PI
 states. The fixed step is automatically shortened so the total jump
 probability remains below `max_jump_probability`.
@@ -205,59 +607,145 @@ Dormand--Prince 5(4) method. Jump times are then continuous hazard roots,
 rather than endpoints of Bernoulli time steps. `dt` is the initial adaptive
 step and `dtmax` its upper bound; `abstol`, `reltol`, `dtmin`, and
 `event_time_tolerance` control the adaptive solve. A final step may be shorter
-than `dtmin` solely to land on a requested output time.
+than `dtmin` solely to land on a requested output time. Here `R` is the real
+floating precision of the prepared trajectory. Time grids and explicitly
+supplied controls must be representable in `R` without narrowing; default
+controls are constructed directly in `R`.
 """
-function quantum_trajectory(model::PIModel,rho0::PIState,times;
+function quantum_trajectory(source::Union{PIModel,CompiledPIModel,TrajectoryPlan},
+                            rho0::PIState{R},times;
                             dt::Real, rng::AbstractRNG=Random.default_rng(),parameters=nothing,
-                            max_jump_probability::Real=0.05,workspace=nothing,
-                            algorithm::Symbol=:fixed,abstol::Real=1e-9,
-                            reltol::Real=1e-7,dtmin::Real=eps(Float64),
-                            dtmax::Real=dt,event_time_tolerance::Real=1e-10)
-    dt>0||throw(ArgumentError("dt must be positive"));0<max_jump_probability<1||throw(ArgumentError("max_jump_probability must lie in (0,1)"))
-    algorithm in (:fixed,:event,:adaptive,:event_driven)||throw(ArgumentError("algorithm must be :fixed or :event"))
-    abstol>0||throw(ArgumentError("abstol must be positive"));reltol>0||throw(ArgumentError("reltol must be positive"))
-    dtmin>0||throw(ArgumentError("dtmin must be positive"));dtmax>=dtmin||throw(ArgumentError("dtmax must be at least dtmin"))
-    event_time_tolerance>0||throw(ArgumentError("event_time_tolerance must be positive"))
-    ts=float.(collect(times));isempty(ts)&&throw(ArgumentError("at least one output time is required"));all(diff(ts).>=0)||throw(ArgumentError("times must be nondecreasing"))
-    w=workspace===nothing ? TrajectoryWorkspace(model,rho0) : workspace;b=model.basis;tau=w.liouvillian.tracevec
-    x=copy(rho0);abs(trace(x)-1)<=1e-10||throw(ArgumentError("initial state must have unit trace"))
-    algorithm!==:fixed&&return _event_driven_trajectory(model,rho0,ts,w,rng,parameters,
-        dt,abstol,reltol,dtmin,dtmax,event_time_tolerance)
-    states=typeof(x)[copy(x)];jt=eltype(ts)[];jc=Int[];t=ts[1]
-    for target in ts[2:end]
-        while t<target
-            h=min(float(dt),target-t);rates=_channel_intensities!(w,x.data,b,t,parameters,tau);lambda=sum(rates)
-            lambda*h>max_jump_probability&&(h=max_jump_probability/lambda)
-            _conditional_rk4!(x.data,w,b,t,h,parameters,tau);t+=h
-            rates=_channel_intensities!(w,x.data,b,t,parameters,tau);lambda=sum(rates)
-            if lambda>0 && rand(rng)<1-exp(-lambda*h)
-                u=rand(rng)*lambda;s=0.0;channel=lastindex(rates)
-                for i in eachindex(rates);s+=rates[i];if u<=s;channel=i;break;end;end
-                _apply_gain!(w.channel_gain,x.data,w.kernels.jumps[channel],b,t,parameters,w.liouvillian_work)
-                z=dot(tau,w.channel_gain);abs(z)>eps()||throw(ArgumentError("selected jump has zero probability"))
-                copyto!(x.data,w.channel_gain);x.data./=z;push!(jt,t);push!(jc,channel)
-            end
-        end
-        push!(states,copy(x))
+                            max_jump_probability=nothing,workspace=nothing,
+                            algorithm::Symbol=:fixed,abstol=nothing,
+                            reltol=nothing,dtmin=nothing,
+                            dtmax=nothing,event_time_tolerance=nothing) where {R<:AbstractFloat}
+    if workspace===nothing
+        plan=_plan_for_source(source,rho0);w=TrajectoryWorkspace(plan,rho0)
+    else
+        workspace isa TrajectoryWorkspace||throw(ArgumentError(
+            "workspace must be a TrajectoryWorkspace"))
+        w=_check_trajectory_workspace(workspace,source,rho0);plan=w.plan
     end
-    QuantumTrajectory(ts,states,jt,jc)
+    _validate_trajectory_initial_state(plan,rho0)
+    ts,options=_prepare_trajectory_arguments(times,R;dt,parameters,
+        max_jump_probability,algorithm,abstol,reltol,dtmin,dtmax,
+        event_time_tolerance)
+    _quantum_trajectory_prepared(plan,rho0,ts,w,rng,options)
 end
 
-"""Generate independent PI trajectories with reusable sequential or thread-local workspaces."""
-function quantum_trajectories(model::PIModel,rho0::PIState,times,n::Integer;
-                              seed::Integer=0,threaded::Bool=false,kwargs...)
-    n>0||throw(ArgumentError("trajectory count must be positive"));master=MersenneTwister(seed)
-    seeds=rand(master,UInt64,n);TT=eltype(float.(collect(times)))
+"""
+    quantum_trajectories(source, rho0, times, n; seed=0, threaded=false,
+                         workspace=nothing, trajectory_keywords...)
+
+Generate independent PI trajectories. Model geometry is lowered once per
+batch and shared read-only. Serial execution reuses one worker; threaded
+execution uses dynamically scheduled task-owned workers and small work chunks,
+avoiding scratch races while amortizing atomic scheduling and retaining load
+balance for paths with different jump counts. Random streams are seeded by
+trajectory index, so a fixed seed gives the same ordered results independently
+of scheduling and thread count.
+
+Pass a reusable [`TrajectoryBatchWorkspace`](@ref) to amortize setup across
+several ensembles. A single [`TrajectoryWorkspace`](@ref) is accepted only for
+serial execution. Returned trajectories retain independent time and state
+storage. With `threaded=true`, callable scalar rates and objects supplied via
+`parameters` must themselves be safe for concurrent read/evaluation. Because
+every requested state is returned, output storage scales as
+`n * length(times) * length(rho0.data)`; request only the sampling times needed
+for analysis when state-history memory is limiting.
+"""
+function quantum_trajectories(source::Union{PIModel,CompiledPIModel,TrajectoryPlan},
+        rho0::PIState{R},times,n::Integer;seed::Integer=0,
+        threaded::Bool=false,workspace=nothing,dt::Real,
+        parameters=nothing,max_jump_probability=nothing,
+        algorithm::Symbol=:fixed,abstol=nothing,reltol=nothing,
+        dtmin=nothing,dtmax=nothing,event_time_tolerance=nothing) where {R<:AbstractFloat}
+    n>0||throw(ArgumentError("trajectory count must be positive"))
+    if workspace===nothing
+        plan=_plan_for_source(source,rho0)
+        worker_count=threaded ? min(Int(n),Threads.nthreads()) : 1
+        batch=TrajectoryBatchWorkspace(plan,rho0;workers=worker_count)
+    elseif workspace isa TrajectoryBatchWorkspace
+        batch=_check_trajectory_batch_workspace(workspace,source,rho0)
+        plan=batch.plan
+    elseif workspace isa TrajectoryWorkspace
+        threaded&&throw(ArgumentError(
+            "threaded ensembles require a TrajectoryBatchWorkspace with independent worker scratch"))
+        _check_trajectory_workspace(workspace,source,rho0)
+        plan=workspace.plan
+        batch=nothing
+    else
+        throw(ArgumentError(
+            "workspace must be a TrajectoryWorkspace or TrajectoryBatchWorkspace"))
+    end
+    _validate_trajectory_initial_state(plan,rho0)
+    ts,options=_prepare_trajectory_arguments(times,R;dt,parameters,
+        max_jump_probability,algorithm,abstol,reltol,dtmin,dtmax,
+        event_time_tolerance)
+    if batch===nothing
+        master=MersenneTwister(seed);seeds=rand(master,UInt64,n)
+    else
+        master=batch.rngs[1]
+        Random.seed!(master,seed)
+        resize!(batch.seeds,n);rand!(master,batch.seeds)
+        seeds=batch.seeds
+    end
+    TT=eltype(ts)
     out=Vector{QuantumTrajectory{TT,typeof(rho0)}}(undef,n)
-    if threaded && Threads.nthreads()>1
-        workspaces=[TrajectoryWorkspace(model,rho0) for _ in 1:Threads.nthreads()]
-        Threads.@threads for i in 1:n
-            out[i]=quantum_trajectory(model,rho0,times;rng=MersenneTwister(seeds[i]),workspace=workspaces[Threads.threadid()],kwargs...)
+    if batch===nothing
+        rng=master
+        for i in 1:n
+            Random.seed!(rng,seeds[i])
+            out[i]=_quantum_trajectory_prepared(plan,rho0,copy(ts),workspace,
+                                                rng,options)
         end
     else
-        workspace=TrajectoryWorkspace(model,rho0)
-        for i in 1:n
-            out[i]=quantum_trajectory(model,rho0,times;rng=MersenneTwister(seeds[i]),workspace=workspace,kwargs...)
+        available=length(batch.workers)
+        worker_count=threaded ? min(Int(n),Threads.nthreads(),available) : 1
+        if worker_count==1
+            worker=batch.workers[1];rng=batch.rngs[1]
+            for i in 1:n
+                Random.seed!(rng,seeds[i])
+                out[i]=_quantum_trajectory_prepared(plan,rho0,copy(ts),worker,
+                                                    rng,options)
+            end
+        else
+            # Fetch small chunks rather than one index at a time. This keeps
+            # enough chunks for load balance while amortizing atomic traffic
+            # when thousands of short paths are requested.
+            chunk_size=max(1,Int(n)÷(8worker_count))
+            next_index=Threads.Atomic{Int}(1)
+            @sync for worker_index in 1:worker_count
+                # Bind task-owned resources outside the spawned closure. A
+                # captured loop index is otherwise boxed and can make several
+                # tasks select the same mutable workspace/RNG.
+                let worker=batch.workers[worker_index],
+                    rng=batch.rngs[worker_index],
+                    trajectory_plan=plan,
+                    trajectory_seeds=seeds,
+                    trajectory_times=ts,
+                    trajectory_options=options,
+                    initial_state=rho0,
+                    results=out,
+                    path_count=Int(n),
+                    counter=next_index,
+                    chunk=chunk_size
+                    Threads.@spawn begin
+                        while true
+                            first_index=Threads.atomic_add!(counter,chunk)
+                            first_index>path_count&&break
+                            final_index=min(path_count,first_index+chunk-1)
+                            for i in first_index:final_index
+                                Random.seed!(rng,trajectory_seeds[i])
+                                results[i]=_quantum_trajectory_prepared(
+                                    trajectory_plan,initial_state,
+                                    copy(trajectory_times),worker,rng,
+                                    trajectory_options)
+                            end
+                        end
+                    end
+                end
+            end
         end
     end
     out

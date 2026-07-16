@@ -32,6 +32,35 @@ end
     exact=shammah2018_thermal_state(m.basis;down=1.0,up=.3)
     @test steady_state(m) ≈ exact.data atol=2e-9
 
+    # Zhang--Zhang--Mølmer Eq. (1), decay-only specialization.  These two
+    # Dicke states fix both ladder conventions and every rate prefactor in
+    # Ic=GammaC<J+J-> and Ifs=gammaL(N/2+<Jz>).
+    zhang=zhang2018_superradiance_model(4;GammaC=.3,gammaL=.7)
+    radiation=zhang2018_radiation_operators(
+        zhang.basis;GammaC=.3,gammaL=.7)
+    fully_excited=iid_pure_state(zhang.basis,ComplexF64[0,1])
+    central=dicke_state(zhang.basis,2,0)
+    ground=iid_pure_state(zhang.basis,ComplexF64[1,0])
+    @test real(expectation(fully_excited,radiation.cavity))≈.3*4 atol=2e-13
+    @test real(expectation(fully_excited,radiation.free_space))≈.7*4 atol=2e-13
+    @test real(expectation(central,radiation.cavity))≈.3*6 atol=2e-13
+    @test real(expectation(central,radiation.free_space))≈.7*2 atol=2e-13
+    @test iszero(real(expectation(ground,radiation.cavity)))
+    @test iszero(real(expectation(ground,radiation.free_space)))
+    zhang_populations=PopulationPlan(zhang)
+    @test zhang_populations.invariance.invariant===true
+    @test size(population_generator(
+        zhang_populations;representation=:sparse))==(9,9)
+    zhang32=zhang2018_superradiance_model(
+        2;GammaC=Float32(.3),gammaL=Float32(.7))
+    radiation32=zhang2018_radiation_operators(
+        zhang32.basis;GammaC=Float32(.3),gammaL=Float32(.7))
+    @test eltype(liouvillian(zhang32;representation=:sparse))===ComplexF32
+    @test eltype(radiation32.cavity.data)===ComplexF32
+    @test eltype(radiation32.free_space.data)===ComplexF32
+    @test_throws ArgumentError zhang2018_superradiance_model(0)
+    @test_throws ArgumentError zhang2018_superradiance_model(2;gammaL=-1)
+
     for gamma in (0.12,0.3)
         m=morrison2008_model(4;Omega=.2,gamma=gamma)
         exact=morrison2008_exact_state(m.basis;Omega=.2,gamma=gamma)
@@ -91,9 +120,45 @@ end
         @test check_generator(m).trace_preservation_error < 2e-10
         L=liouvillian(m;representation=:sparse)
         @test size(L)==(commutant_dimension(3,d),commutant_dimension(3,d))
+
+        # The body-resolved lowering must retain the factor of two in the
+        # unordered-pair term and exactly reproduce V*(Jx^2-Jy^2)/(N*j).
+        s=spin_matrices(d)
+        Jx=collective_operator(m.basis,s.jx)
+        Jy=collective_operator(m.basis,s.jy)
+        H=(Jx*Jx-Jy*Jy)*(1/(3*s.j))
+        direct=PIModel(m.basis,(DirectPIHamiltonian(H),m.terms[end-1:end]...))
+        @test Matrix(L)≈Matrix(liouvillian(direct;representation=:sparse)) atol=3e-12 rtol=3e-12
     end
+
+
+    # For qubits the thermodynamic lowering reproduces the article's Bloch
+    # equations (10a-c), not the special gammaI=0 family in Eq. (11).
+    N=8;V=1.0;gammaI=0.7;gammaC=0.2;s=spin_matrices(2)
+    meanfield_model=pausch2024_model(
+        N,2;V=V,gammaI=gammaI,gammaC=gammaC)
+    plan=MeanFieldPlan(meanfield_model;limit=:thermodynamic)
+    X=0.2;Y=-0.3;Z=-0.4
+    sigma=Matrix{ComplexF64}(I,2,2)/2+X*s.jx+Y*s.jy+Z*s.jz
+    derivative=meanfield_rhs(plan,sigma)
+    numerical=(real(meanfield_expectation(derivative,s.jx))/s.j,
+               real(meanfield_expectation(derivative,s.jy))/s.j,
+               real(meanfield_expectation(derivative,s.jz))/s.j)
+    article=(-2V*Y*Z-gammaI*X+gammaC*X*Z,
+             -2V*X*Z-gammaI*Y+gammaC*Y*Z,
+             4V*X*Y-2gammaI*(Z+1)-gammaC*(X^2+Y^2))
+    @test collect(numerical)≈collect(article) atol=3e-12 rtol=3e-12
+
     # At V=0, decay drives the exactly polarized |-j> tensor power to itself.
     m=pausch2024_model(4,2;V=0,gammaI=.7,gammaC=.3)
     ground=iid_pure_state(m.basis,ComplexF64[1,0])
     @test norm(liouvillian(m;representation=:sparse)*ground.data)<2e-12
+
+    # The N=1 edge case has no two-particle Hamiltonian term, but retains a
+    # valid microscopic model and therefore remains mean-field compatible.
+    single=pausch2024_model(1,2;V=.6,gammaI=.4,gammaC=.1)
+    @test length(single.terms)==3
+    @test MeanFieldPlan(single;limit=:finite) isa MeanFieldPlan
+    @test_throws ArgumentError pausch2024_model(0,2)
+    @test_throws ArgumentError pausch2024_model(2,1)
 end

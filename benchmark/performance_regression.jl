@@ -44,6 +44,17 @@ if Threads.nthreads()>1
                          atol=2e-11,rtol=2e-11) for i in eachindex(inputs))
 end
 
+trajectory_state=PIState(b,copy(x))
+trajectory_plan=TrajectoryPlan(model)
+trajectory_batch=TrajectoryBatchWorkspace(trajectory_plan,trajectory_state;workers=1)
+quantum_trajectories(trajectory_plan,trajectory_state,[0.0,0.05],16;
+    dt=0.01,seed=81,workspace=trajectory_batch)
+trajectory_batch_alloc=@allocated quantum_trajectories(
+    trajectory_plan,trajectory_state,[0.0,0.05],16;
+    dt=0.01,seed=81,workspace=trajectory_batch)
+@assert trajectory_batch_alloc<=256*1024 "reused trajectory batch allocated $trajectory_batch_alloc bytes"
+@assert trajectory_batch.workers[1].plan===trajectory_plan
+
 population_model=qubit_ensemble_model(b;
     hamiltonian=spin_matrices().jz,
     emission=0.4,dephasing=0.1,pumping=0.07,
@@ -97,4 +108,4 @@ meanfield_alloc=@allocated meanfield_rhs!(meanfield_out,meanfield,sigma,0.0,noth
 @assert meanfield_alloc<=256 "explicit-workspace mean-field RHS allocated $meanfield_alloc bytes"
 @assert abs(tr(meanfield_out))<=1e-12 "mean-field RHS did not preserve trace"
 
-println("Performance regression gates passed (threads=$(Threads.nthreads()), apply_alloc=$allocated, batch_alloc=$batch_alloc, batch_adjoint_alloc=$batch_adjoint_alloc, population_apply_alloc=$population_apply_alloc, population_evolve_alloc=$population_evolve_alloc, observable_alloc=$planned, reduction_alloc=$reduction_alloc, reduction_inplace_alloc=$reduction_inplace_alloc, meanfield_alloc=$meanfield_alloc)")
+println("Performance regression gates passed (threads=$(Threads.nthreads()), apply_alloc=$allocated, batch_alloc=$batch_alloc, batch_adjoint_alloc=$batch_adjoint_alloc, trajectory_batch_alloc=$trajectory_batch_alloc, population_apply_alloc=$population_apply_alloc, population_evolve_alloc=$population_evolve_alloc, observable_alloc=$planned, reduction_alloc=$reduction_alloc, reduction_inplace_alloc=$reduction_inplace_alloc, meanfield_alloc=$meanfield_alloc)")

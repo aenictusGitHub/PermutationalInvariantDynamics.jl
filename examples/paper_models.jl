@@ -7,7 +7,8 @@ export spin_matrices, damanet2016_model, damanet2016_intensity_operator,
        damanet2016_intensity_exact, pausch2024_model, kitagawa1993_oat_model,
        kitagawa1993_mean_spin_exact, huelga1997_dephasing_model,
        huelga1997_ramsey_exact, shammah2018_thermal_model,
-       shammah2018_thermal_state
+       shammah2018_thermal_state, zhang2018_superradiance_model,
+       zhang2018_radiation_operators
 export morrison2008_model, morrison2008_exact_state,
        meiser2009_superradiance_model, iemini2018_btc_model,
        nakanishi2023_pt_model, nakanishi2023_pt_spectrum,
@@ -35,15 +36,27 @@ function damanet2016_intensity_exact(t;gamma0=1.0,gamma=gamma0)
         (2gamma+dg)^3*(exp(dg*t)-1)+dg^3*(exp((2gamma+dg)*t)-1))
 end
 
-"""PRA 110, 062208 (2024), Eqs. (2)-(6)."""
+"""PRA 110, 062208 (2024), Eqs. (2)-(6), with microscopic body order retained."""
 function pausch2024_model(N,d;V=1.0,gammaI=0.0,gammaC=0.0,dissipator=:spin)
+    N>=1||throw(ArgumentError("the Pausch model requires N >= 1"))
+    d>=2||throw(ArgumentError("the Pausch model requires a nonzero spin (d >= 2)"))
     s=spin_matrices(d); b=PIBasis(N,d)
-    Jx=collective_operator(b,s.jx); Jy=collective_operator(b,s.jy)
-    H=(Jx*Jx-Jy*Jy)*(V/(N*s.j))
+
+    # This is exactly V*(Jx^2-Jy^2)/(N*j).  Keeping the one- and two-body
+    # pieces supplies MeanFieldPlan with the microscopic provenance that a
+    # preassembled DirectPIHamiltonian cannot retain.  The local piece
+    # vanishes for qubits, but is needed for higher spins.
+    h1=s.jx*s.jx-s.jy*s.jy
+    h2=kron(s.jx,s.jx)-kron(s.jy,s.jy)
+    hamiltonian_terms=b.N==1 ?
+        (LocalHamiltonian(h1;rate=V/(b.N*s.j)),) :
+        (LocalHamiltonian(h1;rate=V/(b.N*s.j)),
+         PBodyHamiltonian(h2,2;rate=2V/(b.N*s.j)))
     ell = dissipator===:spin ? s.jm : dissipator===:equal ?
-        sqrt(2s.j)*diagm(1=>ones(ComplexF64,d-1)) : throw(ArgumentError("dissipator must be :spin or :equal"))
-    PIModel(b,[DirectPIHamiltonian(H),LocalJump(ell;rate=gammaI/s.j),
-               CollectiveJump(ell;rate=gammaC/(N*s.j))])
+        sqrt(2s.j)*diagm(1=>ones(ComplexF64,b.d-1)) : throw(ArgumentError("dissipator must be :spin or :equal"))
+    PIModel(b,(hamiltonian_terms...,
+               LocalJump(ell;rate=gammaI/s.j),
+               CollectiveJump(ell;rate=gammaC/(b.N*s.j))))
 end
 
 """Kitagawa--Ueda, PRA 47, 5138 (1993): `H=chi*Jz^2`."""
@@ -68,6 +81,37 @@ function shammah2018_thermal_model(N;down=1.0,up=0.25)
 end
 function shammah2018_thermal_state(b;down=1.0,up=0.25)
     iid_state(b,ComplexF64[down 0;0 up]/(down+up))
+end
+
+"""
+Zhang, Zhang, and Mølmer, NJP 20, 112001 (2018), Eq. (1), restricted to
+collective cavity decay and individual free-space decay.
+
+The package convention is `D[L]ρ=LρL†-{L†L,ρ}/2`.  Consequently the
+positive rates below are the paper's `GammaC` and `gammaL` without an extra
+factor of two.
+"""
+function zhang2018_superradiance_model(N;GammaC=1.0,gammaL=zero(GammaC))
+    N>=1||throw(ArgumentError("the Zhang--Mølmer model requires N >= 1"))
+    GammaC>=0||throw(ArgumentError("GammaC must be nonnegative"))
+    gammaL>=0||throw(ArgumentError("gammaL must be nonnegative"))
+    R=promote_type(typeof(float(GammaC)),typeof(float(gammaL)))
+    b=PIBasis(N,2);sm=spin_matrices(2;T=R).jm
+    PIModel(b,(CollectiveJump(sm;rate=GammaC),
+               LocalJump(sm;rate=gammaL)))
+end
+
+"""Cavity and free-space photon-flux operators for the Zhang--Mølmer model."""
+function zhang2018_radiation_operators(b;GammaC=1.0,gammaL=zero(GammaC))
+    b.d==2||throw(ArgumentError("the radiation operators require a qubit basis"))
+    GammaC>=0||throw(ArgumentError("GammaC must be nonnegative"))
+    gammaL>=0||throw(ArgumentError("gammaL must be nonnegative"))
+    R=promote_type(typeof(float(GammaC)),typeof(float(gammaL)))
+    sm=spin_matrices(2;T=R).jm
+    cache=OneBodyGeometry(b;T=R)
+    Jm=collective_operator(b,sm;cache)
+    excitation=collective_operator(b,adjoint(sm)*sm;cache)
+    (;cavity=GammaC*(adjoint(Jm)*Jm),free_space=gammaL*excitation)
 end
 
 """Morrison--Parkins, PRA 77, 043810 (2008), Eq. (1)."""

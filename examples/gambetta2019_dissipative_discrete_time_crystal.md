@@ -125,11 +125,28 @@ the increasing lifetime at \(N=12,20,28\); thermodynamic claims require such a
 size-scaling analysis. The present example is deliberately a fast regression
 of the PI mapping, segment order, pulse convention, and Floquet spectrum.
 
+## Makie figure
+
+When CairoMakie is available, the left panel shows every finite-`N` Floquet
+multiplier against the unit circle and highlights both the stationary root and
+the negative subharmonic multiplier. The right panel shows the stroboscopic
+`Sx/N` deviation from its Floquet stationary value after the initial period,
+with alternating periods colored separately. Since the highlighted multiplier has
+`abs(epsilon_-) < 1`, the alternation visibly decays; the panel is explicitly
+a finite-size precursor and not a phase diagnosis.
+
+PDF and PNG versions are written with the stem
+`gambetta2019_dissipative_discrete_time_crystal` in the configured
+example-figure directory.
+
 ## Run
 
 ```sh
-julia --project=. examples/gambetta2019_dissipative_discrete_time_crystal.jl
+julia --project=examples examples/gambetta2019_dissipative_discrete_time_crystal.jl
 ```
+
+Use `--project=.` to run only against the core environment; all assertions
+remain active when the optional CairoMakie figure is skipped.
 
 Increase both segment step counts together when changing parameters. A single
 uniform integration over the full period must resolve \(t_R=0.01\) and is much

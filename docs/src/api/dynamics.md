@@ -44,7 +44,9 @@ stationary_populations
 
 ```@docs
 QuantumTrajectory
+TrajectoryPlan
 TrajectoryWorkspace
+TrajectoryBatchWorkspace
 quantum_trajectory
 quantum_trajectories
 trajectory_average

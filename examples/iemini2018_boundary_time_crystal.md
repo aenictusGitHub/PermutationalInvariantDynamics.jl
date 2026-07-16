@@ -29,10 +29,19 @@ needed and can exploit identified weak-symmetry blocks. Requesting the complete
 dense spectrum in this small example is intentional because the literature
 comparison also tracks the oscillatory branch.
 
+## Makie figure
+
+The optional CairoMakie figure presents the finite-size scaling against
+`1/N` in three aligned panels: the Liouvillian gap, the decay rate of the slow
+oscillatory mode, and its oscillation frequency. The stationary and
+time-crystalline parameter ratios use consistent colours and markers, making
+the gap closing and long-lived oscillatory branch directly comparable. PDF
+and PNG copies are saved as `iemini2018_boundary_time_crystal.*`.
+
 ## Run
 
 ```sh
-julia --project=. examples/iemini2018_boundary_time_crystal.jl
+julia --project=examples examples/iemini2018_boundary_time_crystal.jl
 ```
 
 The ordered finite-size results show gap closing in the oscillatory regime;

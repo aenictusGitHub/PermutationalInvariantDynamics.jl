@@ -2,6 +2,8 @@ using LinearAlgebra
 using PermutationalInvariantDynamics
 include("paper_models.jl")
 using .PaperModels
+include(joinpath(@__DIR__, "utils", "makie_support.jl"))
+using .ExampleMakie
 
 # A. Piccitto et al., Phys. Rev. B 104, 014307 (2021),
 # p = 2, q = 1 model and the oscillatory regime of Figs. 6 and 8.
@@ -53,3 +55,33 @@ end
 println("decay ratio N=$(sizes[end]) / N=$(sizes[1]) = ",
         decay_rates[end] / decay_rates[1])
 println("resolved frequencies = ", frequencies)
+
+if makie_available()
+    M = makie_module()
+    plotted_sizes = collect(sizes)
+    figure = M.Figure(size=(1050, 450), fontsize=17)
+    decay_axis = M.Axis(
+        figure[1, 1]; xlabel="particle number N", ylabel="decay rate -Re(λ)",
+        title="Slow oscillatory-mode decay")
+    frequency_axis = M.Axis(
+        figure[1, 2]; xlabel="particle number N", ylabel="frequency |Im(λ)|",
+        title="Slow oscillatory-mode frequency")
+
+    M.lines!(decay_axis, plotted_sizes, decay_rates;
+             color=:firebrick, linewidth=2.7)
+    M.scatter!(decay_axis, plotted_sizes, decay_rates;
+               color=:firebrick, markersize=11, label="finite-N PI spectrum")
+    M.axislegend(decay_axis; position=:rt, labelsize=12)
+
+    M.lines!(frequency_axis, plotted_sizes, frequencies;
+             color=:royalblue, linewidth=2.7)
+    M.scatter!(frequency_axis, plotted_sizes, frequencies;
+               color=:royalblue, markersize=11, label="finite-N PI spectrum")
+    M.axislegend(frequency_axis; position=:rb, labelsize=12)
+
+    M.Label(
+        figure[2, 1:2],
+        "Three modest sizes resolve a precursor; no asymptotic exponent is fitted.";
+        fontsize=14, color=:gray35, tellwidth=false)
+    save_example_figure(figure, "piccitto2021_interacting_time_crystal")
+end

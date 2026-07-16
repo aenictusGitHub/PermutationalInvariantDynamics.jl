@@ -38,6 +38,10 @@ threading contracts.
   `LiouvillianWorkspace`, `EvolutionWorkspace`, `KrylovWorkspace`,
   `ArnoldiWorkspace`, `SymmetryProjectorWorkspace`, and `ReductionWorkspace`
   hold mutable scratch.
+- `TrajectoryPlan` holds one immutable fixed-operator jump lowering.
+  `TrajectoryWorkspace` owns one path's integration buffers, while
+  `TrajectoryBatchWorkspace` owns task-local workspaces and RNGs for repeated
+  ensembles. One batch workspace must not serve concurrent ensemble calls.
 - `PopulationPlan` stores the certified sparse action on multiplicity-weighted
   Schur-diagonal probabilities. `PopulationWorkspace` owns its application and
   RK4 scratch. Certification is exact by default, compile-only coordinate

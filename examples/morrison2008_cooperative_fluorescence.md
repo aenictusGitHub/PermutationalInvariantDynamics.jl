@@ -25,10 +25,19 @@ inverse collective-spin expression. The two spin observables share one
 reports the state distance and collective-spin expectations; its comments
 document the axis and sign convention needed when comparing formulas.
 
+## Makie figure
+
+The optional CairoMakie output overlays the normalized numerical
+polarizations with those obtained from the article's exact finite-size state.
+A companion logarithmic panel shows the full PI coefficient-vector error, so
+visual agreement of the two observables is backed by the stronger state-level
+validation. PDF and PNG copies are saved as
+`morrison2008_cooperative_fluorescence.*`.
+
 ## Run
 
 ```sh
-julia --project=. examples/morrison2008_cooperative_fluorescence.jl
+julia --project=examples examples/morrison2008_cooperative_fluorescence.jl
 ```
 
 Small residuals and state distance provide stronger validation than matching

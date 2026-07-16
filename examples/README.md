@@ -24,6 +24,31 @@ purity, or negativity is evaluated repeatedly. The examples that explicitly
 compare sparse and matrix-free generators, matrix exponentials, or individual
 Krylov algorithms intentionally use the lower-level API for those checks.
 
+## Makie figures
+
+The literature and trajectory examples use CairoMakie for publication-style
+figures without making Makie a dependency of the core package. Every
+standalone paper-specific example now has an optional numerical figure; the
+generic backend and visualization demonstrations retain their dependency-free
+output. Prepare the separate examples environment once from the repository
+root:
+
+```sh
+julia --project=examples -e 'using Pkg; Pkg.develop(path="."); Pkg.instantiate()'
+```
+
+Then run a figure-producing example with, for example,
+
+```sh
+julia --project=examples examples/pra94_033838_superradiance.jl
+```
+
+Figures display in Makie-capable front ends and are saved as both PDF and PNG
+under the ignored `examples/figures/` directory. Set
+`PI_EXAMPLE_FIGURE_DIR=/path/to/output` to choose another destination. The
+same scripts still perform all numerical assertions when run from the root
+environment without CairoMakie; only the figure-generation step is skipped.
+
 | Example | Guide | Topic |
 |---|---|---|
 | `driven_qubits.jl` | [Driven qubits](driven_qubits.md) | Coherent drive and local decay |
@@ -39,21 +64,29 @@ Krylov algorithms intentionally use the lower-level API for those checks.
 | `paper_models.jl` | [Paper model constructors](paper_models.md) | Reusable literature models |
 | `pbody_pair_processes.jl` | [Pair processes](pbody_pair_processes.md) | Appendix-D p-body terms |
 | `piccitto2021_interacting_time_crystal.jl` | [Interacting boundary time crystal](piccitto2021_interacting_time_crystal.md) | Nonlinear collective-spin slow modes |
-| `pra110_062208_lmg.jl` | [Dissipative LMG model](pra110_062208_lmg.md) | Finite-size transition diagnostics |
-| `pra94_033838_superradiance.jl` | [Correlated superradiance](pra94_033838_superradiance.md) | Correlated emission benchmark |
+| `pra110_062208_lmg.jl` | [Dissipative LMG model](pra110_062208_lmg.md) | Exact finite PI versus finite-product and thermodynamic mean-field predictions |
+| `pra94_033838_superradiance.jl` | [Correlated superradiance](pra94_033838_superradiance.md) | Two-atom analytic benchmark, `N=30` radiated pulse, and peak-state Schur blocks |
 | `qubit_population_dynamics.jl` | [Certified qubit population dynamics](qubit_population_dynamics.md) | Six-rate model, reduced population evolution, and stationary populations |
-| `quantum_trajectories.jl` | [Quantum trajectories](quantum_trajectories.md) | PI quantum-jump ensembles and statistics |
+| `quantum_trajectories.jl` | [Analytic Mølmer trajectory benchmark](quantum_trajectories.md) | Independent-emitter state, count, and no-jump laws |
 | `schur_block_visualization.jl` | [Schur-block visualization](schur_block_visualization.md) | Steady-state blocks, Young-diagram labels, compressed density spectrum, and superoperator couplings as SVG |
 | `spectral_visualization.jl` | [Spectral visualization](spectral_visualization.md) | Liouvillian eigenvalues and Floquet multiplier/exponent SVGs |
 | `shammah2018_local_pumping.jl` | [Local pumping](shammah2018_local_pumping.md) | Exact thermal product state |
 | `spin_phase_space.jl` | [Sector-resolved spin phase space](spin_phase_space.md) | Multi-sector Husimi-Q and spin-Wigner data with dependency-free SVG rendering |
 | `steady_state_methods.jl` | [Steady-state solvers](steady_state_methods.md) | Typed solver choices, shift-invert, matrix-free GMRES, and preconditioning |
+| `zhang2018_superradiant_trajectories.jl` | [Zhang--Mølmer superradiant trajectories](zhang2018_superradiant_trajectories.md) | Collective/local radiated pulses: trajectory ensemble versus population master equation |
 
-Run an example from the package root with:
+Run a numerical example from the package root with:
 
 ```sh
 julia --project=. examples/<name>.jl
 ```
+
+Use `--project=examples` for the Makie-enabled literature scripts: the
+year-named examples in the table, both `pra*.jl` validations,
+`quantum_trajectories.jl`, and `meanfield_time_crystal.jl`. Each paired guide
+describes its panels and output stem. Running the same script with
+`--project=.` keeps all numerical assertions and skips only the optional
+Makie block.
 
 Fixed-step, Arnoldi, Floquet, and trajectory results must be convergence-tested
 in their step size, Krylov dimension, period discretization, or ensemble size.

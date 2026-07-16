@@ -40,6 +40,10 @@ SUITE["QFI N=20 d=2"] = @benchmarkable qfi($rho,$sx)
 SUITE["entropy N=20 d=2"] = @benchmarkable von_neumann_entropy($rho)
 bt = PIBasis(6,2); rt = iid_pure_state(bt,ComplexF64[0,1]); mt = PIModel(bt,[LocalJump(sm)])
 SUITE["100 PI trajectories N=6 d=2"] = @benchmarkable quantum_trajectories($mt,$rt,[0.0,0.2],100;dt=0.01,seed=1)
+trajectory_plan=TrajectoryPlan(mt)
+trajectory_batch=TrajectoryBatchWorkspace(trajectory_plan,rt;workers=1)
+SUITE["100 reused-plan PI trajectories N=6 d=2"] = @benchmarkable quantum_trajectories(
+    $trajectory_plan,$rt,[0.0,0.2],100;dt=0.01,seed=1,workspace=$trajectory_batch)
 
 bq = PIBasis(8,3); rhoq = maximally_mixed_state(bq)
 SUITE["qudit reduced state N=8 d=3"] = @benchmarkable reduced_state($rhoq,4)

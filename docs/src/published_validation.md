@@ -15,9 +15,56 @@ Three further examples reproduce finite-size reference results:
 The Huelga and Kitagawa--Ueda scripts compile a matrix-free model once and use
 `solve_dynamics` for typed saved states. Both reuse a
 `CollectiveObservablePlan` for every sampled mean spin; Kitagawa--Ueda also
-reuses one `ReductionPlan` for the final one-particle purity. The Shammah
-example uses the typed `stationary_state(...; return_info=true)` result and
-checks `diagnostics` before comparison with the exact product state.
+reuses one `ReductionPlan` for the time-resolved one-particle purity. The
+Shammah example uses the typed `stationary_state(...; return_info=true)`
+result and checks `diagnostics` before comparison with the exact product state.
+
+With the examples-only CairoMakie environment, these validations also produce
+PDF/PNG summaries. Huelga overlays the Ramsey signal with its exponential law
+and reports the pointwise error; Kitagawa--Ueda combines the exact mean-spin
+curve with the generated one-spin mixedness; Shammah resolves the thermal
+steady state by total-spin sector and physical Schur-block eigenvalue. Plotting
+therefore reuses the same checked numerical arrays rather than introducing a
+second calculation path.
+
+## Quantum-trajectory literature benchmarks
+
+`examples/quantum_trajectories.jl` turns independent spontaneous emission into
+an analytical regression for the Monte Carlo wave-function method of
+Dalibard, Castin, and Mølmer, *Phys. Rev. Lett.* **68**, 580 (1992), and
+Mølmer, Castin, and Dalibard, *J. Opt. Soc. Am. B* **10**, 524 (1993). It
+compares the event-driven PI ensemble with the exact tensor-power state
+``p_e(t)=e^{-\gamma t}``, the binomial excitation and photon-count laws, and
+the exact no-jump probability. Stochastic assertions are expressed in
+analytical standard-error units rather than as a brittle absolute tolerance.
+
+`examples/zhang2018_superradiant_trajectories.jl` implements the decay-only
+specialization of Eq. (1) and the two rate ratios of Fig. 2(a,b) in Zhang,
+Zhang, and Mølmer, *New J. Phys.* **20**, 112001 (2018). The default
+``N=10``, 256-path run compares cavity and free-space radiation against a
+deterministically exponentiated, certified 36-coordinate population generator.
+It is a finite-size regression of the published model and observables; the
+paper used ``N=50`` and 512 paths.
+
+The conditional records require a precise distinction. The article resolves
+local events into total-spin-sector shifts and propagates pure symbolic Dicke
+pseudo-states. The package's particle-unresolved local gain map instead gives
+a generally mixed conditional PI state. Their master equation and linear
+ensemble observables agree, but individual ``(J,M)`` paths and trajectory
+variances are not compared. Lloyd, Ziolkowska, and Keeling's 2026
+permutation-symmetric trajectory construction is noted in the example guide;
+its published tests require a shared bosonic cavity factor that is currently
+outside this package's spin-only state space.
+
+When run with `--project=examples`, every standalone literature validation
+produces a CairoMakie PDF/PNG figure. The trajectory panels show deterministic
+curves, ensemble means, and one-standard-error bands. Damanet and Pausch add
+radiated-pulse/Schur-population and gap/mean-field summaries. Morrison--Parkins,
+Meiser--Holland, and the metrology examples visualize their validated steady
+observables or analytical comparisons. The boundary, interacting, PT, and
+Floquet time-crystal scripts pair finite-size spectra or gaps with the relevant
+dynamics and retain their finite-size caveats. Makie remains confined to the
+examples environment.
 
 ## Cooperative spontaneous emission (2016)
 
@@ -35,6 +82,15 @@ the independent small-`N` reference route. Tests compare 31 points on each
 curve to Eqs. (41)--(43); the measured maximum absolute error is `1.4e-15` on
 Julia 1.12.6.
 
+It then computes the altered-superradiance pulse for `N=30` and
+``\Delta\gamma/\gamma_0=0.4``. Since the fully excited state remains diagonal
+in the Schur/GT basis, a certified `PopulationPlan` evolves 256 physical
+populations instead of all 5,456 PI coordinates. Equation (39) is evaluated
+from prepared physical-block diagonals, and the density operator at the pulse
+maximum is rendered as multiplicity-weighted Schur-sector populations with
+Young-diagram labels. Neither calculation materializes a length-``2^{30}``
+state vector or a ``2^{30}\times2^{30}`` density matrix.
+
 ## Dissipative LMG model (2024)
 
 `examples/pra110_062208_lmg.jl` implements Eqs. (1)--(6) of Pausch *et al.*,
@@ -47,9 +103,29 @@ H=\frac{V}{Nj}(J_x^2-J_y^2),\qquad
 ```
 
 Both the spin-ladder and equal-matrix-element dissipators are covered for
-qubits and qutrits. The example reports the finite-size gap across the
-mean-field transition `(gammaI+gammaC)/abs(V)=2` and compares the scaled
-steady-state polarization with Eq. (11). It uses a compiled sparse model, a
-typed `DirectAlgorithm` stationary result, and a prepared `Jz` observable.
-Finite-size values are not expected to equal the thermodynamic mean-field curve
-exactly.
+qubits and qutrits. The collective quadratic Hamiltonian is lowered exactly to
+its one-body self term and symmetric two-body cross term. This produces the
+same finite PI Liouvillian as the direct ``J_x^2-J_y^2`` construction while
+retaining the microscopic body order needed by `MeanFieldPlan`.
+
+The qubit example reports the finite-size gap across the transition
+`(gammaI+gammaC)/abs(V)=2` and compares three distinct predictions: the exact
+correlated `N=8` PI steady state, the finite-`N` product closure, and the
+thermodynamic mean-field fixed point following Eqs. (10). The last is also
+checked against the analytical branch and its numerical fixed-point residual.
+Equation (11) is not used: it concerns the singular collective-only case
+``\gamma_I=0``.
+
+The finite steady state restores the ``\mathbb Z_2`` symmetry and consequently
+has zero transverse one-body order. The comparison therefore uses the
+branch-independent polarization ``Z`` and the parity-even pair correlator
+
+```math
+C_\perp=\frac{\langle J_x^2\rangle+\langle J_y^2\rangle-2Nj^2}
+              {2N(N-1)j^2},
+```
+
+whose product-state prediction is ``(X^2+Y^2)/2``. The exact moments use
+prepared collective-observable contractions. Finite PI, finite product
+closure, and thermodynamic mean field are deliberately not identified with
+one another after correlations develop.

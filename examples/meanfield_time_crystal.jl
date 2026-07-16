@@ -3,6 +3,8 @@ using PermutationalInvariantDynamics
 
 include("paper_models.jl")
 using .PaperModels
+include(joinpath(@__DIR__, "utils", "makie_support.jl"))
+using .ExampleMakie
 
 # Y. Nakanishi and T. Sasamoto, Phys. Rev. A 107, L010201
 # (2023), balanced one-spin PT model.  The example compares three distinct
@@ -92,6 +94,57 @@ function main()
     @assert pi_formula_error < 3e-7
     @assert pi_closure_error < 3e-7
     @assert trace_derivative < 2e-13
+
+    if makie_available()
+        M = makie_module()
+        error_floor = eps(Float64)
+        finite_curve_error = abs.(finite_magnetization .- exact_finite)
+        thermodynamic_curve_error = abs.(
+            thermodynamic_magnetization .- exact_thermodynamic)
+        pi_curve_error = abs.(pi_magnetization .- exact_finite)
+
+        figure = M.Figure(size=(1180, 470), fontsize=17)
+        magnetization_axis = M.Axis(
+            figure[1, 1]; xlabel="time", ylabel="longitudinal magnetization",
+            title="Finite and thermodynamic predictions")
+        error_axis = M.Axis(
+            figure[1, 2]; xlabel="time", ylabel="absolute curve error",
+            yscale=log10, title="Analytical validation")
+
+        M.lines!(magnetization_axis, times, exact_finite;
+                 color=:black, linewidth=2.8, label="exact finite-N")
+        M.scatter!(magnetization_axis, times, pi_magnetization;
+                   color=:royalblue, markersize=7, label="exact PI, N=$N")
+        M.lines!(magnetization_axis, times, finite_magnetization;
+                 color=:darkorange, linewidth=2.1, linestyle=:dash,
+                 label="finite product closure")
+        M.lines!(magnetization_axis, times, exact_thermodynamic;
+                 color=:seagreen, linewidth=2.5,
+                 label="thermodynamic cos(gt)")
+        M.scatter!(magnetization_axis, times, thermodynamic_magnetization;
+                   color=:seagreen, marker=:diamond, markersize=6,
+                   label="thermodynamic closure")
+        M.hlines!(magnetization_axis, [0.0]; color=:gray75, linewidth=1)
+        M.axislegend(magnetization_axis; position=:lb, labelsize=11)
+
+        M.lines!(error_axis, times, max.(finite_curve_error, error_floor);
+                 color=:darkorange, linewidth=2.3,
+                 label="finite product vs formula")
+        M.lines!(error_axis, times, max.(pi_curve_error, error_floor);
+                 color=:royalblue, linewidth=2.3,
+                 label="exact PI vs formula")
+        M.lines!(error_axis, times,
+                 max.(thermodynamic_curve_error, error_floor);
+                 color=:seagreen, linewidth=2.3,
+                 label="thermodynamic vs cos(gt)")
+        M.axislegend(error_axis; position=:rt, labelsize=11)
+
+        M.Label(
+            figure[2, 1:2],
+            "The undamped curve is a thermodynamic closure; both finite-N curves decay.";
+            fontsize=14, color=:gray35, tellwidth=false)
+        save_example_figure(figure, "meanfield_time_crystal")
+    end
 end
 
 main()

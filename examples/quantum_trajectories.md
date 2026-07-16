@@ -1,51 +1,93 @@
-# Quantum trajectories and trajectory statistics
+# Quantum trajectories: an analytic Mølmer benchmark
 
 Source: [`quantum_trajectories.jl`](quantum_trajectories.jl)
 
-## Model
+## Model and literature connection
 
-Six initially excited qubits decay through independent local channels. The
-same Lindblad equation is solved in two ways: deterministic density-matrix
-evolution and a Monte Carlo ensemble of quantum trajectories.
+This example tests the PI quantum-jump implementation in the foundational
+Monte Carlo wave-function setting introduced by Dalibard, Castin, and Mølmer,
+[*Phys. Rev. Lett.* **68**, 580 (1992)](https://doi.org/10.1103/PhysRevLett.68.580),
+and developed by Mølmer, Castin, and Dalibard,
+[*J. Opt. Soc. Am. B* **10**, 524 (1993)](https://doi.org/10.1364/JOSAB.10.000524).
+Six initially excited qubits decay independently:
 
-## Solution
+```math
+\dot\rho=\gamma\sum_{i=1}^N\mathcal D[\sigma_-^{(i)}]\rho,
+\qquad
+\mathcal D[L]\rho=L\rho L^\dagger-\tfrac12\{L^\dagger L,\rho\}.
+```
 
-The script runs 500 trajectories with `dt = 0.005` and a fixed seed. The
-trajectory API returns ensemble-averaged states and supports online statistics
-of observables, here the excitation number. The result is compared with
-deterministic PI density-operator evolution.
+The model has unusually strong analytical checks. With
+``p_e(t)=e^{-\gamma t}``, its exact state is
 
-The deterministic model is prepared once with
-`compile(model; backend=:matrixfree)`. The typed high-level command
+```math
+\rho(t)=\left[(1-p_e)|g\rangle\langle g|
+                 +p_e|e\rangle\langle e|\right]^{\otimes N}.
+```
+
+The excitation count is ``B(N,p_e)``. At the final time the photon count is
+``B(N,1-p_e)``, with mean ``N(1-p_e)``, variance
+``Np_e(1-p_e)``, and no-jump probability ``e^{-N\gamma t}``.
+
+## PI solution and comparisons
+
+The script draws 500 event-driven paths using continuous hazard roots. It
+compares them with both the exact tensor-power PI state and deterministic
+matrix-free evolution prepared once by `compile`. No ``2^N`` vector or
+``2^N\times2^N`` matrix is constructed.
+
+`trajectory_statistics` computes the excitation mean and its sampling error.
+The script checks the mean at every saved time against the exact binomial law
+in units of its analytical standard error. It separately checks the final
+sample mean photon count and the rare no-jump fraction, and prints the sample
+and exact count variances. A six-standard-error gate is deliberately used for
+the stochastic comparisons; numerical convergence and Monte Carlo sampling
+error are different uncertainties.
 
 ```julia
-deterministic = solve_dynamics(
-    prepared, rho0, (first(times), last(times));
-    saveat=times, steps_per_interval=20,
+prepared = compile(model; backend=:matrixfree)
+trajectory_plan = TrajectoryPlan(prepared)
+trajectory_batch = TrajectoryBatchWorkspace(trajectory_plan, rho0)
+trajectories = quantum_trajectories(
+    trajectory_plan, rho0, times, 500;
+    algorithm=:event, dt=0.1, dtmax=0.2,
+    abstol=1e-10, reltol=1e-8,
+    event_time_tolerance=1e-9, seed=2025,
+    threaded=Threads.nthreads() > 1,
+    workspace=trajectory_batch,
 )
 ```
 
-returns a `DynamicsResult` whose entries are `PIState` objects at the same 11
-times used by the trajectory ensemble. The script compares every averaged
-state with the corresponding deterministic state. A prepared
-`CollectiveObservablePlan` evaluates the final excited fraction for both
-solutions, and `diagnostics` validates the final ensemble state.
+The prepared trajectory plan is immutable and shared by every path. Each
+batch worker owns its Runge--Kutta buffers and RNG; small dynamically claimed
+chunks amortize scheduling overhead, while per-trajectory seeds make the
+ordered result reproducible in serial and threaded runs. Reusing
+`trajectory_batch` avoids rebuilding either the Schur geometry or worker
+scratch in a parameter-independent repeated ensemble.
 
-Local jumps may move a pure trajectory between total-spin sectors; the PI
-trajectory implementation retains the sector information without constructing
-full many-body wave functions. Use the threaded option for independent paths
-when reproducible scheduling is not required.
+For an individual local jump the package does not resolve which identical
+particle emitted. The conditional PI state can therefore be mixed when
+``N>1``. That is a different measurement record from a particle-resolved pure
+wave-function trajectory, while its ensemble density matrix and the count and
+excitation laws tested here are the same.
+
+## Makie figure
+
+When CairoMakie is available, the script creates a two-panel figure. The first
+panel overlays the exact excited fraction with the trajectory mean and its
+one-standard-error band. The second shows, on a logarithmic scale, the PI-state
+error of the trajectory average and deterministic RK4 solution. Vector PDF
+and raster PNG copies are written as `quantum_trajectories_molmer.*` in the
+configured example-figure directory.
 
 ## Run and convergence
 
 ```sh
-julia --project=. examples/quantum_trajectories.jl
+julia --project=examples examples/quantum_trajectories.jl
 ```
 
-Statistical error decreases only as the inverse square root of the trajectory
-count. Converge both `dt` (bias) and the number of paths (sampling error), and
-report the supplied standard errors with trajectory estimates. The script
-prints the total jump count, largest density-state discrepancy, final traces
-and excited fractions, mean and Fano factor of the jump count, and the final
-observable standard error. It does not assert a fixed Monte Carlo error because
-that error is statistical even with a reproducible seed.
+For new parameter sets, converge `abstol`, `reltol`, `dtmax`, and the event-time
+tolerance before increasing the trajectory count. Statistical errors then
+decrease only as the inverse square root of that count. Pass `threaded=true`
+when independent task-owned workspaces are appropriate; scheduling may vary,
+but a fixed seed still gives the same ordered paths.

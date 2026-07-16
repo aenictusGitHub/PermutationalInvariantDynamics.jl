@@ -71,11 +71,27 @@ For larger `N`, compile matrix-free and use
 converged Krylov dimension. Harmonic extraction *near zero* can miss the slow
 oscillatory branch because its imaginary part remains finite.
 
+## Makie figure
+
+When CairoMakie is available, the script creates a two-panel finite-size
+spectral summary. The first panel shows the decay rate of the selected slow
+oscillatory mode; the second shows its frequency. The panels display the three
+computed sizes directly and do not fit the asymptotic exponent reported in the
+paper. Thus the figure visualizes a finite-size precursor, not evidence by
+itself for persistent thermodynamic oscillations.
+
+Vector PDF and raster PNG copies are written as
+`piccitto2021_interacting_time_crystal.*` in the configured example-figure
+directory.
+
 ## Run
 
 ```sh
-julia --project=. examples/piccitto2021_interacting_time_crystal.jl
+julia --project=examples examples/piccitto2021_interacting_time_crystal.jl
 ```
+
+The core numerical assertions can also be run with `--project=.`; if
+CairoMakie is unavailable, only figure generation is skipped.
 
 Reference: A. Piccitto, M. Wauters, F. Nori, and N. Shammah,
 *Symmetries and conserved quantities of boundary time crystals in generalized

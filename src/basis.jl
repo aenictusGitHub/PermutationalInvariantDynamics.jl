@@ -73,7 +73,11 @@ struct PIState{T<:AbstractFloat,B<:PIBasis} <: AbstractPIOperator{T}
 end
 PIOperator(b::PIBasis;T=Float64)=PIOperator(b,zeros(Complex{T},length(b)))
 PIState(b::PIBasis;T=Float64)=PIState(b,zeros(Complex{T},length(b)))
-copy(a::PIOperator)=PIOperator(a.basis,copy(a.data)); copy(a::PIState)=PIState(a.basis,copy(a.data))
+# The public constructors already make one defensive `collect` copy. Passing
+# the source vector directly here therefore preserves `copy` semantics without
+# first creating a second, immediately discarded vector. This matters for
+# trajectory output, where every saved state is copied.
+copy(a::PIOperator)=PIOperator(a.basis,a.data); copy(a::PIState)=PIState(a.basis,a.data)
 eltype(a::AbstractPIOperator)=eltype(a.data)
 function _sidx(b::PIBasis,p::Partition); get(b.index,p,0)>0||throw(ArgumentError("sector $p is absent")); b.index[p]; end
 
