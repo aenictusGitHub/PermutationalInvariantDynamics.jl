@@ -13,10 +13,10 @@ They validate basis ownership and return package-level state or result objects.
 |---|---|
 | Representation | `PIBasis`, `PIState`, `PIOperator`, `exact_binomial`, `exact_multinomial`, Schur-block constructors, spin/state conveniences, `PIModel`, and the physical term constructors |
 | Preparation | `compile`, `isautonomous`, `freeze` |
-| Dynamics | `solve_dynamics`, `solve_populations`, `dynamics_problem`, `floquet_steady_state`, `quantum_trajectories` |
+| Dynamics | `solve_dynamics` (including observable-only streaming), `solve_populations`, `dynamics_problem`, `floquet_steady_state`, `quantum_trajectories` (including online ensemble statistics) |
 | Mean-field predictions | `MeanFieldPlan`, `solve_meanfield`, `meanfield_problem`, `meanfield_stationary_state`, `meanfield_stability` |
 | Stationary and spectral analysis | `stationary_state`, `liouvillian_spectrum`, `pi_liouvillian_gap`, `diagnostics`, `recommend_solver` |
-| Observables and information | `collective_expectation`, `collective_variance`, `qfi`, `qfim`, entropy and distance functions |
+| Observables and information | `collective_expectation`, `collective_variance`, `qfi`, `qfim`, `two_time_correlation`, `delayed_second_order_correlation`, `stationary_correlation_spectrum`, entropy and distance functions |
 | Visualization | `schur_block_structure`, `visualize_schur_blocks`, `spin_husimi_q`, `spin_wigner`, `visualize_spin_phase_space`, and the density/Liouvillian/Floquet spectrum data and renderers |
 | Reductions and entanglement | `one_body_rdm`, `reduced_state`, `reduced_state!`, `reduced_purity`, `negativity`, `partial_transpose_spectrum` |
 | Validation | `state_diagnostics`, `positivity_diagnostics`, `validate_state` |
@@ -42,6 +42,16 @@ threading contracts.
   `TrajectoryWorkspace` owns one path's integration buffers, while
   `TrajectoryBatchWorkspace` owns task-local workspaces and RNGs for repeated
   ensembles. One batch workspace must not serve concurrent ensemble calls.
+- `CorrelationPlan` owns copied quantum-regression insertion blocks and may be
+  shared read-only. `CorrelationWorkspace` owns the conditional state, block
+  products, RK4 storage, and shifted-GMRES storage; use one per concurrent
+  task. Time-domain correlations and resolvent spectra require an autonomous
+  generator.
+- `CompositeSuperoperator` is a read-only sum of tensor-factor maps.
+  `CompositeSuperoperatorWorkspace` owns its full-coordinate buffers, small
+  factor fibres, and nested PI application workspaces. Use explicit
+  task-owned workspaces in hot or parallel loops; the convenience matrix-free
+  wrapper serializes access to one compatibility workspace.
 - `PopulationPlan` stores the certified sparse action on multiplicity-weighted
   Schur-diagonal probabilities. `PopulationWorkspace` owns its application and
   RK4 scratch. Certification is exact by default, compile-only coordinate
@@ -153,6 +163,34 @@ algorithms may evolve as the remaining numerical bottlenecks are addressed.
   an exact lattice-tableau recursion and constructs no intertwiners.
 - Pseudospectral and response helpers are intended for moderate PI dimensions
   and require problem-dependent grid and tolerance convergence.
+- PI channels/tomography, portable checkpoints, joint symmetry projectors,
+  implicit steady-state gradients, and checkpointed adjoint control are
+  experimental research utilities. Channel and POVM certificates cover only
+  the retained Schur algebra; control results require grid/Krylov convergence.
+- Diffusive plans are immutable and shareable, but each homodyne/heterodyne
+  realization requires a task-owned `DiffusiveWorkspace`. The normalized
+  Euler--Maruyama step must be converged in `dt` and is not a finite-step
+  positivity certificate.
+- `ordered_local_moments`, the versioned neutral cumulant payloads, and the
+  optional QuantumCumulants adapter provide exact finite-`N` reference data
+  for higher-order closures.  The schema and exact moment convention are
+  fixed, while future adapters may automate additional package-specific
+  symbolic lowering.  The selected order still carries `d^(2k)` local-tensor
+  storage.
+- `WeakPIPseudoKet`, `WeakPITrajectoryPlan`, and the `weak_pi_*` trajectory
+  functions provide an opt-in direct-sum Schur-irrep unraveling. Fixed local
+  gains are decomposed into checked one-box Kraus branches for qubits and
+  qudits. The pseudo-state and its path statistics depend on this unraveling
+  convention and are not labeled-particle pure states. Operator-valued and
+  local-p-body jumps, adaptive event timing, and composite pseudo-ket paths
+  are not yet part of this surface.
+- `CompositePIBasis`, `FiniteOperatorBasis`, factorized composite states and
+  operators, and `CompositeSuperoperator` provide deterministic dynamics of
+  several PI ensembles and small finite auxiliaries without a global
+  Kronecker superoperator. The tensor-coordinate convention is fixed, but the
+  higher-level model-construction surface may evolve. There is currently no
+  composite trajectory compiler or implicit extension of single-ensemble
+  reduction routines.
 
 Experimental does not mean “unchecked”: these paths have regression tests.
 It means that algorithm selection, diagnostic fields, or preallocation

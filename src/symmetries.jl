@@ -72,6 +72,11 @@ Base.propertynames(::MatrixFreeSymmetryProjector,private::Bool=false)=
     private ? (:basis,:charge,:eigenvectors,:masks,:data,:compatibility_workspace,:lock) :
               (:basis,:charge,:eigenvectors,:masks)
 
+# The Boolean masks are exact coordinates in the sector-local eigenbases, so
+# their total population is the exact rank of this orthogonal projector.
+_projector_range_dimension(P::MatrixFreeSymmetryProjector,n::Integer)=
+    sum(count(mask) for mask in P.masks)
+
 function SymmetryProjectorWorkspace(P::MatrixFreeSymmetryProjector)
     T=eltype(P)
     SymmetryProjectorWorkspace{T}([(zeros(T,size(V)),zeros(T,size(V)))
@@ -153,13 +158,180 @@ function matrixfree_symmetry_projector(b::PIBasis,U;charge=1,
     MatrixFreeSymmetryProjector(data,work,ReentrantLock())
 end
 
+"""Caller-owned scratch for a simultaneous weak-symmetry projector."""
+struct JointSymmetryProjectorWorkspace{W,V}
+    component_workspaces::W
+    first::V
+    second::V
+end
+
+"""
+    JointSymmetryProjector
+
+Matrix-free orthogonal projector onto the intersection of several commuting
+unitary-conjugation charge sectors.  `charges` records the requested charge of
+each component and `range_dimension` is the exact numerical rank certified at
+construction.
+"""
+struct JointSymmetryProjector{B,P,C,W,K}
+    basis::B
+    projectors::P
+    charges::C
+    range_dimension::Int
+    compatibility_workspace::W
+    lock::K
+end
+
+Base.size(P::JointSymmetryProjector)=(length(P.basis),length(P.basis))
+Base.size(P::JointSymmetryProjector,index::Integer)=index in (1,2) ?
+    length(P.basis) : 1
+Base.eltype(::JointSymmetryProjector)=ComplexF64
+Base.getproperty(P::JointSymmetryProjector,name::Symbol)=
+    name===:charge ? getfield(P,:charges) : getfield(P,name)
+Base.propertynames(::JointSymmetryProjector,private::Bool=false)=private ?
+    (:basis,:projectors,:charges,:charge,:range_dimension,
+     :compatibility_workspace,:lock) :
+    (:basis,:projectors,:charges,:charge,:range_dimension)
+
+_projector_range_dimension(P::JointSymmetryProjector,n::Integer)=P.range_dimension
+
+function JointSymmetryProjectorWorkspace(P::JointSymmetryProjector)
+    JointSymmetryProjectorWorkspace(
+        Tuple(SymmetryProjectorWorkspace(projector) for projector in P.projectors),
+        zeros(ComplexF64,length(P.basis)),zeros(ComplexF64,length(P.basis)))
+end
+
+function _check_joint_workspace(P,work::JointSymmetryProjectorWorkspace)
+    length(work.component_workspaces)==length(P.projectors)||throw(DimensionMismatch(
+        "joint-symmetry workspace has the wrong component count"))
+    length(work.first)==length(P.basis)&&length(work.second)==length(P.basis)||
+        throw(DimensionMismatch("joint-symmetry workspace has the wrong dimension"))
+    work
+end
+
+"""Apply a joint projector with caller-owned scratch."""
+function apply!(destination,P::JointSymmetryProjector,source,
+                work::JointSymmetryProjectorWorkspace)
+    length(destination)==length(source)==length(P.basis)||throw(DimensionMismatch(
+        "joint-symmetry projector vector has wrong length"))
+    _check_joint_workspace(P,work)
+    if length(P.projectors)==1
+        return apply!(destination,first(P.projectors),source,
+                      first(work.component_workspaces))
+    end
+    apply!(work.first,P.projectors[1],source,work.component_workspaces[1])
+    current=work.first
+    for index in 2:length(P.projectors)
+        target=current===work.first ? work.second : work.first
+        apply!(target,P.projectors[index],current,
+               work.component_workspaces[index])
+        current=target
+    end
+    copyto!(destination,current);destination
+end
+
+function mul!(destination,P::JointSymmetryProjector,source)
+    lock(P.lock)
+    try
+        apply!(destination,P,source,P.compatibility_workspace)
+    finally
+        unlock(P.lock)
+    end
+end
+Base.:*(P::JointSymmetryProjector,source)=
+    mul!(similar(source,ComplexF64,length(P.basis)),P,source)
+
+function _joint_symmetry_specifications(specifications)
+    single_tuple=specifications isa Tuple&&length(specifications)==2&&
+        first(specifications) isa Union{AbstractMatrix,PIOperator}
+    raw=specifications isa Pair||single_tuple ? (specifications,) :
+        specifications isa Tuple ? specifications : Tuple(specifications)
+    isempty(raw)&&throw(ArgumentError(
+        "at least one unitary/charge pair is required"))
+    Tuple(begin
+        if specification isa Pair
+            (first(specification),last(specification))
+        elseif specification isa Tuple&&length(specification)==2
+            specification
+        else
+            throw(ArgumentError(
+                "each joint symmetry specification must be operator=>charge or (operator, charge)"))
+        end
+    end for specification in raw)
+end
+
+function _check_conjugation_commutation(blocks;atol,rtol)
+    for left in 1:length(blocks)-1,right in left+1:length(blocks),
+        sector in eachindex(blocks[left])
+        U=blocks[left][sector];V=blocks[right][sector]
+        commutator=U*V*adjoint(U)*adjoint(V);n=size(U,1)
+        phase=tr(commutator)/n
+        iszero(phase)&&throw(ArgumentError(
+            "unitary conjugation commutator has zero phase"))
+        phase/=abs(phase)
+        scale=max(norm(commutator,Inf),one(real(phase)))
+        norm(commutator-phase*I,Inf)<=atol+rtol*scale||throw(ArgumentError(
+            "requested unitary conjugation symmetries do not commute on sector $sector"))
+    end
+    nothing
+end
+
+function _joint_projector_rank(projectors,basis,atol,rtol)
+    temporary=JointSymmetryProjector(basis,projectors,
+        Tuple(P.charge for P in projectors),0,nothing,ReentrantLock())
+    workspace=JointSymmetryProjectorWorkspace(temporary)
+    n=length(basis);source=zeros(ComplexF64,n);destination=similar(source)
+    projector_trace=0.0
+    for index in 1:n
+        fill!(source,0);source[index]=1
+        apply!(destination,temporary,source,workspace)
+        projector_trace+=real(destination[index])
+    end
+    rounded=round(Int,projector_trace)
+    abs(projector_trace-rounded)<=atol+rtol*max(rounded,1)||throw(ArgumentError(
+        "failed to certify an integer joint-projector rank; trace=$projector_trace"))
+    rounded>0||throw(ArgumentError(
+        "the requested simultaneous symmetry-charge sector is empty"))
+    rounded
+end
+
+"""
+    joint_symmetry_projector(basis, specifications; atol=1e-12, rtol=1e-10)
+
+Construct the intersection projector for several commuting weak unitary
+symmetries.  Each specification is `U => charge` or `(U, charge)`, where `U`
+has the same meaning as in [`matrixfree_symmetry_projector`](@ref).  Pairwise
+commutation of the induced conjugations is certified sector by sector; merely
+approximately compatible noncommuting projectors are rejected.
+
+The resulting projector plugs directly into harmonic Arnoldi and the PI gap
+API by passing it as `symmetry=projector`.  One explicit
+[`JointSymmetryProjectorWorkspace`](@ref) is required per concurrent task.
+"""
+function joint_symmetry_projector(basis::PIBasis,specifications;
+        atol::Real=1e-12,rtol::Real=1e-10)
+    specs=_joint_symmetry_specifications(specifications)
+    blocks=Tuple(_pi_unitary_blocks(basis,first(spec);atol,rtol)
+                 for spec in specs)
+    _check_conjugation_commutation(blocks;atol,rtol)
+    projectors=Tuple(matrixfree_symmetry_projector(basis,first(spec);
+        charge=last(spec),atol,rtol) for spec in specs)
+    rank=_joint_projector_rank(projectors,basis,atol,rtol)
+    provisional=JointSymmetryProjector(basis,projectors,
+        Tuple(P.charge for P in projectors),rank,nothing,ReentrantLock())
+    workspace=JointSymmetryProjectorWorkspace(provisional)
+    JointSymmetryProjector(basis,projectors,provisional.charges,rank,
+                           workspace,ReentrantLock())
+end
+
 function _projected_symmetry_residual(L,P;probes::Integer=3,
                                       rng=Random.MersenneTwister(0),
                                       atol::Real=1e-12,rtol::Real=1e-10,
                                       exact::Bool=L isa AbstractMatrix)
     n=size(L,1);size(L,2)==n||throw(DimensionMismatch("Liouvillian must be square"))
     size(P)==(n,n)||throw(DimensionMismatch("projector and Liouvillian dimensions differ"))
-    pwork=SymmetryProjectorWorkspace(P)
+    pwork=P isa JointSymmetryProjector ?
+        JointSymmetryProjectorWorkspace(P) : SymmetryProjectorWorkspace(P)
     if exact
         Q=Matrix{eltype(P)}(undef,n,n);e=zeros(eltype(P),n)
         for j in 1:n

@@ -102,6 +102,8 @@ LocalHamiltonian
 CollectiveHamiltonian
 LocalJump
 CollectiveJump
+CorrelatedLocalJumps
+CorrelatedCollectiveJumps
 DirectPIHamiltonian
 DirectPIJump
 PIModel

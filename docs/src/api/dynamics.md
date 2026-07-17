@@ -55,6 +55,31 @@ trajectory_observable_statistics
 trajectory_statistics
 ```
 
+## Weak-PI pseudo-ket trajectories
+
+```@docs
+WeakPIPseudoKet
+weak_pi_dimension
+weak_pi_density
+weak_pi_pseudoket
+weak_pi_expectation
+WeakPIKrausBranch
+WeakPIJumpRecord
+WeakPIQuantumTrajectory
+WeakPITrajectoryPlan
+WeakPITrajectoryWorkspace
+WeakPITrajectoryBatchWorkspace
+weak_pi_quantum_trajectory
+weak_pi_quantum_trajectories
+weak_pi_trajectory_average
+weak_pi_trajectory_statistics
+```
+
+## Diffusive conditional dynamics
+
+See the [diffusive-monitoring guide](../diffusive_monitoring.md) for the
+canonical API documentation and the normalized Itô convention.
+
 ## Mean-field predictions
 
 ```@docs

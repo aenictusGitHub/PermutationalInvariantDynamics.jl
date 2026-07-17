@@ -17,6 +17,15 @@ function _matrixfree_projector_for_spectrum(L,basis,symmetry,charge;atol,rtol,
                                              rng=Random.MersenneTwister(0))
     symmetry===nothing&&return (nothing,nothing,nothing)
     basis===nothing&&throw(ArgumentError("matrix-free symmetry projection requires basis=... or a PIModel"))
+    if symmetry isa Union{MatrixFreeSymmetryProjector,JointSymmetryProjector}
+        symmetry.basis===basis||throw(ArgumentError(
+            "matrix-free symmetry projector uses a different PI basis"))
+        check=_projected_symmetry_residual(L,symmetry;probes=4,rng=rng,
+                                           atol=atol,rtol=rtol)
+        check.symmetric||throw(ArgumentError(
+            "supplied matrix-free symmetry projector is not invariant under the Liouvillian"))
+        return (symmetry,:supplied_projector,check)
+    end
     candidates = symmetry===:auto ? _usual_unitary_candidates(basis.d) : [nothing=>symmetry]
     for (name,U) in candidates
         P=try matrixfree_symmetry_projector(basis,U;charge=charge,atol=atol,rtol=rtol) catch;continue;end
@@ -111,7 +120,8 @@ end
 
 @doc """
     pi_liouvillian_gap(L; atol=1e-12, rtol=1e-10,
-                       check_stability=true, return_info=false)
+                       check_stability=true, return_info=false,
+                       initial_vector=nothing)
 
 Return the asymptotic Liouvillian decay gap
 `-max(real(lambda))` after excluding the numerical stationary cluster around
@@ -128,6 +138,10 @@ selected `charge` sector. A nontrivial charge sector is not required to
 contain a stationary eigenvalue. The estimate is certified only when the
 complete selected sector was extracted; inspect `gap_certified`,
 `sector_dimension`, and `scope` in the returned information.
+
+For iterative methods, `initial_vector` supplies an explicit reproducible
+Krylov seed. The solver projects it into the requested symmetry charge when
+applicable and rejects a seed with no component in that sector.
 
 `method=:iram` is a bounded-memory global-gap route because it selects
 largest-real Ritz values. `method=:jd` is rejected here: near-target
@@ -240,6 +254,7 @@ function pi_liouvillian_gap(x;atol::Real=1e-12,rtol::Real=1e-10,
                             thickdim::Integer=max(nev+2,2nev),
                             maxrestarts::Integer=20,
                             retained_dimension::Integer=max(nev,min(2nev,krylovdim-1)),
+                            initial_vector=nothing,
                             rng=Random.MersenneTwister(0),kwargs...)
     symmetry_kind===:unitary||throw(ArgumentError("only unitary weak symmetries define linear charge blocks for gap reduction"))
     _require_autonomous_spectral_input(x)
@@ -260,7 +275,8 @@ function pi_liouvillian_gap(x;atol::Real=1e-12,rtol::Real=1e-10,
         sector_nev=min(Int(nev),sector_dimension)
         har=harmonic_arnoldi_spectrum(L;nev=sector_nev,krylovdim=krylovdim,
             thickdim=thickdim,maxrestarts=maxrestarts,projector=P,
-            atol=atol,rtol=rtol,require_convergence=require_convergence,rng=rng)
+            initial_vector=initial_vector,atol=atol,rtol=rtol,
+            require_convergence=require_convergence,rng=rng)
         qtol=atol+rtol
         require_stationary=abs(P.charge-one(P.charge))<=qtol
         info=_sector_decay_info(har.values;atol=atol,rtol=rtol,
@@ -272,6 +288,8 @@ function pi_liouvillian_gap(x;atol::Real=1e-12,rtol::Real=1e-10,
             symmetry_charge=P===nothing ? nothing : P.charge,
             symmetry_sectors=nothing,symmetry_residual=scheck,
             ritz_residuals=har.residuals,restarts=har.restarts,
+            ritz_extraction=har.ritz_extraction,
+            search_space_exhausted=har.search_space_exhausted,
             stationary_multiplicity_certified=stationary_complete,
             krylov_dimension=har.krylov_dimension,
             sector_dimension=sector_dimension,
@@ -290,10 +308,12 @@ function pi_liouvillian_gap(x;atol::Real=1e-12,rtol::Real=1e-10,
         arn = if method in (:iram,:implicit_qr)
             implicitly_restarted_arnoldi_spectrum(L;nev=nev,krylovdim=krylovdim,
                 retained_dimension=retained_dimension,maxrestarts=maxrestarts,which=:LR,
-                atol=atol,rtol=rtol,require_convergence=require_convergence,rng=rng,kwargs...)
+                initial_vector=initial_vector,atol=atol,rtol=rtol,
+                require_convergence=require_convergence,rng=rng,kwargs...)
         else
             krylov_liouvillian_spectrum(L;nev=nev,krylovdim=krylovdim,which=:LR,
-                atol=atol,rtol=rtol,require_convergence=require_convergence,rng=rng,kwargs...)
+                initial_vector=initial_vector,atol=atol,rtol=rtol,
+                require_convergence=require_convergence,rng=rng,kwargs...)
         end
         info=_liouvillian_gap_info(arn.values;atol=atol,rtol=rtol,check_stability=check_stability)
         # A partial spectrum certifies the returned slow mode, but not that all

@@ -108,6 +108,8 @@ Published validation models additionally use:
 - `src/operators.jl`: PI algebra, initial states, kernel assembly.
 - `src/terms.jl`: immutable model tuples, built-in term types, validation, and
   the dispatch-based custom-term extension contract.
+- `src/correlated_jumps.jl`: correlated local/collective one-body reservoirs,
+  strict Kossakowski validation, and generic residual-Cholesky factorization.
 - `src/spin.jl`: spin matrices, collective-spin and qubit state conveniences,
   Dicke operators, and the standard six-rate qubit ensemble model.
 - `src/vectorization.jl`: `vec`-identity superoperators and full-space PI
@@ -123,8 +125,12 @@ Published validation models additionally use:
 - `src/evans.jl`: Evans commutant uniqueness certificates and efficient PI
   model specializations.
 - `src/symmetries.jl`: weak unitary and antiunitary Liouvillian covariance
-  checks in full or PI Liouville space.
+  checks in full or PI Liouville space, plus simultaneous commuting
+  matrix-free symmetry projectors.
 - `src/observables.jl`: expectations, RDM and diagnostics.
+- `src/cumulants.jl`: exact distinct-particle local moments, versioned neutral
+  microscopic-model payloads, closure comparisons, and the optional
+  QuantumCumulants adapter entry point.
 - `src/entanglement.jl`: bipartite negativity, LR/subduction intertwiners,
   reduced-state purities, and preallocated reduction workspaces.
 - `src/information.jl`: entropy and PI state-distinguishability measures.
@@ -134,18 +140,40 @@ Published validation models additionally use:
 - `src/meanfield.jl`: finite product-state closure, explicit thermodynamic
   combinatorics, preallocated one-site evolution, product observables, fixed
   points, and traceless-Hermitian stability analysis.
+- `src/composite.jl`: tensor products of independent PI operator spaces and
+  finite auxiliary operator spaces, exact composite trace contractions, and
+  preallocated sums of factorized superoperators.
 - `src/evolution.jl`: preallocated direct density-matrix propagation from an
   assembled or matrix-free Liouvillian.
 - `src/trajectories.jl`: PI quantum-jump trajectories, shared immutable
   trajectory plans, task-owned batch workspaces/RNGs, direct channel-intensity
   contractions, ensembles, and density-matrix averaging.
+- `src/weak_pi_trajectories.jl`: opt-in direct-sum Schur-irrep pseudo-kets,
+  one-box Kraus subduction of local gains, preallocated fixed-step paths,
+  batches, and sector-transition statistics.
+- `src/diffusive.jl`: preallocated collective homodyne/heterodyne conditional
+  dynamics, trajectory-indexed ensembles, observable output, and state
+  averaging.
 - `src/floquet.jl`: preallocated one-period maps, multipliers, periodic states,
   and stroboscopic evolution.
 - `src/response.jl`: modes, resolvents, adjoint evolution and sensitivities.
+- `src/correlations.jl`: prepared PI quantum regression, delayed intensity
+  correlations, matrix-free shifted-GMRES spectra, and dependency-free
+  finite-window FFT transforms.
 - `src/highlevel.jl`: typed algorithms/results, unified research commands,
   memory estimates, solver recommendations, diagnostics, and compact displays.
 - `src/populations.jl`: strict Schur-diagonal invariance certificates,
   population-only generators, preallocated evolution, and stationary solves.
+- `src/research_utilities.jl`: compressed spectral/population inspection and
+  shared validation helpers for the research-utility APIs.
+- `src/channels.jl`: explicit and matrix-free PI channels, composition,
+  adjoints, Kraus lowering, and retained-algebra CP/TP diagnostics.
+- `src/tomography.jl`: PI POVM probabilities, sampling, and constrained
+  maximum-likelihood tomography in retained coefficient coordinates.
+- `src/checkpoints.jl`: versioned PI-state checkpoint payloads and optional
+  HDF5/JLD2 storage extensions.
+- `src/control.jl`: trace-fixed implicit steady-state gradients and
+  checkpointed continuous-adjoint control gradients.
 - `src/phase_space.jl`: sector-resolved qubit Husimi-Q and Agarwal spin-Wigner
   data without full-Hilbert reconstruction.
 - `src/visualization.jl`: Schur-sector block measurements and dependency-free
@@ -167,10 +195,23 @@ Mean-field prediction has a parallel geometry-free flow:
 
 `(N,d,terms) -> MeanFieldPlan -> MeanFieldWorkspace -> one-site solver`.
 
+Higher-order closure validation has a dependency-neutral flow:
+
+`(PIModel, PIState, local alphabet) -> CumulantBridgePayload -> external closure`.
+
 Certified population dynamics has a reduced flow available only when the
 Schur-diagonal subspace is invariant:
 
 `PIModel -> PopulationPlan -> PopulationWorkspace -> solve_populations`.
+
+Composite deterministic dynamics has a separate factorized flow:
+
+`(PIBasis/FiniteOperatorBasis factors) -> CompositePIBasis ->`
+`CompositeSuperoperator -> CompositeSuperoperatorWorkspace -> evolve!`.
+
+The first composite factor is the fastest coordinate. A factorized vector is
+therefore `kron(x_last,...,x_first)`, and a factorized map has the reversed
+Kronecker order. Never materialize that global Kronecker matrix in production.
 
 `PIModel.terms` is a concrete immutable tuple. `LiouvillianPlan` owns prepared,
 read-only Schur blocks and gain maps; it must never own mutable numerical
@@ -208,12 +249,21 @@ high-level API.
 
 `docs/src/api_reference.md` is the complete alphabetical entry point. Detailed
 descriptions are split into the explicit public-only pages under
-`docs/src/api/`. Every exported binding must have a source docstring so the
-website and Julia's `?name` help remain identical. `docs/make.jl` enforces both
+`docs/src/api/` plus the streaming, diffusive-monitoring, weak-PI trajectory,
+quantum-regression, cumulant-bridge, research-utilities, and composite-system
+pages. Every exported binding must have a source docstring so the website and
+Julia's `?name` help remain identical. `docs/make.jl` enforces both
 `Base.Docs.undocumented_names(...; private=false) == []` and Documenter's
 `checkdocs=:exports`; adding an export therefore requires adding its docstring
 and one canonical `@docs` entry. Qualify names that conflict with Base, such as
 `PermutationalInvariantDynamics.isvalid`.
+
+Keep TeX in tracked Markdown compatible with GitHub's math renderer. In
+particular, GitHub rejects the `operatorname` command; use `\mathrm{tr}`, `\mathrm{Re}`,
+`\mathrm{diag}`, and analogous roman labels instead, adding `\,` before a bare
+argument when operator spacing would otherwise be lost. Apply the same rule to
+source docstrings because Documenter may copy their mathematics into generated
+pages.
 
 The public repository is
 `https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl` and the
@@ -280,6 +330,23 @@ callable and negative rates are retained. Fixed numeric inputs determine the
 default scalar type, while callable-only models require explicit `T` for a
 non-Float64 precision. Direct PI Hamiltonian prototypes must be Hermitian
 unless their constructor is deliberately called with `check=false`.
+
+`CorrelatedLocalJumps` and `CorrelatedCollectiveJumps` implement a Hermitian
+positive-semidefinite Kossakowski matrix over fixed one-body operator
+channels. Fixed matrices are copied, validated, and residual-Cholesky
+factorized exactly once when the term is constructed; compilation lowers the
+resulting effective channels through the existing local or collective PI
+kernels. Do not diagonalize any `d^N` object or refactor a fixed channel
+matrix during application. Raw matrix functions use the freeze/lower fallback.
+An `InPlaceTimeOperator` Kossakowski schedule instead owns evaluated matrix,
+factor, residual, effective-operator/block, and gain scratch in each
+`LiouvillianWorkspace`; validate finiteness, Hermiticity, and PSD at every
+evaluation. Plans remain read-only. Preserve every strictly positive pivot:
+only nonpositive residuals at explicit user tolerance or arithmetic roundoff
+may reduce numerical rank. The common scalar rate is independent of Gamma;
+it must evaluate to a finite real number representable in the prepared
+precision, and deterministic evolution still permits a negative time-local
+rate.
 
 `spin_matrices` uses local order `|-j>,...,|j>`. `dicke_state` and
 `dicke_operator` validate half-integer labels without machine-integer
@@ -458,6 +525,32 @@ This separation is required on Julia 1.10, whose mixed real/complex `mul!`
 fallback allocates substantial packing scratch. Pass the workspace through
 `workspace=` or use `reduced_state!` to reuse caller-owned output as well.
 
+## Higher-order cumulant bridge
+
+`ordered_local_moment` evaluates a standard `tr(rho*A1^(1)*...*Ak^(k))`
+moment on distinct particles.  It symmetrizes only the local `d^k` tensor,
+contracts Appendix-D blocks with multiplicity-weighted state blocks, and
+normalizes by the exact `binomial(N,k)` subset count.  Never replace this with
+a `d^N` reconstruction.  `ordered_local_moments` stores one canonical multiset
+key per PI-equivalent operator assignment and reuses one `PBodyGeometry` per
+order.  Lookup order is immaterial, but products acting on one site must be
+provided as one local matrix rather than mistaken for distinct-site moments.
+
+`CumulantModelPayload` and `CumulantBridgePayload` use neutral schema version
+`1.0.0`.  Adapters must check that version, preserve the particle-one-fastest
+tensor convention and standard dissipator, and refuse to invent a microscopic
+realization for a term marked `microscopic=false`.  An unevaluated allocating
+operator schedule has no prototype; pass `time` and `parameters` to evaluate
+it before symbolic lowering.  Payload matrices are detached copies.
+
+QuantumCumulants is a weak dependency restricted to its supported 0.5 API
+line.  The package extension only maps exact neutral keys onto user-supplied
+symbolic averages and validates them with the official `get_order` function.
+Do not guess QuantumCumulants Hilbert spaces, indices, symbolic Hamiltonians,
+or jumps in core code; those are adapter/research-script choices.  The moment
+backend is independent of `d^N` but necessarily retains `d^(2k)` local tensor
+data, so selected closure order remains a bounded research-scale parameter.
+
 ## Mean-field closure
 
 `MeanFieldPlan(model; limit=:finite)` and the geometry-free
@@ -497,6 +590,47 @@ for repeated fixed-step RK4 propagation; use `solve_dynamics` for the typed
 high-level fixed-step result and `dynamics_problem` when adaptive or stiff
 SciML integration is required.
 
+`solve_dynamics(...; observables=...,save_states=false)` evaluates named local
+or PI observables at the saved times while retaining only one mutable state.
+It returns `DynamicsStreamResult`; the default call remains a history-carrying
+`DynamicsResult`. A state-free call with no observable is rejected rather than
+performing work whose result is discarded.
+
+State-free trajectory aggregation uses concrete prepared observable tuples and
+task-local Welford accumulators. Threaded workers retain trajectory-indexed
+random streams, but the pooled `waiting_times` vector is an unordered sample:
+do not rely on its element order across scheduling choices. Disable jump
+statistics when even this jump-count-scaled storage is unnecessary. At least
+one observable is required with `save_states=false`; the no-observable route
+preserves the legacy inferred vector return type rather than providing a
+jump-only shorthand.
+
+The legacy `quantum_trajectories` call must remain inference-stable and return
+its concrete vector directly. Streaming result types use exact union type
+parameters for optional histories; do not replace them with abstract history
+fields. Deterministic sampling fills concrete tuple-aligned buffers and builds
+the flexible public observable dictionary only after propagation, never in the
+per-sample hot loop.
+
+For autonomous two-time functions, `CorrelationPlan` copies insertion Schur
+blocks once and `CorrelationWorkspace` owns propagation and GMRES scratch.
+`two_time_correlation` uses the explicit convention
+`tr(A*exp(L*tau)*(B*rho*R))`: unlike `expectation`, it does not implicitly
+adjoint `A`. `stationary_correlation_spectrum` returns the connected complex
+one-sided `exp(-im*omega*tau)` transform from shifted GMRES and rejects the
+disconnected Dirac-delta contribution. `correlation_spectrum_fft` is a
+finite-window, uniform-grid radix-two transform with trapezoidal endpoints;
+it is not the infinite-time resolvent.
+
+`CompositePIBasis` may contain several exact `PIBasis` factors and small
+`FiniteOperatorBasis(m)` factors of size `m^2`. Composite traces contract only
+joint diagonal coordinates with exact multiplicity products. Local compiled
+PI actions retain exact basis provenance. Cross Hamiltonians and jumps are
+sums of factor left/right/sandwich maps; use one
+`CompositeSuperoperatorWorkspace` per task. Finite bosonic modes must be
+truncated explicitly. Composite trajectory compilation and implicit
+single-ensemble reductions are not implemented.
+
 `steady_state(...; method=:krylov)` uses restarted GMRES on a rank-one
 trace-fixed system and never materializes the Liouvillian. Reuse
 `KrylovWorkspace`. `pi_liouvillian_spectrum/gap(...; method=:krylov)` use
@@ -520,8 +654,12 @@ Reuse `ArnoldiWorkspace` for repeated ordinary, harmonic, or IRAM solves. A
 `MatrixFreeSymmetryProjector` has a synchronized compatibility workspace;
 parallel hot loops must instead use one explicit `SymmetryProjectorWorkspace`
 per task. Harmonic reports include restart history, retained/locked counts,
-and scale-aware residual tolerances; convergence is still the caller's
-responsibility for a partial nonnormal spectrum.
+the Ritz-extraction path, search-space exhaustion, and scale-aware residual
+tolerances. When the full ambient space or the exact Boolean-mask range of a
+matrix-free symmetry projector is spanned, harmonic Arnoldi switches to
+ordinary Rayleigh--Ritz extraction in that complete invariant space; never
+infer this fallback from Arnoldi breakdown alone. Convergence is still the
+caller's responsibility for a partial nonnormal spectrum.
 
 The dominant Krylov and Floquet work arrays use precision derived from the
 Liouvillian and storage-bearing numerical inputs. A fully `Float32` problem
@@ -556,7 +694,11 @@ Public dynamics and stochastic APIs include:
 - `floquet_propagator`, `floquet_steady_state`, `stroboscopic_evolution`
 - `quantum_trajectory`, `quantum_trajectories`, `trajectory_average`
 - `TrajectoryPlan`, `TrajectoryWorkspace`, `TrajectoryBatchWorkspace`
+- `DynamicsStreamResult`, `TrajectoryEnsembleResult`
 - `jump_statistics`, `trajectory_observable_statistics`, `trajectory_statistics`
+- `WeakPIPseudoKet`, `WeakPITrajectoryPlan`, `WeakPITrajectoryWorkspace`
+- `weak_pi_quantum_trajectory`, `weak_pi_quantum_trajectories`
+- `weak_pi_trajectory_average`, `weak_pi_trajectory_statistics`
 
 PI trajectories use channel-resolved gain maps. Local particle labels are
 unresolved, so an individual local-jump trajectory can be mixed even though
@@ -577,9 +719,69 @@ results agree for a fixed seed. Reuse a batch workspace sequentially, never conc
 index mutable scratch by `Threads.threadid()`. Scalar rates may be driven, but
 operator-valued schedules are rejected. An empty model must select a concrete
 real precision through its initial state or `TrajectoryPlan(...; T=...)`.
-Returned histories still scale as `O(npaths * nsave * nPI)`; reduce saved times
-when output storage dominates. Convergence-test fixed steps or adaptive
-tolerances and the ensemble size.
+Default returned histories scale as `O(npaths * nsave * nPI)`. With named
+observables and `save_states=false`, `TrajectoryEnsembleResult` constructs no
+sampled `PIState`: each worker retains one observable buffer and Welford
+accumulator. Jump summaries are online, although pooled waiting times still
+scale with the number of retained intervals and may be disabled with
+`jump_statistics=false`. Convergence-test fixed steps or adaptive tolerances
+and the ensemble size.
+
+The weak-PI backend is a distinct opt-in unraveling in
+`directsum_nu U_nu`, not a labeled-particle wavefunction. Its sector slice
+`psi_nu` represents the coefficient block
+`C_nu=psi_nu*psi_nu'/sqrt(f^nu)`; relative phases between different sectors
+are unphysical. `weak_pi_pseudoket` must reject a density state unless every
+occupied multiplicity-weighted block has numerical rank one, and
+`WeakPIPseudoKet` construction must check finite unit norm without silently
+normalizing input.
+
+For a local one-body gain from source `nu` to output `lambda`, each common
+one-box child `mu` supplies a Kraus matrix. The pseudo-density strength is the
+coefficient gain strength multiplied by `sqrt(f^lambda/f^nu)`; construct that
+ratio with checked exact multiplicities before its final square root. Every
+prepared physical channel must verify `sum K'*K == Q_nu` separately in every
+source sector. Split collective/direct jumps by source sector as well, so a
+sampled branch never introduces interference between distinct central Schur
+labels. This factorization is representation-generic and tested for qubits
+and qutrits; it must never be replaced by a `d^N` transform or an unnecessary
+dense Choi diagonalization.
+
+`WeakPITrajectoryPlan` supports fixed collective/direct/collective-p-body
+jumps and fixed one-body `LocalJump` channels. Operator-valued schedules and
+`LocalPBodyJump` are rejected. Scalar rates may be driven but must remain
+finite, real, nonnegative, and representable; Hamiltonian rates must be finite
+and real. The current integrator is fixed-step RK4 with a maximum jump
+probability. Plans are read-only, workspaces are task-owned, and batch streams
+remain trajectory-index seeded. `WeakPIJumpRecord` retains channel, source,
+target, and one-box child metadata. A Kraus rotation can change individual
+paths and their variances while preserving the master equation, so compare
+ensemble-linear quantities unless an unraveling convention is explicitly
+matched. Keep the hot jump-kernel traversal specialized by recursively taking
+`Base.tail` of its concrete tuple: retaining the full tuple and advancing a
+`Val` index allocates on Julia 1.10 even though newer compilers optimize it.
+
+The diffusive backend monitors collective PI channels only. The unconditional
+model must already contain the corresponding Lindblad dissipator; monitoring
+does not insert it. `DiffusivePlan` owns copied read-only kernels, while each
+task needs its own `DiffusiveWorkspace`. Homodyne and
+heterodyne observable output is restricted to Hermitian observables because
+the streaming result stores real values. Euler--Maruyama step-size convergence
+must be checked and a finite trace-preserving step is not a positivity
+certificate. Batch random streams are indexed by trajectory number so serial
+and threaded runs agree for a fixed seed.
+
+Research-utility channels, POVMs, Choi tests, and tomography operate only on
+the retained PI coefficient algebra; their CP/TP certificates do not make a
+claim about arbitrary non-PI inputs. In-place channel application forbids
+source/destination aliasing. Immutable channel, gradient, and joint-symmetry
+plans may be shared, but mutable workspaces are task-owned. Joint projectors
+require mutually commuting unitary symmetries; exact rank setup can require
+one projected application per PI coordinate. Checkpoints preserve the exact
+retained-sector basis and never normalize, clip, or repair stored states;
+HDF5/JLD2 support is optional. Implicit steady-state derivatives solve a
+trace-fixed tangent equation, and checkpointed control derivatives require a
+Hermitian terminal objective and time-step convergence checks.
 
 Public spectral and algebraic-diagnostic APIs include:
 
@@ -633,13 +835,19 @@ the Liouvillian, not strong term-by-term commutation.
   intensities for `gammaL/GammaC=1,10` against a certified population-space
   master equation. The default `N=10`, 256-path calculation is a finite-size
   regression of their `N=50`, 512-path Fig. 2 model, not a digitization.
-  Their pure pseudo-state unraveling resolves `J -> J+s` local branches; this
-  package's unresolved local CP gain gives generally mixed paths. Compare
-  ensemble-linear observables, never identify individual paths or variances.
+  The default density-valued local CP gain gives generally mixed paths.
+  `examples/weak_pi_trajectories.jl` separately samples its exact Schur Kraus
+  branches as pure direct-sum pseudo-kets for the `gammaL/GammaC=1` case and
+  compares equal fixed-step batches with both certified population and general
+  matrix-free master evolution. Neither record should be identified
+  path-by-path with a different Kraus convention or with labeled emitters.
 - Lloyd--Ziolkowska--Keeling (2026) is directly relevant to future
-  sector-shift-resolved PI trajectories, but its published examples require a
-  shared bosonic cavity factor absent from the current spin-only package. Do
-  not claim a Keeling figure reproduction until that auxiliary space exists.
+  sector-shift-resolved PI trajectories. The single-ensemble Schur
+  pseudo-ket factorization is now available. A finite truncated cavity can be
+  represented for deterministic dynamics through `FiniteOperatorBasis`, but
+  the published cavity trajectories still need a composite pseudo-ket
+  compiler. Do not claim a Keeling figure reproduction from the present
+  deterministic composite backend.
 - Additional examples cover Morrison--Parkins cooperative resonance
   fluorescence (including its exact steady state), Meiser--Holland
   steady-state superradiance, and four complementary time-crystal workflows:
@@ -666,6 +874,22 @@ the Liouvillian, not strong term-by-term commutation.
   six-rate qubit model. `examples/spin_phase_space.jl` validates multi-sector
   Q/Wigner normalization, exact multiplicities, coherent peaks, Wigner
   negativity, and dependency-free rendering.
+- `examples/streaming_output.jl` compares observable-only deterministic output
+  and state-free online trajectories with an exact emission law.
+- `examples/quantum_regression.jl` validates non-Hermitian QRT insertion,
+  antibunching, shifted-GMRES spectra, and finite-window FFT data.
+- `examples/weak_pi_trajectories.jl` compares Schur pseudo-kets,
+  density-valued paths, certified population evolution, and general
+  matrix-free PI evolution for the Zhang--Mølmer `gammaL/GammaC=1` decay
+  case. Equal fixed-step trajectory batches support a descriptive warmed
+  per-path timing, never a wall-clock regression gate. Its two Makie figures
+  show flux confidence bands, ensemble-state error, sampled total-spin sector
+  changes, exact qubit coordinate scaling through the paper's `N=50` size,
+  and retained history for equal saved batches. `Base.summarysize` history
+  bars exclude plans, worker scratch, and transient peak RAM; the full-Hilbert
+  curves are formulas and no exponential object is constructed.
+- `examples/composite_ensembles.jl` combines two PI factors with one finite
+  auxiliary factor and checks local lifts, cross terms, and trace preservation.
 
 Every runnable `examples/*.jl` file has a same-basename Markdown guide. Keep
 the code, stated tolerances, and guide workflow synchronized. Current examples
@@ -721,6 +945,14 @@ julia --project=. examples/schur_block_visualization.jl
 julia --project=. examples/spectral_visualization.jl
 julia --project=. examples/qubit_population_dynamics.jl
 julia --project=. examples/spin_phase_space.jl
+julia --project=. examples/streaming_output.jl
+julia --project=. examples/quantum_regression.jl
+julia --project=. examples/weak_pi_trajectories.jl
+julia --project=. examples/composite_ensembles.jl
+julia --project=. examples/correlated_reservoirs.jl
+julia --project=. examples/wiseman_milburn_homodyne.jl
+julia --project=. examples/cumulant_bridge.jl
+julia --project=. examples/research_utilities.jl
 julia --project=. benchmark/performance_regression.jl
 julia --project=. benchmark/performance_audit.jl
 julia --project=docs docs/make.jl
@@ -728,18 +960,23 @@ julia --project=quality -e 'using Pkg; Pkg.develop(path=pwd()); Pkg.instantiate(
 julia --project=quality quality/quality.jl
 ```
 
-The latest complete single-thread suite passed on Julia 1.12.6 (2026-07-16)
-after the published-model and trajectory additions. The preceding
-cross-version baseline had **4037 passing tests** on both Julia 1.10.11 and
-Julia 1.12.6 (2026-07-15), including exact large combinatorics, scaled Schur
+The current complete single-thread suite passed all **4589 assertions in 62
+groups** on Julia 1.12.6 (2026-07-16), including composite systems (48),
+streaming output (52), quantum regression (42), correlated reservoirs (54),
+weak-PI trajectories (52), diffusive monitoring (31), cumulant bridging (48),
+and research utilities (73). A clean Julia 1.10.11 resolution passed the same
+groups after explicit minimum-version inference and zero-allocation checks;
+the four-thread performance regression also passed. The preceding cross-version
+baseline had **4037 passing tests** on both Julia 1.10.11 and Julia 1.12.6
+(2026-07-15), including exact large combinatorics, scaled Schur
 branch/path factors, stable large-`N` product amplitudes, the strict population
 backend, six-rate qubit model, spin/state conveniences, Schur construction
-helpers, and spin phase space. Treat that count as historical after further
+helpers, and spin phase space. Treat counts as historical after further
 changes and report actual command output. The strict documentation build and
 its zero-undocumented-export gate passed after these additions. Aqua's 11
 package gates, JET's three
 public hot-path checks, and the public method-ambiguity check passed in the
-preceding quality audit. All 23 example scripts have same-basename guides. The
+preceding quality audit. All 31 example scripts have same-basename guides. The
 two trajectory comparisons passed individually on Julia 1.10.11 and 1.12.6;
 the new population-dynamics and spin-phase-space examples also passed in this
 integration pass, alongside the previously audited published-model,
@@ -884,6 +1121,19 @@ The previous closure checklist is implemented and regression-tested:
   helpers, physical/coefficient Schur iterators and constructors, and
   multiplicity-aware spin Husimi-Q/Wigner analysis are public and regression-
   tested without full-Hilbert reconstruction.
+- Observable-only deterministic output and state-free trajectory aggregation
+  avoid saved PI histories while preserving index-derived random streams.
+  Prepared quantum regression reuses the matrix-free Liouvillian for both RK4
+  propagation and connected shifted-GMRES spectra.
+- Weak-PI pseudo-ket trajectories use one vector per retained Schur irrep.
+  Their checked one-box Kraus subduction resolves local sector changes for
+  qubits and qudits without a full-Hilbert object; collective/direct branches
+  remain sector preserving and ensemble averages reproduce the density PI
+  gain and master evolution.
+- Composite PI coordinates retain equation-(7) normalization independently
+  in every ensemble factor. Their preallocated tensor-mode kernel applies
+  sums of factor maps without constructing the global Kronecker matrix; there
+  is still no composite quantum-trajectory compiler.
 
 Bounded research-scale limits remain: sparse-SPQR LR can exhaust memory for
 very large qudit irreps; a single huge Schur block still needs dense Cholesky;

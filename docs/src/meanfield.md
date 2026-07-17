@@ -73,7 +73,7 @@ For a permutation-symmetric \(p\)-particle Hamiltonian summed over unordered
 subsets, define
 
 \[
-h_{\rm eff}(\sigma)=\operatorname{tr}_{2\ldots p}
+h_{\rm eff}(\sigma)=\mathrm{tr}_{2\ldots p}
 \left[h\left(I\otimes\sigma^{\otimes(p-1)}\right)\right].
 \]
 
@@ -88,9 +88,9 @@ A local one-particle jump contributes \(r\mathcal D[L]\sigma\). For
 `LocalPBodyJump(L,p)`, let
 
 \[
-G(\sigma)=\operatorname{tr}_{2\ldots p}
+G(\sigma)=\mathrm{tr}_{2\ldots p}
 \left[L\sigma^{\otimes p}L^\dagger\right],\qquad
-Q_{\rm eff}(\sigma)=\operatorname{tr}_{2\ldots p}
+Q_{\rm eff}(\sigma)=\mathrm{tr}_{2\ldots p}
 \left[L^\dagger L
 \left(I\otimes\sigma^{\otimes(p-1)}\right)\right].
 \]
@@ -103,7 +103,7 @@ r{N-1\choose p-1}
 \]
 
 Finally, for a collective one-particle jump
-\(J=\sum_iL_i\), write \(\ell=\operatorname{tr}(L\sigma)\). The exact
+\(J=\sum_iL_i\), write \(\ell=\mathrm{tr}(L\sigma)\). The exact
 finite-\(N\) product closure is
 
 \[
@@ -127,13 +127,13 @@ the dissipator contains ordered pairs of subsets. Define the contracted
 operators
 
 \[
-E_m(\sigma)=\operatorname{tr}_{m+1\ldots p}
+E_m(\sigma)=\mathrm{tr}_{m+1\ldots p}
 \left[L\left(I^{\otimes m}\otimes
 \sigma^{\otimes(p-m)}\right)\right],
 \qquad 0\leq m\leq p,
 \]
 
-so that \(E_0=\ell=\operatorname{tr}(L\sigma^{\otimes p})\) and
+so that \(E_0=\ell=\mathrm{tr}(L\sigma^{\otimes p})\) and
 \(E_p=L\), and introduce the cross dissipator
 
 \[
@@ -168,10 +168,10 @@ Writing \(\widehat E_r=I_1\otimes E_r\), the exact finite product closure is
 \begin{aligned}
 \dot\sigma\big|_J=r_J\Bigg[&
 \sum_{r=1}^{p}a_r\,
-\operatorname{tr}_{2\ldots r}
+\mathrm{tr}_{2\ldots r}
 \Phi_{E_r,E_r}(\sigma^{\otimes r})\\
 &+\sum_{r=0}^{p-1}b_r\,
-\operatorname{tr}_{2\ldots r+1}
+\mathrm{tr}_{2\ldots r+1}
 \left(\Phi_{E_{r+1},\widehat E_r}
 +\Phi_{\widehat E_r,E_{r+1}}\right)
 (\sigma^{\otimes(r+1)})\Bigg].
@@ -191,6 +191,7 @@ the one-particle dissipator and the collective field shown above.
 | `PBodyHamiltonian` | Supported for permutation-symmetric input operators |
 | `LocalJump` | Supported |
 | `CollectiveJump` | Supported, including the finite self term |
+| `CorrelatedLocalJumps`, `CorrelatedCollectiveJumps` | Rejected by the current product-closure compiler; factor the fixed Kossakowski matrix into ordinary jumps first |
 | `LocalPBodyJump` | Supported for permutation-symmetric input operators |
 | `CollectivePBodyJump(..., 1)` | Equivalent to `CollectiveJump` |
 | `CollectivePBodyJump(..., p)` with `p > 1` | Supported through exact finite overlap classes and their leading thermodynamic class |
@@ -363,7 +364,7 @@ value = meanfield_pbody_expectation(plan, sigma, Xp, p)
 which evaluates
 
 \[
-{N\choose p}\operatorname{tr}
+{N\choose p}\mathrm{tr}
 \left(X_p\sigma^{\otimes p}\right).
 \]
 

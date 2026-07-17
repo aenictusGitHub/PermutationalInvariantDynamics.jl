@@ -155,8 +155,8 @@ when changing the figure or comparing logarithm branches.
 With a positive period, multipliers can be converted to exponents
 
 ```math
-\xi_j=\operatorname{Log}(\mu_j)/T,
-\qquad -\pi/T \leq \operatorname{Im}\xi_j \leq \pi/T.
+\xi_j=\mathrm{Log}(\mu_j)/T,
+\qquad -\pi/T \leq \mathrm{Im}\,\xi_j \leq \pi/T.
 ```
 
 ```julia

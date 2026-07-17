@@ -52,7 +52,7 @@ The state diagram is diagonal because a PI operator has no coherences between
 inequivalent Schur irreps. Here each diagonal tile is the physical trace weight
 
 \[
-p_\nu=f^\nu\operatorname{tr}(\rho_\nu),
+p_\nu=f^\nu\mathrm{tr}(\rho_\nu),
 \qquad \sum_\nu p_\nu=1,
 \]
 

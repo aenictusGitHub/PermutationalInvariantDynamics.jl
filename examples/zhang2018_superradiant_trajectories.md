@@ -64,19 +64,27 @@ more memory than the paper's single-pseudo-state representation.
 The deterministic master equation and all ensemble-linear observables are the
 same, but the conditional records are not identical. Zhang *et al.* resolve a
 local event into ``J\to J+s`` branches and propagate a pure symbolic Dicke
-pseudo-state. This package combines the indistinguishable particle-local
-outcomes into one completely positive PI gain map, so a local jump generally
-produces a mixed conditional state. The example therefore compares ensemble
-intensities, not individual ``(J,M)`` paths or trajectory variances.
+pseudo-state. The density-valued backend used in this script combines the
+indistinguishable particle-local outcomes into one completely positive PI
+gain map, so a local jump generally produces a mixed conditional state. The
+example therefore compares ensemble intensities, not individual ``(J,M)``
+paths or trajectory variances.
+
+The separate [`weak_pi_trajectories.jl`](weak_pi_trajectories.jl) example uses
+`WeakPITrajectoryPlan` to factorize the same CP gain into complete one-box
+Schur Kraus branches. It propagates pure direct-sum pseudo-kets and checks the
+ensemble against this density-valued route. That factorization is one valid
+unresolved record, not a reconstruction of labeled emitters or a claim of
+path-by-path identity with the article.
 
 Lloyd, Ziolkowska, and Keeling's recent
 [permutation-symmetric trajectory method](https://arxiv.org/abs/2605.11103)
 is especially relevant to this distinction and directly builds on the same PI
 operator framework. Its published numerical cases all include a shared
-bosonic cavity mode (and one uses a jump/diffusion hybrid), which the current
-spin-only package does not represent. Reproducing those figures honestly
-requires an auxiliary common-system Hilbert factor and sector-shift-resolved
-local channels; they are documented as future scope rather than emulated here.
+bosonic cavity mode (and one uses a jump/diffusion hybrid). A finite cavity is
+available for deterministic composite dynamics, but reproducing those
+trajectory figures still requires a composite pseudo-ket compiler; the
+single-ensemble weak-PI backend does not emulate that missing coupling.
 
 ## Makie figure
 

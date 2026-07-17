@@ -38,7 +38,7 @@ trace-fixed rank-one system
 
 where `t` is the physical PI trace functional. For a trace-preserving
 Liouvillian with a unique stationary state, this is equivalent to
-``\mathcal L\rho=0`` and ``\operatorname{tr}\rho=1``.
+``\mathcal L\rho=0`` and ``\mathrm{tr}\rho=1``.
 
 ```julia
 info = steady_state(model;
@@ -252,9 +252,15 @@ modes = pi_liouvillian_spectrum(model;
 Harmonic Ritz extraction targets interior eigenvalues without factorizing a
 shifted Liouvillian. At each restart, converged and best unconverged Ritz
 vectors are retained as a thick subspace. The result additionally reports
-`restarts`, `retained_dimension`, `target`, and `harmonic_shift`. An exact zero
-target receives a tolerance-scale negative internal shift because the
-stationary vector otherwise makes the harmonic pencil singular.
+`restarts`, `retained_dimension`, `target`, `harmonic_shift`,
+`ritz_extraction`, and `search_space_exhausted`. While the search space is
+partial, an exact zero target receives a tolerance-scale negative internal
+shift because the stationary vector otherwise makes the harmonic pencil
+singular. If the full ambient space or the exact range of a
+`MatrixFreeSymmetryProjector` has been spanned, the solver instead uses
+ordinary Rayleigh--Ritz extraction in that complete invariant space. This
+removes the singular-pencil sensitivity without changing the requested
+residual tolerance or materializing the projected Liouvillian.
 
 Increase `thickdim` for clustered modes while keeping it below `krylovdim`.
 Increase `maxrestarts` when Ritz residuals decrease steadily but have not

@@ -62,7 +62,7 @@ Condon--Shortley polarization tensors ``T_{kq}`` and standard spherical
 harmonics ``Y_{kq}``. With
 
 ```math
-t_{kq}=\operatorname{tr}(T_{kq}^\dagger\bar\rho_j),
+t_{kq}=\mathrm{tr}(T_{kq}^\dagger\bar\rho_j),
 ```
 
 the normalized sector density is

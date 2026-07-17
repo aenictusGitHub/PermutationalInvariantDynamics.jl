@@ -65,9 +65,9 @@ collective, and Appendix-D p-body terms use the ket/bra-regrouped auxiliary
 space with one local dimension `q=d^2`. On this space the positive operator
 
 ```math
-K=\operatorname{ad}_H^\dagger\operatorname{ad}_H+
-\sum_k\left(\operatorname{ad}_{L_k}^\dagger\operatorname{ad}_{L_k}+
-\operatorname{ad}_{L_k^\dagger}^\dagger\operatorname{ad}_{L_k^\dagger}\right)
+K=\mathrm{ad}_H^\dagger\,\mathrm{ad}_H+
+\sum_k\left(\mathrm{ad}_{L_k}^\dagger\,\mathrm{ad}_{L_k}+
+\mathrm{ad}_{L_k^\dagger}^\dagger\,\mathrm{ad}_{L_k^\dagger}\right)
 ```
 
 is permutation invariant. Its Schur blocks are constructed with the same
@@ -124,8 +124,8 @@ The package uses column-major vectorization. The exported constructors
 `left_superoperator(A)`, `right_superoperator(A)`, and
 `sandwich_superoperator(A,B)` implement, respectively,
 ``X\mapsto AX``, ``X\mapsto XA``, and ``X\mapsto AXB^\dagger`` through the
-identities ``\operatorname{vec}(AXB^\dagger)=(\bar B\otimes A)
-\operatorname{vec}(X)``. `commutator_superoperator` and
+identities ``\mathrm{vec}(AXB^\dagger)=(\bar B\otimes A)
+\mathrm{vec}(X)``. `commutator_superoperator` and
 `dissipator_superoperator` build the corresponding Hamiltonian and Lindblad
 pieces. Sparse PI Liouvillian assembly uses these same centralized identities.
 

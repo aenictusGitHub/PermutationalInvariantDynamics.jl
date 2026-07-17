@@ -855,8 +855,19 @@ function _projector_workspace(projector,work)
        projector isa getfield(@__MODULE__,:MatrixFreeSymmetryProjector)
         return getfield(@__MODULE__,:SymmetryProjectorWorkspace)(projector)
     end
+    if isdefined(@__MODULE__,:JointSymmetryProjector)&&
+       projector isa getfield(@__MODULE__,:JointSymmetryProjector)
+        return getfield(@__MODULE__,:JointSymmetryProjectorWorkspace)(projector)
+    end
     nothing
 end
+
+# `nothing` means the full ambient space, whose dimension is known exactly.
+# Other projector types opt into the complete-range Rayleigh--Ritz fallback by
+# specializing this trait.  An Arnoldi breakdown alone is not proof that a
+# seed-generated invariant subspace spans the complete projector range.
+_projector_range_dimension(::Nothing,n::Integer)=Int(n)
+_projector_range_dimension(projector,n::Integer)=nothing
 
 """
     harmonic_arnoldi_spectrum(L; nev=6, krylovdim=40, thickdim=12,
@@ -866,6 +877,11 @@ Compute eigenvalues nearest `target` with thick-restarted harmonic Arnoldi.
 Converged and best unconverged harmonic Ritz vectors are retained between
 cycles. An optional matrix-free orthogonal `projector` restricts every basis
 and residual vector to a weak-symmetry charge sector.
+When the complete projector range is known and has been spanned, extraction
+switches to ordinary Rayleigh--Ritz in that invariant subspace.  This avoids
+the singular harmonic pencil at an exactly represented target without
+loosening the requested residual tolerance.  The result fields
+`ritz_extraction` and `search_space_exhausted` record the selected path.
 `workspace` reuses Arnoldi and pencil storage; `projector_workspace` supplies
 caller-owned symmetry scratch. Restart reports include locked-mode counts and
 per-cycle residual history.
@@ -880,9 +896,18 @@ function harmonic_arnoldi_spectrum(L;nev::Integer=6,krylovdim::Integer=max(30,3n
                                    workspace=nothing,projector_workspace=nothing)
     n=size(L,1);size(L,2)==n||throw(DimensionMismatch("L must be square"))
     0<nev<=n||throw(ArgumentError("nev must lie between 1 and the operator dimension"))
-    m=min(n,max(Int(krylovdim),Int(nev)+2));keep=min(m-1,max(Int(thickdim),Int(nev)))
     maxrestarts>=0||throw(ArgumentError("maxrestarts must be nonnegative"))
     projector===nothing||size(projector)==(n,n)||throw(DimensionMismatch("projector has wrong dimension"))
+    range_dimension=_projector_range_dimension(projector,n)
+    if range_dimension!==nothing
+        0<range_dimension<=n||throw(ArgumentError(
+            "projector range dimension must lie between 1 and the operator dimension"))
+        nev<=range_dimension||throw(ArgumentError(
+            "nev=$nev exceeds the known projector range dimension $range_dimension"))
+    end
+    search_limit=range_dimension===nothing ? n : range_dimension
+    m=min(n,search_limit,max(Int(krylovdim),Int(nev)+2))
+    keep=min(m-1,max(Int(thickdim),Int(nev)))
     _check_finite_krylov_target(target)
     T=_complex_float_type(eltype(L))
     initial_vector===nothing||(T=_promote_krylov_array_type(T,initial_vector))
@@ -925,6 +950,7 @@ function harmonic_arnoldi_spectrum(L;nev::Integer=6,krylovdim::Integer=max(30,3n
             mul!(tmp,L,view(V,:,k));applications+=1
             _project_vector!(view(LV,:,k),projector,tmp,pwork)
         end
+        search_space_exhausted=range_dimension!==nothing&&k==range_dimension
         Vk=view(V,:,1:k);LVk=view(LV,:,1:k)
         requested_target=Complex{RT}(target)
         action_scale=max(maximum((norm(view(LVk,:,j)) for j in 1:k);init=zero(RT)),floatmin(RT))
@@ -932,16 +958,29 @@ function harmonic_arnoldi_spectrum(L;nev::Integer=6,krylovdim::Integer=max(30,3n
         # harmonic pencil has a common null vector. A tiny offset makes the
         # pencil regular without changing the requested tolerance scale.
         sigma=iszero(requested_target) ? Complex{RT}(-max(sqrt(eps(RT))*action_scale,atol)) : requested_target
-        # Harmonic Rayleigh--Ritz condition:
-        # (A V)'(A V y - μ V y)=0 for A=L-σI.
-        Z=view(Zwork,:,1:k);@. Z=LVk-sigma*Vk
         A=view(ws.A,1:k,1:k);B=view(ws.B,1:k,1:k)
-        mul!(A,adjoint(Z),Z);mul!(B,adjoint(Z),Vk)
-        E=_projected_eigen!(A,B);finite=findall(i->isfinite(real(E.values[i]))&&isfinite(imag(E.values[i])),eachindex(E.values))
-        isempty(finite)&&throw(ArgumentError("harmonic Ritz pencil is singular; enlarge krylovdim or change the initial vector"))
-        lambda_all=sigma .+ E.values
+        E = if search_space_exhausted
+            # The orthonormal basis spans the complete known projector range.
+            # Ordinary Rayleigh--Ritz is therefore exact up to roundoff and
+            # avoids the common null vector of the harmonic pencil.
+            mul!(A,adjoint(Vk),LVk)
+            _projected_eigen!(A)
+        else
+            # Harmonic Rayleigh--Ritz condition:
+            # (A V)'(A V y - μ V y)=0 for A=L-σI.
+            Z=view(Zwork,:,1:k);@. Z=LVk-sigma*Vk
+            mul!(A,adjoint(Z),Z);mul!(B,adjoint(Z),Vk)
+            _projected_eigen!(A,B)
+        end
+        # Julia may return real eigenvalues for a complex Hermitian projected
+        # matrix.  Preserve the solver's documented complex value type.
+        lambda_all=search_space_exhausted ? Complex{RT}.(E.values) : sigma .+ E.values
+        finite=findall(i->isfinite(real(lambda_all[i]))&&isfinite(imag(lambda_all[i])),
+                       eachindex(lambda_all))
+        isempty(finite)&&throw(ArgumentError(
+            "Ritz extraction returned no finite eigenvalues; enlarge krylovdim or change the initial vector"))
         order=finite[sortperm(abs.(lambda_all[finite].-requested_target))];sel=order[1:min(nev,length(order))]
-        vals=sigma .+ E.values[sel];Y=view(E.vectors,:,sel);nsel=length(sel)
+        vals=lambda_all[sel];Y=view(E.vectors,:,sel);nsel=length(sel)
         X=view(Xwork,:,1:nsel);LX=view(LXwork,:,1:nsel)
         mul!(X,Vk,Y);mul!(LX,LVk,Y)
         for j in 1:nsel
@@ -956,15 +995,24 @@ function harmonic_arnoldi_spectrum(L;nev::Integer=6,krylovdim::Integer=max(30,3n
         tolerance=RT(atol)+RT(rtol)*action_scale;converged=residuals .<= tolerance
         locked=count(converged)
         push!(history,(cycle,subspace_dimension=k,locked,
-                       maximum_residual=maximum(residuals),residual_scale=action_scale))
+                       maximum_residual=maximum(residuals),residual_scale=action_scale,
+                       ritz_extraction=search_space_exhausted ? :rayleigh_ritz : :harmonic,
+                       search_space_exhausted))
         best=(values=vals,residuals=residuals,converged=converged,
               restarts=cycle,iterations=applications,krylov_dimension=m,
               retained_dimension=keep,final_retained_dimension=nkeep,
               locked,dimension=n,target=requested_target,
               harmonic_shift=sigma,algorithm=:harmonic,
+              ritz_extraction=search_space_exhausted ? :rayleigh_ritz : :harmonic,
+              search_space_exhausted,
               residual_scale=action_scale,residual_tolerance=tolerance,
               restart_history=copy(history),workspace_reused=workspace!==nothing)
         if length(vals)>=nev&&all(converged)
+            return vectors ? merge(best,(vectors=copy(X),)) : best
+        end
+        if search_space_exhausted
+            require_convergence&&throw(ArgumentError(
+                "Rayleigh--Ritz extraction in the complete search space did not converge; maximum requested Ritz residual=$(maximum(residuals))"))
             return vectors ? merge(best,(vectors=copy(X),)) : best
         end
         cycle==maxrestarts&&break

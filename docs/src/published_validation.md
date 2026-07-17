@@ -46,25 +46,32 @@ deterministically exponentiated, certified 36-coordinate population generator.
 It is a finite-size regression of the published model and observables; the
 paper used ``N=50`` and 512 paths.
 
-The conditional records require a precise distinction. The article resolves
-local events into total-spin-sector shifts and propagates pure symbolic Dicke
-pseudo-states. The package's particle-unresolved local gain map instead gives
-a generally mixed conditional PI state. Their master equation and linear
-ensemble observables agree, but individual ``(J,M)`` paths and trajectory
-variances are not compared. Lloyd, Ziolkowska, and Keeling's 2026
-permutation-symmetric trajectory construction is noted in the example guide;
-its published tests require a shared bosonic cavity factor that is currently
-outside this package's spin-only state space.
+The conditional records require a precise distinction. The default
+density-valued backend combines the particle-unresolved local gain and gives a
+generally mixed conditional PI state. The separate
+`examples/weak_pi_trajectories.jl` backend resolves the same CP gain into
+one-box Schur-sector Kraus branches and retains a pure direct-sum pseudo-ket.
+Both reproduce the master equation and linear ensemble observables, but a
+Kraus decomposition is not unique, so individual ``(J,M)`` paths and
+trajectory variances are not asserted to equal the article's record. Lloyd,
+Ziolkowska, and Keeling's 2026 construction also includes a shared bosonic
+cavity; composite pseudo-ket trajectory compilation remains outside the
+single-ensemble backend. The weak-PI example uses the article's
+``\gamma_l/\Gamma_c=1`` case and independently checks certified population
+and general matrix-free PI master evolution before comparing equal-size,
+equal-control stochastic batches.
 
 When run with `--project=examples`, every standalone literature validation
 produces a CairoMakie PDF/PNG figure. The trajectory panels show deterministic
-curves, ensemble means, and one-standard-error bands. Damanet and Pausch add
-radiated-pulse/Schur-population and gap/mean-field summaries. Morrison--Parkins,
-Meiser--Holland, and the metrology examples visualize their validated steady
-observables or analytical comparisons. The boundary, interacting, PT, and
-Floquet time-crystal scripts pair finite-size spectra or gaps with the relevant
-dynamics and retain their finite-size caveats. Makie remains confined to the
-examples environment.
+curves, ensemble means, and documented uncertainty bands. The weak-PI
+example additionally shows ensemble-state error, sampled ``J\rightarrow J'``
+events, exact representation scaling through ``N=50``, and an illustrative
+warmed per-path timing. Damanet and Pausch add radiated-pulse/Schur-population
+and gap/mean-field summaries. Morrison--Parkins, Meiser--Holland, and the
+metrology examples visualize their validated steady observables or analytical
+comparisons. The boundary, interacting, PT, and Floquet time-crystal scripts
+pair finite-size spectra or gaps with the relevant dynamics and retain their
+finite-size caveats. Makie remains confined to the examples environment.
 
 ## Cooperative spontaneous emission (2016)
 

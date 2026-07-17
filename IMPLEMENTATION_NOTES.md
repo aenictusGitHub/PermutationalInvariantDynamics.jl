@@ -227,6 +227,57 @@ grid per selected sector. The equirectangular SVG accepts only precomputed
 data, groups cells into a bounded palette-sized path collection, and leaves
 negative Wigner values and all raw samples unchanged.
 
+## Streaming output, quantum regression, and composite spaces
+
+Fixed-step deterministic streaming propagates one mutable PI coordinate
+vector and contracts prepared observables at requested output times. The
+trajectory analogue gives every worker one path workspace, one
+`n_observable` by `n_time` buffer, and online Welford accumulators. Setting
+`save_states=false` therefore avoids constructing sampled `PIState` histories;
+the optional pooled waiting-time vector remains proportional to the number of
+recorded inter-jump intervals. Index-derived seeds are unchanged, so streaming
+changes retained output rather than the stochastic dynamics.
+
+Prepared observables and deterministic output buffers are concrete tuples;
+sampling does not index an abstract `Pair` vector or a heterogeneous public
+dictionary in the hot loop. The public dictionary is assembled once after
+propagation. Result types use exact union parameters for optional state or
+trajectory histories, preserving the inferred legacy return and concrete
+history element types. State-free trajectory output requires at least one
+observable; jump summaries can be retained or disabled alongside it.
+
+Quantum regression stores the physical left/right insertion blocks once. For
+the public convention
+
+`C_AB(tau) = tr(A * exp(L*tau) * (B*rho*R))`,
+
+the readout vector contains the coefficients of `A'`, because the package's
+ordinary coefficient dot product is `tr(A'X)`. Time-domain propagation reuses
+one `EvolutionWorkspace`; its warmed explicit-workspace RK4 path allocates no
+history or integration scratch. The stationary connected spectrum solves
+`(im*omega*I-L)x = B*rho*R-rho*tr(B*rho*R)` with restarted GMRES; a rank-one
+trace term removes the stationary null direction without changing its
+trace-zero solution. The disconnected stationary component is a Dirac delta
+and is rejected as an ordinary function. The separate radix-two FFT path uses
+trapezoidal endpoints and represents a finite observation window.
+
+A `CompositePIBasis` is the tensor product of several PI operator spaces and
+small full matrix-unit spaces. Factor one is fastest, hence factorized data and
+maps are ordered `kron(last,...,first)`. A PI factor keeps its equation-(7)
+coordinates and a `FiniteOperatorBasis(m)` contributes exactly `m^2`
+coordinates. Composite trace contracts Cartesian products of factor diagonal
+coordinates and multiplies their exact Schur multiplicities only after the
+joint block trace is formed. The tensor-mode application copies one strided
+factor fibre into caller-owned scratch, applies its local map, scatters it
+back, and alternates two full composite buffers across active factors. Thus a
+sum of Kronecker-product maps is applied without retaining the global
+Kronecker matrix. Compiled PI factor actions keep separate nested
+`LiouvillianWorkspace`s. Recursive tuple traversal specializes heterogeneous
+factor maps and terms, so a warmed explicit-workspace application remains
+allocation-free. The current layer is deterministic: it does not
+compile composite jump trajectories or silently extend single-ensemble
+reductions to a composite state.
+
 ## Current limitations
 
 The recursive dense Schur transform is intentionally confined to
@@ -291,6 +342,29 @@ Trajectory statistics use online Welford accumulation for count and observable
 variances. Reports include channel-resolved rates and Fano factors, pooled
 waiting times, no-jump fractions, standard errors, and normal confidence
 intervals; local observables are assembled into PI operators only once.
+
+The separate weak-PI trajectory surface propagates normalized pseudo-kets in
+`directsum_nu U_nu`. A sector slice represents the multiplicity-weighted
+rank-one block `psi_nu*psi_nu'`, rather than a labeled-particle pure state.
+Fixed collective/direct gains are split by source sector. Fixed one-body local
+gains reuse the one-box geometry factorization: every common child partition
+gives a rectangular Kraus map from one Schur irrep to another, with the
+coefficient-space strength converted by `sqrt(f_output/f_input)`. Exact Schur
+multiplicities are combined before floating conversion, and plan construction
+checks `sum K'*K` against the prepared `Q` block for every channel/source
+sector. This works for qubits and qudits without a dense Choi problem or a
+`d^N` object.
+
+`WeakPITrajectoryWorkspace` owns fixed-step RK4 vectors, channel/branch
+intensities, and selected-branch scratch; batch workspaces retain one instance
+and RNG per task with trajectory-index-derived seeds. Saved jump records carry
+source, target, and one-box child partitions. Ensemble averages convert outer
+products to PI coefficient blocks only during reduction. The backend rejects
+mixed initial blocks, nonunit pseudo-kets, operator-valued schedules, local
+p-body jumps, narrowing inputs, and invalid rates. It currently has only the
+fixed-step/max-jump-probability integrator; the density-valued backend remains
+the event-driven route. A different Kraus rotation preserves master dynamics
+but may change path-level statistics.
 
 The performance audit covers basis and generator construction, sparse and
 matrix-free application, preallocated PI and mean-field evolution, collective

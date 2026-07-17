@@ -33,8 +33,8 @@ Three qubits undergo a collective coherent drive and independent decay,
 The complete qubit PI basis has coordinate dimension 20 at `N=3`, making a
 dense full-spectrum calculation an appropriate diagnostic. In the resulting
 complex-plane diagram the horizontal axis is
-\(\operatorname{Re}\lambda\), the decay or growth rate, and the vertical axis
-is \(\operatorname{Im}\lambda\), the oscillation frequency. The vertical line
+\(\mathrm{Re}\,\lambda\), the decay or growth rate, and the vertical axis
+is \(\mathrm{Im}\,\lambda\), the oscillation frequency. The vertical line
 at `Re = 0` is the stability boundary. A trace-preserving relaxing generator
 has a stationary eigenvalue at the origin and all other modes in the open
 left half-plane. The script asserts both properties.
@@ -79,8 +79,8 @@ give stroboscopic damping.
 The corresponding exponents use the principal complex logarithm,
 
 \[
-\xi_j=\frac{\operatorname{Log}\mu_j}{T},
-\qquad -\frac{\pi}{T}\leq\operatorname{Im}\xi_j\leq\frac{\pi}{T}.
+\xi_j=\frac{\mathrm{Log}\,\mu_j}{T},
+\qquad -\frac{\pi}{T}\leq\mathrm{Im}\,\xi_j\leq\frac{\pi}{T}.
 \]
 
 Their real and imaginary axes again represent decay rates and frequencies,

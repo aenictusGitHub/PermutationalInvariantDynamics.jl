@@ -62,10 +62,56 @@
     @test abs(harmonic.values[stationary_index]-dense[1])<=
           3harmonic.residuals[stationary_index]+stationary_floor
     @test harmonic.algorithm===:harmonic
+
+    # Once the complete known projector range is spanned, an ordinary
+    # Rayleigh--Ritz extraction avoids the singular near-zero harmonic pencil.
+    # This deterministic nonnormal block failed by O(1e-9) before the fallback
+    # even though its selected sector is only two dimensional.
+    sz=ComplexF64[1 0;0 -1]
+    fallback_basis=PIBasis(1,2)
+    fallback_projector=matrixfree_symmetry_projector(
+        fallback_basis,sz;charge=:trivial)
+    fallback_operator=zeros(ComplexF64,4,4)
+    fallback_operator[1,4]=1
+    fallback_operator[4,4]=-0.7
+    fallback_operator[2,2]=-2
+    fallback_operator[3,3]=-3
+    fallback_seed=ComplexF64[1,2,3,4]
+    exhausted=harmonic_arnoldi_spectrum(fallback_operator;
+        nev=2,krylovdim=4,maxrestarts=0,projector=fallback_projector,
+        initial_vector=fallback_seed,rng=MersenneTwister(16),vectors=true,
+        atol=1e-12,rtol=1e-10)
+    @test exhausted.values≈ComplexF64[0,-0.7] atol=1e-11
+    @test maximum(exhausted.residuals)<1e-11
+    @test norm(fallback_operator*exhausted.vectors-
+               exhausted.vectors*Diagonal(exhausted.values))<2e-11
+    exhausted_projected=hcat((fallback_projector*exhausted.vectors[:,j]
+                              for j in axes(exhausted.vectors,2))...)
+    @test exhausted_projected≈exhausted.vectors atol=2e-12
+    @test exhausted.ritz_extraction===:rayleigh_ritz
+    @test exhausted.search_space_exhausted
+    @test exhausted.krylov_dimension==2
+    @test exhausted.restart_history[1].subspace_dimension==2
+    @test_throws ArgumentError harmonic_arnoldi_spectrum(fallback_operator;
+        nev=3,krylovdim=4,projector=fallback_projector,
+        initial_vector=fallback_seed,rng=MersenneTwister(17))
+    exhausted_gap=pi_liouvillian_gap(fallback_operator;basis=fallback_basis,
+        method=:harmonic,symmetry=sz,charge=1,nev=2,krylovdim=4,
+        maxrestarts=0,return_info=true,initial_vector=fallback_seed,
+        rng=MersenneTwister(18),atol=1e-12,rtol=1e-10)
+    @test exhausted_gap.gap≈0.7 atol=1e-11
+    @test exhausted_gap.stationary_multiplicity==1
+    @test exhausted_gap.gap_certified && exhausted_gap.stability_certified
+    @test exhausted_gap.ritz_extraction===:rayleigh_ritz
+    @test exhausted_gap.search_space_exhausted
+
     restarted=harmonic_arnoldi_spectrum(Lm;nev=2,krylovdim=8,
-        maxrestarts=2,require_convergence=false,atol=0,rtol=0,
+        initial_vector=harmonic_seed,maxrestarts=2,
+        require_convergence=false,atol=0,rtol=0,
         rng=MersenneTwister(111))
     @test restarted.restarts==2
+    @test restarted.ritz_extraction===:harmonic
+    @test !restarted.search_space_exhausted
 
     # Exact-shift implicit QR restarting preserves the matrix-free Arnoldi
     # factorization and reaches the spectral edge with a much smaller basis
@@ -131,7 +177,6 @@
     @test all(zero_jd.converged)
     @test zero_jd.vectors'*zero_jd.vectors≈I
 
-    sz=ComplexF64[1 0;0 -1]
     projector=matrixfree_symmetry_projector(b,sz;charge=:trivial)
     x=randn(MersenneTwister(12),ComplexF64,length(b));px=projector*x
     @test projector*px≈px atol=2e-12
@@ -139,13 +184,26 @@
     @test Lm*px≈projector*(Lm*x) atol=2e-11
     projected=pi_liouvillian_spectrum(model;method=:harmonic,symmetry=sz,
         charge=1,nev=3,krylovdim=12,maxrestarts=12,vectors=true,
-        rng=MersenneTwister(13),atol=1e-9,rtol=1e-7)
+        initial_vector=x,rng=MersenneTwister(13),atol=1e-9,rtol=1e-7)
     @test projected.symmetry_used
     @test projected.symmetry_charge≈1
     @test maximum(projected.residuals)<2e-7
+    @test projected.ritz_extraction===:rayleigh_ritz
+    @test projected.search_space_exhausted
+    partial_projected=harmonic_arnoldi_spectrum(Lm;nev=2,krylovdim=6,
+        maxrestarts=0,projector=projector,initial_vector=x,
+        rng=MersenneTwister(131),vectors=true,require_convergence=false,
+        atol=1e-9,rtol=1e-7)
+    @test partial_projected.ritz_extraction===:harmonic
+    @test !partial_projected.search_space_exhausted
+    @test partial_projected.restart_history[1].subspace_dimension==6
+    @test norm(hcat((Lm*partial_projected.vectors[:,j] for
+                     j in axes(partial_projected.vectors,2))...)-
+               partial_projected.vectors*Diagonal(partial_projected.values))≈
+          norm(partial_projected.residuals) atol=2e-12
     hgap=pi_liouvillian_gap(model;method=:harmonic,symmetry=sz,charge=1,
         nev=3,krylovdim=length(b),maxrestarts=3,return_info=true,
-        rng=MersenneTwister(14),atol=1e-9,rtol=1e-7)
+        initial_vector=x,rng=MersenneTwister(14),atol=1e-9,rtol=1e-7)
     Pmat=hcat((projector*Matrix{ComplexF64}(I,length(b),length(b))[:,j] for j in 1:length(b))...)
     PE=eigen(Hermitian((Pmat+Pmat')/2));Q=PE.vectors[:,PE.values.>0.5]
     pvals=eigvals(Q'*Matrix(liouvillian(model;representation=:sparse))*Q)
@@ -154,10 +212,14 @@
     @test hgap.method===:harmonic && hgap.symmetry_used
     @test hgap.scope===:charge_sector
     @test hgap.selection===:near_zero
+    @test hgap.stationary_multiplicity==1
+    @test hgap.ritz_extraction===:rayleigh_ritz
+    @test hgap.search_space_exhausted
     @test !hgap.gap_certified
     @test !hgap.stability_certified
     @test_throws ArgumentError pi_liouvillian_gap(model;method=:harmonic,
-        symmetry=sz,charge=1,nev=3,krylovdim=length(b))
+        symmetry=sz,charge=1,nev=3,krylovdim=length(b),
+        initial_vector=x,rng=MersenneTwister(141))
 
     # Harmonic extraction orders by distance to zero, not by real part.  The
     # highly oscillatory -0.1+100im mode controls the global gap but is not a
@@ -173,9 +235,11 @@
     # require an artificial zero eigenvalue.
     b1=PIBasis(1,2)
     charged=Diagonal(ComplexF64[0,-0.2,-0.3,-1])
+    charged_seed=ones(ComplexF64,4)
     qdecay=pi_liouvillian_gap(charged;basis=b1,method=:harmonic,
         symmetry=sz,charge=-1,nev=2,krylovdim=4,return_info=true,
-        rng=MersenneTwister(15),atol=1e-10,rtol=1e-8)
+        initial_vector=charged_seed,rng=MersenneTwister(15),
+        atol=1e-10,rtol=1e-8)
     @test qdecay.gap≈0.2 atol=2e-8
     @test qdecay.stationary_multiplicity==0
     @test qdecay.symmetry_charge≈-1
@@ -185,7 +249,8 @@
     @test qdecay.sector_dimension==2
     @test pi_liouvillian_gap(charged;basis=b1,method=:harmonic,
         symmetry=sz,charge=-1,nev=2,krylovdim=4,
-        rng=MersenneTwister(15),atol=1e-10,rtol=1e-8)≈0.2 atol=2e-8
+        initial_vector=charged_seed,rng=MersenneTwister(15),
+        atol=1e-10,rtol=1e-8)≈0.2 atol=2e-8
     @test_throws ArgumentError matrixfree_symmetry_projector(b,sz;charge=im)
 
     @test_throws ArgumentError krylov_steady_state(Lm;trace_vector=zeros(length(b)))
@@ -234,7 +299,10 @@
     iram32=implicitly_restarted_arnoldi_spectrum(diagonal32;nev=2,
         krylovdim=4,initial_vector=diagonal_seed32,atol=1f-5,rtol=1f-4)
     harmonic32=harmonic_arnoldi_spectrum(diagonal32;nev=2,krylovdim=4,
-        initial_vector=diagonal_seed32,atol=1f-5,rtol=1f-4)
+        initial_vector=diagonal_seed32,rng=MersenneTwister(19),
+        atol=1f-5,rtol=1f-4)
+    @test harmonic32.ritz_extraction===:rayleigh_ritz
+    @test harmonic32.search_space_exhausted
     zerojd32=jacobi_davidson_spectrum(zeros(ComplexF32,4,4);nev=2)
     for result32 in (iram32,harmonic32,zerojd32)
         @test eltype(result32.values)===ComplexF32
@@ -345,7 +413,8 @@
         @test scaled.values./c≈dense[1:4] atol=3e-9
         @test scaled.residual_scale/c>0
         hscaled=harmonic_arnoldi_spectrum(c*Ls;nev=3,krylovdim=length(b),
-            initial_vector=seed,workspace=sws,atol=0,rtol=1e-7)
+            initial_vector=seed,workspace=sws,rng=MersenneTwister(25),
+            atol=0,rtol=1e-7)
         @test maximum(hscaled.residuals)/c<5e-7
         @test abs(hscaled.harmonic_shift/c)<1e-6
     end

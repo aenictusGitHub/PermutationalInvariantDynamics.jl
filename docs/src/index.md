@@ -5,7 +5,8 @@ identical `d`-level systems directly in their permutationally invariant (PI)
 operator space. It supports time-local open dynamics, local and collective
 dissipation, symmetric many-body processes, stationary states, spectra,
 entanglement and information measures, trajectories, Floquet dynamics, and
-mean-field predictions.
+mean-field predictions. Observable-only output, PI quantum regression, and
+factorized deterministic dynamics of several PI ensembles are also available.
 
 The exact PI representation scales polynomially with `N` at fixed `d` and
 does not construct the full `d^N` Hilbert space in production algorithms.
@@ -58,11 +59,11 @@ prepared = compile(model; backend=:auto)
 solution = solve_dynamics(
     prepared, rho0, (0.0, 10.0);
     saveat=0.1, steps_per_interval=16,
+    observables=(magnetization=sz / 2,),
+    save_states=false,
 )
 
-Jz = CollectiveObservablePlan(basis, sz / 2)
-magnetization = [collective_expectation(rho, Jz) / basis.N
-                 for rho in solution]
+magnetization = real.(solution.observables[:magnetization]) / basis.N
 
 rho_ss = stationary_state(prepared)
 report = diagnostics(rho_ss)
@@ -80,6 +81,12 @@ through `dynamics_problem` and an installed SciML solver package.
   matrix-free backends, preallocated workspaces, concurrency, and solver use.
 - [API tiers and prepared analysis](api_tiers.md) separates recommended
   high-level commands from advanced research interfaces.
+- [Streaming output](streaming_output.md), [weak-PI pseudo-ket
+  trajectories](weak_pi_trajectories.md), [quantum regression and
+  spectra](correlations.md), [higher-order cumulant closures](cumulant_bridge.md),
+  [diffusive monitoring](diffusive_monitoring.md), [research utilities and
+  control](research_utilities.md), and [composite systems](composite_systems.md) describe memory-conscious
+  research extension workflows.
 - [Complete public API index](api_reference.md) categorizes every exported
   function and type and links its full description.
 - [Published validation](published_validation.md) and

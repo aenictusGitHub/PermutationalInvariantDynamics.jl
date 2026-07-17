@@ -22,11 +22,18 @@ PermutationalInvariantDynamics
 | [Observables and quantum information](api/analysis.md) | Moments, correlations, squeezing, QFI/QFIM, spin phase space, reduced states, negativity, entropies, distances, and symmetry-resolved information |
 | [Stationary states, spectra, and research solvers](api/solvers.md) | Direct and Krylov solvers, Liouvillian spectra and gaps, Evans tests, weak symmetries, response, memory estimates, and typed high-level commands |
 | [Visualization](api/visualization.md) | Schur-block, density-spectrum, Liouvillian-spectrum, Floquet-spectrum, and spin phase-space SVG renderers |
+| [Streaming output](streaming_output.md) | Observable-only deterministic evolution and state-free online trajectory statistics |
+| [Weak-PI pseudo-ket trajectories](weak_pi_trajectories.md) | Direct-sum Schur-irrep pseudo-kets and sector-changing local Kraus branches |
+| [Quantum regression and spectra](correlations.md) | Prepared two-time correlations, delayed intensity correlations, shifted-GMRES spectra, and finite-window FFTs |
+| [Higher-order cumulant bridge](cumulant_bridge.md) | Exact distinct-site PI moments, neutral microscopic metadata, closure comparisons, and the optional QuantumCumulants adapter |
+| [Research utilities and control](research_utilities.md) | Compressed spectral/population inspection, PI channels, tomography, checkpoints, joint symmetries, and gradients |
+| [Diffusive monitoring](diffusive_monitoring.md) | Preallocated homodyne/heterodyne conditional PI dynamics and reproducible ensembles |
+| [Composite systems](composite_systems.md) | Multiple PI ensembles, finite auxiliary factors, and preallocated tensor-product superoperators |
 
 ## Alphabetical index
 
 ```@index
 Modules = [PermutationalInvariantDynamics]
-Pages = ["api/representation.md", "api/dynamics.md", "api/analysis.md", "api/solvers.md", "api/visualization.md"]
+Pages = ["api/representation.md", "api/dynamics.md", "api/analysis.md", "api/solvers.md", "api/visualization.md", "streaming_output.md", "diffusive_monitoring.md", "weak_pi_trajectories.md", "correlations.md", "cumulant_bridge.md", "research_utilities.md", "composite_systems.md"]
 Order = [:type, :function, :constant, :macro]
 ```

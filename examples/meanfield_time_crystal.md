@@ -58,7 +58,7 @@ other \(N-1\) particles:
 \frac{N-1}{2}\left(
 \ell^*[L,\sigma]-\ell[L^\dagger,\sigma]
 \right)\right],
-\qquad \ell=\operatorname{tr}(L\sigma).
+\qquad \ell=\mathrm{tr}(L\sigma).
 \]
 
 In the balanced Nakanishi--Sasamoto model the nonlinear fields of

@@ -54,6 +54,47 @@ struct DynamicsResult{T,S,A}
     states::S
     algorithm::A
 end
+
+"""
+    DynamicsStreamResult
+
+Memory-conscious fixed-step dynamics output returned by
+[`solve_dynamics`](@ref) when `observables` are requested or
+`save_states=false`. `observables` maps each user-supplied name to its sampled
+expectation-value vector. `states` is either the ordinary saved `PIState`
+vector or `nothing`.
+
+When `states === nothing`, propagation owns one mutable state and observable
+values are evaluated before that state is reused. Thus retained output storage
+does not scale with the PI-coordinate dimension. Observable callbacks are not
+used in this path, so user code cannot accidentally retain the integrator
+state.
+"""
+struct DynamicsStreamResult{T,S,O,A}
+    times::Vector{T}
+    states::S
+    observables::O
+    algorithm::A
+end
+Base.length(sol::DynamicsStreamResult)=length(sol.times)
+Base.firstindex(sol::DynamicsStreamResult)=firstindex(sol.times)
+Base.lastindex(sol::DynamicsStreamResult)=lastindex(sol.times)
+Base.getindex(sol::DynamicsStreamResult,i::Integer)=state(sol,i)
+Base.iterate(sol::DynamicsStreamResult,args...)=begin
+    sol.states===nothing&&throw(ArgumentError(
+        "this result was created with save_states=false"))
+    iterate(sol.states,args...)
+end
+state(sol::DynamicsStreamResult,i::Integer)=begin
+    sol.states===nothing&&throw(ArgumentError(
+        "this result was created with save_states=false"))
+    sol.states[i]
+end
+state(sol::DynamicsStreamResult,t::Real)=begin
+    i=findmin(abs.(sol.times.-t))[2]
+    isapprox(sol.times[i],t)||throw(ArgumentError("time $t was not saved"))
+    state(sol,i)
+end
 Base.length(sol::DynamicsResult)=length(sol.states)
 Base.getindex(sol::DynamicsResult,i::Integer)=sol.states[i]
 Base.firstindex(sol::DynamicsResult)=firstindex(sol.states)
@@ -103,6 +144,10 @@ function show(io::IO,result::SteadyStateResult)
 end
 function show(io::IO,result::DynamicsResult)
     print(io,"DynamicsResult($(length(result)) states, t=$(first(result.times))…$(last(result.times)), algorithm=$(result.algorithm))")
+end
+function show(io::IO,result::DynamicsStreamResult)
+    stored=result.states===nothing ? "observable-only" : "with states"
+    print(io,"DynamicsStreamResult($(length(result.times)) samples, $stored, algorithm=$(result.algorithm))")
 end
 function show(io::IO,result::SpectrumResult)
     print(io,"SpectrumResult($(length(result.values)) values)")
@@ -178,22 +223,86 @@ end
 
 """
     solve_dynamics(x, rho0, tspan; saveat=nothing,
-                   steps_per_interval=64, parameters=nothing)
+                   steps_per_interval=64, parameters=nothing,
+                   observables=nothing, save_states=true)
 
 Compile a model once when needed and propagate with the allocation-conscious
 fixed-step RK4 path. The result carries saved times and PI states and supports
 indexing and iteration. Use `dynamics_problem` directly for adaptive SciML
 algorithms.
+
+Pass a named tuple, dictionary, pair collection, or one local matrix/
+`PIOperator` as `observables`. This returns a [`DynamicsStreamResult`](@ref).
+With `save_states=false`, expectation values are accumulated while one mutable
+state is propagated, and no sampled state history is constructed. A local
+`d`-by-`d` matrix denotes its collective sum. Non-Hermitian observables are
+accepted and retain complex expectation values. A state-free call without an
+observable is rejected because it would return no dynamics output.
 """
 function solve_dynamics(x,rho0::PIState,tspan;saveat=nothing,
-                        steps_per_interval::Integer=64,parameters=nothing)
+                        steps_per_interval::Integer=64,parameters=nothing,
+                        observables=nothing,save_states::Bool=true)
     steps_per_interval>0||throw(ArgumentError("steps_per_interval must be positive"))
     ts=_saved_times(tspan,saveat)
     source = x isa PIModel && isdefined(@__MODULE__,:compile) ?
         getfield(@__MODULE__,:compile)(x;backend=:matrixfree) : x
-    states=time_evolution(source,rho0,ts;steps_per_interval=steps_per_interval,
-                          parameters=parameters)
+    _solve_dynamics_output(observables,source,rho0,ts;
+        steps_per_interval,parameters,save_states)
+end
+
+function _solve_dynamics_output(::Nothing,source,rho0,ts;
+                                steps_per_interval,parameters,save_states)
+    save_states||throw(ArgumentError(
+        "save_states=false requires at least one observable"))
+    states=time_evolution(source,rho0,ts;
+        steps_per_interval=steps_per_interval,parameters=parameters)
     DynamicsResult(ts,states,:rk4)
+end
+
+_dynamics_observable_buffers(::Tuple{},current,nsamples)=()
+function _dynamics_observable_buffers(ops::Tuple{Any,Vararg},current,nsamples)
+    op=last(first(ops));T=typeof(dot(op.data,current.data))
+    (Vector{T}(undef,nsamples),
+     _dynamics_observable_buffers(Base.tail(ops),current,nsamples)...)
+end
+
+_record_dynamics_observables!(::Tuple{},::Tuple{},current,index)=nothing
+function _record_dynamics_observables!(buffers::Tuple{Any,Vararg},
+                                       ops::Tuple{Any,Vararg},current,index)
+    first(buffers)[index]=dot(last(first(ops)).data,current.data)
+    _record_dynamics_observables!(Base.tail(buffers),Base.tail(ops),
+                                  current,index)
+end
+
+function _dynamics_observable_dictionary(ops,buffers)
+    values=Dict{Any,Any}()
+    for index in eachindex(ops)
+        values[first(ops[index])]=buffers[index]
+    end
+    values
+end
+
+function _solve_dynamics_output(observables,source,rho0,ts;
+                                steps_per_interval,parameters,save_states)
+    ops=_prepare_streaming_observables(rho0.basis,observables;
+                                       require_hermitian=false)
+    prepared=_evolution_liouvillian(source)
+    current=copy(rho0);workspace=EvolutionWorkspace(prepared,current)
+    states=save_states ? Vector{typeof(rho0)}(undef,length(ts)) : nothing
+    save_states&&(states[1]=copy(current))
+    buffers=_dynamics_observable_buffers(ops,current,length(ts))
+    _record_dynamics_observables!(buffers,ops,current,1)
+    for time_index in 2:length(ts)
+        ts[time_index]==ts[time_index-1]||evolve!(current,prepared,current,
+            (ts[time_index-1],ts[time_index]);steps=steps_per_interval,
+            parameters=parameters,workspace=workspace)
+        save_states&&(states[time_index]=copy(current))
+        _record_dynamics_observables!(buffers,ops,current,time_index)
+    end
+    values=_dynamics_observable_dictionary(ops,buffers)
+    S=Union{Nothing,Vector{typeof(rho0)}}
+    DynamicsStreamResult{eltype(ts),S,typeof(values),Symbol}(
+        ts,states,values,:rk4)
 end
 
 function _spectrum_algorithm(algorithm,target,n,nev)

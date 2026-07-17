@@ -42,6 +42,9 @@ SymmetryProjectorWorkspace
 matrixfree_symmetry_projector
 ```
 
+Simultaneous commuting-charge projectors are documented in
+[Research utilities and control](../research_utilities.md).
+
 ## Response and sensitivities
 
 ```@docs

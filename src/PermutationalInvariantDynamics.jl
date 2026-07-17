@@ -30,6 +30,7 @@ include("geometry.jl")
 include("pbody.jl")
 include("operators.jl")
 include("terms.jl")
+include("correlated_jumps.jl")
 include("spin.jl")
 include("vectorization.jl")
 include("liouvillian.jl")
@@ -39,17 +40,27 @@ include("spectra.jl")
 include("evans.jl")
 include("entanglement.jl")
 include("observables.jl")
+include("cumulants.jl")
 include("information.jl")
 include("symmetry_information.jl")
 include("phase_space.jl")
 include("sciml.jl")
 include("meanfield.jl")
+include("composite.jl")
 include("evolution.jl")
 include("trajectories.jl")
+include("weak_pi_trajectories.jl")
+include("diffusive.jl")
 include("floquet.jl")
 include("response.jl")
+include("correlations.jl")
 include("highlevel.jl")
 include("populations.jl")
+include("research_utilities.jl")
+include("channels.jl")
+include("tomography.jl")
+include("checkpoints.jl")
+include("control.jl")
 include("visualization.jl")
 include("spectral_visualization.jl")
 include("phase_space_visualization.jl")
@@ -66,6 +77,9 @@ export Partition, partitions, weight, length_nonzero, removable_corners,
        sector_view, identity_operator, maximally_mixed_state, trace, purity,
        normalize!, ispositive, isphysical, positivity_diagnostics,
        state_diagnostics, validate_state,
+       FiniteOperatorBasis, CompositePIBasis, CompositePIOperator,
+       CompositePIState, composite_tensor_operator, composite_tensor_state,
+       composite_identity_operator, composite_trace_vector,
        sector_population,
        sector_populations, basis_state, sector_density_matrix, iid_pure_state,
        iid_state, thermal_state, computational_product_state, dicke_state,
@@ -78,7 +92,8 @@ export Partition, partitions, weight, length_nonzero, removable_corners,
        pbody_kernel_element, pbody_kernel_operator,
        AbstractPITerm, InPlaceTimeOperator,
        LocalHamiltonian, CollectiveHamiltonian, LocalJump,
-       CollectiveJump, DirectPIHamiltonian, DirectPIJump, PIModel,
+       CollectiveJump, CorrelatedLocalJumps, CorrelatedCollectiveJumps,
+       DirectPIHamiltonian, DirectPIJump, PIModel,
        PBodyHamiltonian, LocalPBodyJump, CollectivePBodyJump,
        qubit_ensemble_model,
        left_superoperator, right_superoperator, sandwich_superoperator,
@@ -86,12 +101,29 @@ export Partition, partitions, weight, length_nonzero, removable_corners,
        is_pi_operator, is_pi_superoperator, is_permutationally_invariant,
        liouvillian, MatrixFreeLiouvillian, LiouvillianPlan,
        LiouvillianWorkspace, CompiledPIModel, compile, apply!, apply_adjoint!,
+       CompositeSuperoperatorTerm, factorized_superoperator_term,
+       local_superoperator_term, CompositeSuperoperator,
+       CompositeSuperoperatorWorkspace, factor_left_superoperator,
+       factor_right_superoperator, factor_sandwich_superoperator,
+       composite_hamiltonian_superoperator,
+       composite_dissipator_superoperator, composite_matrixfree,
        isautonomous, freeze, dynamics_problem, PISolution, state,
        EvolutionWorkspace, evolve!, time_evolve, time_evolution,
-       QuantumTrajectory, TrajectoryPlan, TrajectoryWorkspace,
+       DynamicsStreamResult, QuantumTrajectory, TrajectoryEnsembleResult,
+       TrajectoryPlan, TrajectoryWorkspace,
        TrajectoryBatchWorkspace, quantum_trajectory,
        quantum_trajectories, trajectory_average, jump_statistics,
        trajectory_observable_statistics, trajectory_statistics,
+       WeakPIPseudoKet, weak_pi_dimension, weak_pi_density,
+       weak_pi_pseudoket, weak_pi_expectation,
+       WeakPIKrausBranch, WeakPIJumpRecord, WeakPIQuantumTrajectory,
+       WeakPITrajectoryPlan, WeakPITrajectoryWorkspace,
+       WeakPITrajectoryBatchWorkspace, weak_pi_quantum_trajectory,
+       weak_pi_quantum_trajectories, weak_pi_trajectory_average,
+       weak_pi_trajectory_statistics,
+       DiffusiveMonitor, homodyne_monitor, heterodyne_monitor,
+       DiffusivePlan, DiffusiveWorkspace, DiffusiveTrajectory,
+       diffusive_trajectory, diffusive_trajectories, diffusive_average,
        expectation, variance, covariance, collective_expectation,
        collective_variance, collective_moments, CollectiveObservablePlan,
        one_body_rdm, trace_error,
@@ -99,6 +131,10 @@ export Partition, partitions, weight, length_nonzero, removable_corners,
        kitagawa_ueda_squeezing, wineland_squeezing, two_body_rdm,
        two_body_expectation, connected_two_body_correlation,
        normalized_second_order_correlation,
+       OrderedLocalMoments, ordered_local_moment, ordered_local_moments,
+       CumulantTermPayload, CumulantModelPayload, CumulantBridgePayload,
+       CumulantComparison, cumulant_model_payload, cumulant_bridge_payload,
+       compare_cumulant_closure, quantumcumulants_initial_values,
        qfi_entanglement_depth, spin_squeezing_entangled,
        quantum_fisher_information, qfi, quantum_fisher_information_matrix,
        qfim,
@@ -144,6 +180,8 @@ export Partition, partitions, weight, length_nonzero, removable_corners,
        check_liouvillian_symmetry, is_liouvillian_symmetric,
        usual_liouvillian_symmetries, MatrixFreeSymmetryProjector,
        SymmetryProjectorWorkspace, matrixfree_symmetry_projector,
+       JointSymmetryProjector, JointSymmetryProjectorWorkspace,
+       joint_symmetry_projector,
        floquet_propagator, floquet_multipliers, floquet_exponents,
        floquet_gap, floquet_steady_state, stroboscopic_evolution,
        floquet_evolve,
@@ -151,6 +189,10 @@ export Partition, partitions, weight, length_nonzero, removable_corners,
        sensitivity_problem, sensitivity_state, classical_fisher_information,
        observable_decay_modes, integrated_correlation_time,
        steady_state_susceptibility, pseudospectral_abscissa,
+       CorrelationPlan, CorrelationWorkspace, two_time_correlation,
+       two_time_correlation!, delayed_second_order_correlation,
+       second_order_correlation, stationary_correlation_spectrum,
+       optical_spectrum, correlation_spectrum_fft,
        qfim_from_derivatives,
        estimate_basis_size, estimate_memory, basis_summary, model_summary,
        value_at,
@@ -167,6 +209,19 @@ export Partition, partitions, weight, length_nonzero, removable_corners,
        diagonal_populations, diagonal_populations!, state_from_populations,
        population_generator, evolve_populations!, solve_populations,
        stationary_populations,
+       spectral_trace, PopulationCoordinate, PopulationCoordinates,
+       each_population_coordinate, PopulationTransition,
+       population_transitions,
+       AbstractPIChannel, PIChannel, MatrixFreePIChannel,
+       apply_channel!, apply_channel, compose_channels, channel_adjoint,
+       identity_channel, kraus_channel, PIChannelCheck, check_pi_channel,
+       pi_povm_probabilities, PIPOVMSample, sample_pi_povm,
+       PITomographyResult, maximum_likelihood_tomography,
+       PI_CHECKPOINT_VERSION, PIStateCheckpoint, checkpoint_state,
+       save_checkpoint, load_checkpoint,
+       SteadyStateGradientPlan, SteadyStateGradientWorkspace,
+       SteadyStateGradientResult, implicit_steady_state_gradient,
+       AdjointControlResult, checkpointed_adjoint_gradient,
        SchurBlockStructure, SchurBlockVisualization,
        schur_block_structure, visualize_schur_blocks,
        save_schur_block_visualization,

@@ -86,7 +86,7 @@ makes the squared value the Hilbert--Schmidt contribution of that whole Schur
 sector, including its multiplicity. The physical choice instead measures one
 irrep copy and omits \(f^\nu\). `metric=:trace_norm` applies the same choice to
 the Schatten one-norm. For a density operator, `metric=:population` reports
-the trace weight \(f^\nu\operatorname{tr}(\rho_\nu)\). No metric changes or
+the trace weight \(f^\nu\mathrm{tr}(\rho_\nu)\). No metric changes or
 renormalizes the state. Population mode requires each reported sector trace to
 be real (up to roundoff) and nonnegative; it throws for invalid data instead
 of taking an absolute value or clipping it. `physical_block(rho, nu)` remains

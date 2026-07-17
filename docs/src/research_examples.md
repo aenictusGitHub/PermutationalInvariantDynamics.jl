@@ -1,5 +1,108 @@
 # Research examples
 
+## PI research utilities
+
+`examples/research_utilities.jl` demonstrates compressed spectral and
+population inspection, a Kraus channel with retained-algebra CP/TP checks,
+POVM sampling and tomography, versioned checkpoint round trips, and a joint
+weak-symmetry projector. The paired [research-utilities guide](research_utilities.md)
+records the scope and workspace conventions; none of these operations expands
+the state to a `d^N` Hilbert-space matrix.
+
+## Diffusive monitoring
+
+`examples/wiseman_milburn_homodyne.jl` compares collective homodyne
+trajectories with unconditional PI evolution and checks ensemble convergence.
+The model already contains the monitored-channel dissipator; monitoring adds
+only the conditioned innovation. See [Diffusive monitoring](diffusive_monitoring.md)
+for homodyne/heterodyne conventions, task-owned workspaces, reproducible batch
+streams, and Euler--Maruyama convergence requirements.
+
+## Higher-order cumulant closures
+
+`examples/cumulant_bridge.jl` exports exact distinct-site PI moments and
+neutral microscopic term metadata, then compares a factorized closure with
+product and correlated states.  The core bridge has no symbolic-algebra
+dependency; an optional QuantumCumulants.jl 0.5 extension maps the exact
+values onto user-supplied symbolic averages.
+
+## Correlated Kossakowski reservoirs
+
+`examples/correlated_reservoirs.jl` compares a correlated local bath with its
+exact factorization into independent effective jumps, evolves the model
+matrix-free, and checks a preallocated collective Kossakowski schedule:
+
+```julia
+gamma = mixing * mixing'
+term = CorrelatedLocalJumps((sigma_minus, sigma_z), gamma; rate=0.08)
+prepared = compile(PIModel(basis, (term,)); backend=:matrixfree)
+```
+
+The fixed factorization is only in the small reservoir-channel space.
+Off-diagonal entries retain noise interference; no full `d^N` operator is
+built. The complete guide is `examples/correlated_reservoirs.md`.
+
+## Memory-light observable output
+
+`examples/streaming_output.jl` compares history-carrying evolution with
+observable-only deterministic output and state-free trajectory aggregation:
+
+```julia
+series = solve_dynamics(
+    prepared, rho0, (0.0, 2.0);
+    saveat=0.05,
+    observables=(excitation=number,),
+    save_states=false,
+)
+```
+
+The deterministic result retains one evolving PI vector. The trajectory path
+uses task-local Welford accumulators for means, unbiased variances, standard
+errors, and confidence intervals, while preserving trajectory-indexed random
+streams. Optional pooled waiting times still scale with the number of jumps;
+disable jump statistics when they are not needed. See
+[Streaming and observable-only output](streaming_output.md).
+
+## Quantum-regression correlations and spectra
+
+`examples/quantum_regression.jl` validates the PI quantum-regression path for
+an incoherently pumped emitter. It compares a non-Hermitian first-order
+correlation, delayed antibunching, and the connected optical spectrum with
+closed forms:
+
+```julia
+plan = CorrelationPlan(prepared, adjoint(c), c)
+work = CorrelationWorkspace(plan; krylovdim=20)
+C = two_time_correlation(plan, rho_ss, delays; workspace=work)
+S = stationary_correlation_spectrum(
+    plan, rho_ss, frequencies; workspace=work)
+```
+
+The same matrix-free Liouvillian drives sequential RK4 samples and shifted
+GMRES resolvents. The first readout operator is not implicitly adjointed, and
+the stationary spectrum is the connected one-sided complex transform. See
+[Quantum regression and optical correlations](correlations.md).
+
+## Several PI ensembles and finite auxiliaries
+
+`examples/composite_ensembles.jl` combines two independent compressed PI
+ensembles with a finite two-level auxiliary factor. Local compiled
+Liouvillians and tensor-product Hamiltonian/dissipator terms are applied as a
+sum of factor maps:
+
+```julia
+basis = CompositePIBasis(ensemble_a, ensemble_b,
+                         FiniteOperatorBasis(2))
+generator = CompositeSuperoperator(basis, local_a, local_b) + interaction
+work = CompositeSuperoperatorWorkspace(generator, rho.data)
+apply!(destination, generator, rho.data, 0.0, nothing, work)
+```
+
+No global Kronecker superoperator or full Hilbert representation of either PI
+ensemble is formed. Finite auxiliaries are explicitly truncated, and the
+current backend is deterministic: composite quantum trajectories are not yet
+compiled. See [Composite PI systems](composite_systems.md).
+
 ## Sector-resolved spin phase space
 
 `examples/spin_phase_space.jl` constructs a state occupying two total-spin
@@ -168,14 +271,27 @@ The two radiated intensities are checked pointwise against a certified
 population-space master equation. The example guide explains why the
 particle-unresolved local gain map has the same ensemble dynamics but a
 different conditional record from the article's sector-shift-resolved pure
-pseudo-state unraveling. It also records why current Keeling cavity examples
-cannot yet be reproduced by this spin-only package.
+pseudo-state unraveling.
+
+`examples/weak_pi_trajectories.jl` then exercises the separate opt-in
+`WeakPITrajectoryPlan`. It factorizes that same local PI gain into complete
+one-box subduction Kraus branches, propagates direct-sum Schur-irrep
+pseudo-kets, and compares their ensemble with density-valued paths, certified
+population dynamics, and general matrix-free PI evolution for
+``\gamma_l/\Gamma_c=1``. Equal trajectory counts and fixed-step controls make
+the warmed per-path timing descriptive of that run, but not a portable speed
+certificate. The pseudo-kets are not labeled-particle wavefunctions, and
+their particular Kraus record must not be identified path-by-path with another
+unraveling. Composite cavity pseudo-ket trajectories remain outside this
+single-ensemble backend.
 
 With the examples-only CairoMakie environment active, both trajectory scripts
-also render the numerical comparison and its one-standard-error bands. The
-Mølmer benchmark adds a logarithmic state-error panel; the Zhang--Mølmer
-figure places the two decay-rate ratios side by side. PDF and PNG outputs are
-written without adding Makie to the package dependency graph.
+also render their numerical comparisons. The weak-PI example uses 95%
+confidence bands and adds logarithmic state error, sampled sector-transition,
+exact coordinate-scaling, and current-run timing panels. The separate
+Zhang--Mølmer density-path figure places the two decay-rate ratios side by
+side. PDF and PNG outputs are written without adding Makie to the package
+dependency graph.
 
 ## Publication figures for the literature examples
 

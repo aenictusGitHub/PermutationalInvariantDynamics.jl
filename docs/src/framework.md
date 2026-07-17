@@ -178,22 +178,22 @@ This normalization makes the global PI coordinates orthonormal in the
 Hilbert--Schmidt inner product:
 
 \[
-\operatorname{Tr}(A^\dagger B)
+\mathrm{Tr}(A^\dagger B)
 =\sum_\nu
-\operatorname{tr}\!\left(C_\nu(A)^\dagger C_\nu(B)\right).
+\mathrm{tr}\!\left(C_\nu(A)^\dagger C_\nu(B)\right).
 \]
 
 Several package conventions then follow immediately:
 
 \[
 \begin{aligned}
-\operatorname{Tr}(A)
-  &=\sum_\nu\sqrt{f^\nu}\,\operatorname{tr}(C_\nu),\\
+\mathrm{Tr}(A)
+  &=\sum_\nu\sqrt{f^\nu}\,\mathrm{tr}(C_\nu),\\
 C_\nu(AB)
   &=\frac{C_\nu(A)C_\nu(B)}{\sqrt{f^\nu}},\\
 C_\nu(I)
   &=\sqrt{f^\nu}\,I,\\
-\operatorname{Tr}(\rho^2)
+\mathrm{Tr}(\rho^2)
   &=\sum_\nu\lVert C_\nu(\rho)\rVert_F^2.
 \end{aligned}
 \]
@@ -202,8 +202,8 @@ For a density operator, the population of sector \(\nu\) is
 
 \[
 p_\nu
-=f^\nu\operatorname{tr}(R_\nu)
-=\sqrt{f^\nu}\operatorname{tr}(C_\nu).
+=f^\nu\mathrm{tr}(R_\nu)
+=\sqrt{f^\nu}\mathrm{tr}(C_\nu).
 \]
 
 A valid state has Hermitian positive-semidefinite \(R_\nu\) in every retained
@@ -434,6 +434,8 @@ embedded operator. The built-in terms map to the following physical objects.
 | `CollectiveHamiltonian(h)` | \(H=\sum_i h^{(i)}\) |
 | `LocalJump(ell)` | \(\sum_i\mathcal D[\ell^{(i)}]\) |
 | `CollectiveJump(L)` | \(\mathcal D[J]\), \(J=\sum_iL^{(i)}\) |
+| `CorrelatedLocalJumps((La,...), Gamma)` | \(\sum_i\sum_{a,b}\Gamma_{ab}\mathcal D_{ab}[L_a^{(i)},L_b^{(i)}]\) |
+| `CorrelatedCollectiveJumps((La,...), Gamma)` | \(\sum_{a,b}\Gamma_{ab}\mathcal D_{ab}[J_a,J_b]\) |
 | `PBodyHamiltonian(hp, p)` | \(H_p=\sum_{|S|=p}(h_p)_S\) |
 | `LocalPBodyJump(ellp, p)` | \(\sum_{|S|=p}\mathcal D[(\ell_p)_S]\) |
 | `CollectivePBodyJump(Lp, p)` | \(\mathcal D[J_p]\), \(J_p=\sum_{|S|=p}(L_p)_S\) |
@@ -446,6 +448,16 @@ intent. Local and collective **jump** constructors are not equivalent. The
 local channel is an incoherent sum of dissipators and can couple Schur
 sectors. The collective channel first sums the amplitudes and then forms one
 dissipator; it is sector diagonal.
+
+The correlated constructors accept a Hermitian positive-semidefinite
+Kossakowski matrix `Gamma`, with
+\(\mathcal D_{ab}[A,B]\,(\rho)=A\rho B^\dagger-
+\{B^\dagger A,\rho\}/2\). A fixed matrix is validated and factorized once in
+the small channel space; its effective independent jumps then use the same PI
+kernels as `LocalJump` or `CollectiveJump`. `InPlaceTimeOperator` also accepts
+a fixed-shape Kossakowski-matrix schedule. Its evaluated matrix and
+factorization scratch belong to `LiouvillianWorkspace`, and every value is
+revalidated before use.
 
 The `rate` keyword multiplies the displayed contribution. Hamiltonian terms
 also accept `hbar`. Operators supplied to a \(p\)-body constructor have size
@@ -480,17 +492,22 @@ The main data flow is
 
 ```text
 PIBasis -> PIModel -> compile -> CompiledPIModel -> solver or analysis
+
+(PI and finite factors) -> CompositePIBasis -> CompositeSuperoperator
 ```
 
 | Object | Role | Ownership rule |
 |:--|:--|:--|
 | `PIBasis` | Partitions, GT patterns, block offsets, and representation geometry labels | Share read-only |
 | `PIState`, `PIOperator` | Dense vectors of orthonormal PI coefficients | Mutable value owned by the caller |
+| `CompositePIBasis`, `CompositePIState`, `CompositePIOperator` | Tensor products of several PI spaces and finite auxiliary matrix spaces | Basis is shared read-only; state/operator data belong to the caller |
 | `PIModel` | Declarative immutable tuple of physical terms | Share read-only |
 | `CompiledPIModel` | Prepared term lowering and sparse or matrix-free backend | Compile once and share read-only |
 | `LiouvillianWorkspace` and solver workspaces | Mutable multiplication and Krylov scratch | One per concurrent task or thread |
 | `CollectiveObservablePlan`, `ReductionPlan` | Prepared observable or bipartition geometry | Share read-only; tied to the exact basis object |
 | `ReductionWorkspace` | Mutable partial-trace and partial-transpose scratch | One per concurrent task |
+| `CorrelationPlan`, `CorrelationWorkspace` | Prepared quantum-regression insertions and their evolution/GMRES scratch | Plan shared read-only; one workspace per task |
+| `CompositeSuperoperator`, `CompositeSuperoperatorWorkspace` | Sum of factorized maps and its tensor-fibre scratch | Generator shared read-only; one workspace per task |
 
 `compile(model; backend=:auto)` performs the expensive representation setup
 once and chooses a conservative backend. Sparse storage is convenient for
@@ -541,12 +558,13 @@ solution = solve_dynamics(
     prepared, rho0, (first(times), last(times));
     saveat=times,
     steps_per_interval=16,
+    observables=(magnetization=sz / 2,),
+    save_states=false,
 )
 
-# Jz = sum_i sigma_z^(i)/2, prepared once for every sampled state.
-Jz = CollectiveObservablePlan(basis, sz / 2)
-magnetization = [real(collective_expectation(rho, Jz)) / N
-                 for rho in solution]
+# A local matrix in `observables` denotes its collective sum. Only the
+# resulting scalar time series is retained here, not 101 PI state vectors.
+magnetization = real.(solution.observables[:magnetization]) ./ N
 
 rho_ss = stationary_state(prepared)
 report = diagnostics(rho_ss)
@@ -573,6 +591,11 @@ show literature models and their numerical checks.
 | Slow modes or Liouvillian gap | `liouvillian_spectrum`, `pi_liouvillian_gap` | A selected Krylov window is not a complete spectrum |
 | Periodic dynamics | `floquet_propagator`, `floquet_steady_state` | Converge the one-period integration |
 | Quantum-jump ensembles | `quantum_trajectories` | Rates nonnegative; converge tolerances and ensemble size |
+| Pure Schur pseudo-ket ensembles | `WeakPITrajectoryPlan`, `weak_pi_quantum_trajectories` | Auxiliary weak-PI states, not labeled-particle wavefunctions; fixed operators and fixed-step integration |
+| Observable-only output | `solve_dynamics(...; observables=..., save_states=false)` | The state history is deliberately unavailable |
+| State-free trajectory statistics | `quantum_trajectories(...; observables=..., save_states=false)` | Waiting-time output still scales with recorded jumps unless disabled |
+| Two-time correlations and spectra | `CorrelationPlan`, `two_time_correlation`, `stationary_correlation_spectrum` | Autonomous QRT; converge RK4 or GMRES controls |
+| Several PI ensembles or a finite ancilla | `CompositePIBasis`, `CompositeSuperoperator` | Cross maps are factorized; no composite trajectory compiler yet |
 | Large-\(N\) product prediction | `MeanFieldPlan`, `solve_meanfield` | Approximate after correlations develop |
 | Repeated collective observable | `CollectiveObservablePlan` | Reuse one plan for many states |
 | Repeated marginal or negativity | `ReductionPlan`, `ReductionWorkspace` | Setup can be large for qudits |

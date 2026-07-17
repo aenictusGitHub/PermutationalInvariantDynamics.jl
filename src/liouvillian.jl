@@ -251,6 +251,23 @@ struct InPlaceLocalPBodyJumpPIKernel{S,B,R,G,L,U,Q} <: AbstractDynamicPIKernel
     groups::G
     left_isometries::L;right_isometries::U;pair_scales::Q
 end
+struct InPlaceCorrelatedCollectiveJumpPIKernel{S,B,R,A,Q} <: AbstractDynamicPIKernel
+    schedule::S
+    channel_blocks::B
+    scale::R
+    atol::A
+    rtol::Q
+end
+struct InPlaceCorrelatedLocalJumpPIKernel{S,O,G,R,I,J,A,Q} <: AbstractDynamicPIKernel
+    schedule::S
+    operators::O
+    geometry::G
+    scale::R
+    I::I
+    J::J
+    atol::A
+    rtol::Q
+end
 
 struct InPlaceHamiltonianKernelWorkspace{O,B}
     operator::O;blocks::B
@@ -264,11 +281,32 @@ end
 struct InPlaceLocalPBodyJumpKernelWorkspace{O,Q,B,C,S}
     operator::O;qoperator::Q;qblocks::B;contractions::C;gain_scratch::S
 end
+struct InPlaceCorrelatedCollectiveJumpKernelWorkspace{K,F,R,B,Q,S,N}
+    kossakowski::K
+    factor::F
+    residual::R
+    effective_blocks::B
+    qblocks::Q
+    qscratch::S
+    rank::N
+end
+struct InPlaceCorrelatedLocalJumpKernelWorkspace{K,F,R,O,Q,S,B,V}
+    kossakowski::K
+    factor::F
+    residual::R
+    effective_operator::O
+    qoperator::Q
+    qscratch::S
+    qblocks::B
+    values::V
+end
 
 function _evaluated_dissipative_rate(rate,t,p)
     evaluated=value_at(rate,t,p)
     evaluated isa Real||throw(ArgumentError(
         "a dissipative rate must evaluate to a real number, got $(typeof(evaluated))"))
+    isfinite(evaluated)||throw(ArgumentError(
+        "a dissipative rate must evaluate to a finite number"))
     evaluated
 end
 
@@ -354,10 +392,23 @@ _operator_real_type(operator::InPlaceTimeOperator)=
     _operator_real_type(operator.prototype)
 _operator_real_type(operator::AbstractPIOperator)=_real_float_type(eltype(operator.data))
 _operator_real_type(operator::AbstractArray)=_real_float_type(eltype(operator))
+_operator_real_type(operators::Tuple)=isempty(operators) ? Float64 :
+    foldl(promote_type,map(_operator_real_type,operators))
 _operator_real_type(operator)=Float64
 
+_term_geometry_type(term::AbstractPITerm)=_operator_real_type(term_operator(term))
+function _term_geometry_type(term::_CorrelatedOneBodyJumps)
+    operator_type=_operator_real_type(term.operators)
+    prototype=_operator_prototype(term.kossakowski)
+    matrix_type=prototype isa AbstractMatrix ? _operator_real_type(prototype) :
+                                               operator_type
+    result=promote_type(operator_type,matrix_type)
+    result=_promote_correlated_tolerance_type(result,term.atol)
+    _promote_correlated_tolerance_type(result,term.rtol)
+end
+
 function _model_geometry_type(model::PIModel)
-    types=map(t->_operator_real_type(term_operator(t)),model.terms)
+    types=map(_term_geometry_type,model.terms)
     isempty(types) ? Float64 : foldl(promote_type,types)
 end
 
@@ -616,8 +667,16 @@ _dynamic_builder(context::TermCompileContext,::Union{LocalHamiltonian,
 _dynamic_builder(context::TermCompileContext,t::Union{PBodyHamiltonian,
     CollectivePBodyJump})=_pbody_block_builder(context,t)
 
-_collective_blocks(operator,context)=
-    [collective_block(context.basis,operator,p;cache=context.onebody) for p in context.basis.sectors]
+function _collective_blocks(operator::AbstractMatrix{O},
+        context::TermCompileContext{B,G,P,R}) where {O,B,G,P,R}
+    S=promote_type(Complex{R},O)
+    blocks=Vector{Matrix{S}}(undef,length(context.basis.sectors))
+    for index in eachindex(context.basis.sectors)
+        blocks[index]=collective_block(context.basis,operator,
+            context.basis.sectors[index];cache=context.onebody)
+    end
+    blocks
+end
 _direct_term_blocks(operator,context)=_direct_blocks(context.basis,operator)
 
 function _compile_hamiltonian(term,context,blocks)
@@ -675,6 +734,58 @@ function compile_term(t::LocalJump,context::TermCompileContext)
                                                operator,operator),term_rate(t))
 end
 
+function _effective_correlated_operator(coefficients,operators,
+        ::Type{T}) where T<:Number
+    effective=zeros(T,size(first(operators)))
+    @inbounds for operator_index in eachindex(operators)
+        coefficient=coefficients[operator_index]
+        operator=operators[operator_index]
+        for index in eachindex(effective,operator)
+            effective[index]+=coefficient*operator[index]
+        end
+    end
+    effective
+end
+
+function _effective_correlated_operators(term::_CorrelatedOneBodyJumps,
+        ::Type{R}) where R<:AbstractFloat
+    factor=term.factor
+    factor===nothing&&throw(ArgumentError(
+        "a callable Kossakowski matrix must be frozen or use InPlaceTimeOperator"))
+    operators=term.operators
+    isempty(factor)&&return (zeros(Complex{R},size(first(operators))),)
+    map(coefficients->_effective_correlated_operator(
+            coefficients,operators,Complex{R}),factor)
+end
+
+function compile_term(term::_CorrelatedOneBodyJumps,
+                      context::TermCompileContext)
+    matrix=term.kossakowski
+    rate=_prepared_correlated_rate(term.rate,context.geometry_type)
+    if matrix isa InPlaceTimeOperator
+        if term isa CorrelatedCollectiveJumps
+            channel_blocks=map(operator->_collective_blocks(operator,context),
+                               term.operators)
+            return InPlaceCorrelatedCollectiveJumpPIKernel(
+                matrix,channel_blocks,rate,term.atol,term.rtol)
+        end
+        structure=_local_gain_structure(context.basis,context.onebody)
+        return InPlaceCorrelatedLocalJumpPIKernel(
+            matrix,term.operators,context.onebody,rate,
+            structure.I,structure.J,term.atol,term.rtol)
+    end
+    matrix isa AbstractMatrix||throw(ArgumentError(
+        "a raw callable Kossakowski matrix must use the freeze fallback"))
+    effective=_effective_correlated_operators(term,context.geometry_type)
+    if term isa CorrelatedLocalJumps
+        map(operator->compile_term(LocalJump(operator;rate=rate),context),
+            effective)
+    else
+        map(operator->compile_term(CollectiveJump(operator;rate=rate),context),
+            effective)
+    end
+end
+
 function _pbody_blocks(term,context,operator=term_operator(term))
     geometry=_pbody_geometry!(context,body_order(term));_check_pbody_operator(geometry,operator)
     [pbody_collective_block(geometry,operator,p;check=false) for p in context.basis.sectors]
@@ -708,9 +819,16 @@ function compile_term(t::LocalPBodyJump,context::TermCompileContext)
     LocalJumpPIKernel(Q,pbody_kernel_triplets(geometry,operator,operator),term_rate(t))
 end
 
+_compiled_kernel_tuple(kernel::Tuple)=kernel
+_compiled_kernel_tuple(kernel)=(kernel,)
+_compile_term_sequence(::Tuple{},context)=()
+function _compile_term_sequence(terms::Tuple{T,Vararg{Any}},context) where T
+    current=_compiled_kernel_tuple(compile_term(first(terms),context))
+    (current...,_compile_term_sequence(Base.tail(terms),context)...)
+end
 function _static_kernels(model)
     context=TermCompileContext(model)
-    map(t->compile_term(t,context),model.terms)
+    _compile_term_sequence(model.terms,context)
 end
 
 """Immutable prepared term data and geometry for a PI Liouvillian."""
@@ -723,11 +841,16 @@ struct LiouvillianPlan{B,K,V,M,T}
     autonomous::Bool
 end
 
-_scale_promoted_type(T,scale)=scale isa Number ? promote_type(T,typeof(scale)) : T
+_scale_promoted_type(::Type{T},scale::S) where {T,S<:Number}=promote_type(T,S)
+_scale_promoted_type(::Type{T},scale) where T=T
 _kernel_scalar_type(kernel::HamiltonianPIKernel)=_scale_promoted_type(eltype(first(kernel.blocks)),kernel.scale)
 _kernel_scalar_type(kernel::DissipatorPIKernel)=_scale_promoted_type(eltype(first(kernel.blocks)),kernel.scale)
 _kernel_scalar_type(kernel::LocalJumpPIKernel)=_scale_promoted_type(
     promote_type(eltype(kernel.gain.V),eltype(first(kernel.qblocks))),kernel.scale)
+_schedule_scalar_type(::InPlaceTimeOperator{O}) where
+    {T,O<:AbstractMatrix{T}}=Complex{_real_float_type(T)}
+_schedule_scalar_type(::InPlaceTimeOperator{O}) where
+    {R,O<:AbstractPIOperator{R}}=Complex{R}
 _schedule_scalar_type(schedule::InPlaceTimeOperator)=begin
     prototype=schedule.prototype
     R=prototype isa AbstractPIOperator ? _real_float_type(eltype(prototype.data)) :
@@ -742,6 +865,16 @@ _kernel_scalar_type(kernel::InPlaceLocalJumpPIKernel)=
     _scale_promoted_type(_schedule_scalar_type(kernel.schedule),kernel.scale)
 _kernel_scalar_type(kernel::InPlaceLocalPBodyJumpPIKernel)=
     _scale_promoted_type(_schedule_scalar_type(kernel.schedule),kernel.scale)
+function _kernel_scalar_type(kernel::InPlaceCorrelatedCollectiveJumpPIKernel)
+    block_type=eltype(first(first(kernel.channel_blocks)))
+    _scale_promoted_type(promote_type(_schedule_scalar_type(kernel.schedule),
+                                      block_type),kernel.scale)
+end
+function _kernel_scalar_type(kernel::InPlaceCorrelatedLocalJumpPIKernel)
+    geometry_type=Complex{geometry_scalar_type(kernel.geometry)}
+    _scale_promoted_type(promote_type(_schedule_scalar_type(kernel.schedule),
+                                      geometry_type),kernel.scale)
+end
 
 function LiouvillianPlan(model::PIModel)
     fixed_operators=all(term_has_fixed_operator,model.terms)
@@ -800,6 +933,20 @@ function _kernel_workspace(kernel::InPlaceLocalPBodyJumpPIKernel,b,T)
     InPlaceLocalPBodyJumpKernelWorkspace(operator,qoperator,
         _dynamic_block_workspace(b,T),contractions,
         zeros(T,largest_block,largest_block))
+end
+function _kernel_workspace(kernel::InPlaceCorrelatedCollectiveJumpPIKernel,b,T)
+    m=length(kernel.channel_blocks)
+    InPlaceCorrelatedCollectiveJumpKernelWorkspace(
+        _operator_workspace(kernel.schedule.prototype),zeros(T,m,m),zeros(T,m,m),
+        [_dynamic_block_workspace(b,T) for _ in 1:m],
+        _dynamic_block_workspace(b,T),_dynamic_block_workspace(b,T),Ref(0))
+end
+function _kernel_workspace(kernel::InPlaceCorrelatedLocalJumpPIKernel,b,T)
+    m=length(kernel.operators);d=size(first(kernel.operators),1)
+    InPlaceCorrelatedLocalJumpKernelWorkspace(
+        _operator_workspace(kernel.schedule.prototype),zeros(T,m,m),zeros(T,m,m),
+        zeros(T,d,d),zeros(T,d,d),zeros(T,d,d),
+        _dynamic_block_workspace(b,T),zeros(T,length(kernel.I)))
 end
 
 function LiouvillianWorkspace(plan::LiouvillianPlan)
@@ -903,6 +1050,73 @@ function _prepare_kernel!(kernel::InPlaceLocalJumpPIKernel,
     end
     nothing
 end
+function _prepare_kernel!(kernel::InPlaceCorrelatedCollectiveJumpPIKernel,
+        work::InPlaceCorrelatedCollectiveJumpKernelWorkspace,b,t,p)
+    _evaluate_time_operator!(work.kossakowski,kernel.schedule,t,p)
+    rank=_factor_kossakowski!(work.factor,work.residual,work.kossakowski,
+                              kernel.atol,kernel.rtol)
+    work.rank[]=rank
+    for sector in eachindex(b.sectors)
+        fill!(work.qblocks[sector],zero(eltype(work.qblocks[sector])))
+    end
+    for channel in 1:rank
+        effective=work.effective_blocks[channel]
+        for sector in eachindex(b.sectors)
+            block=effective[sector];fill!(block,zero(eltype(block)))
+            @inbounds for operator_index in eachindex(kernel.channel_blocks)
+                coefficient=work.factor[operator_index,channel]
+                source=kernel.channel_blocks[operator_index][sector]
+                for index in eachindex(block,source)
+                    block[index]+=coefficient*source[index]
+                end
+            end
+            scratch=work.qscratch[sector]
+            mul!(scratch,adjoint(block),block)
+            @inbounds for index in eachindex(work.qblocks[sector],scratch)
+                work.qblocks[sector][index]+=scratch[index]
+            end
+        end
+    end
+    nothing
+end
+
+function _prepare_kernel!(kernel::InPlaceCorrelatedLocalJumpPIKernel,
+        work::InPlaceCorrelatedLocalJumpKernelWorkspace,b,t,p)
+    _evaluate_time_operator!(work.kossakowski,kernel.schedule,t,p)
+    rank=_factor_kossakowski!(work.factor,work.residual,work.kossakowski,
+                              kernel.atol,kernel.rtol)
+    fill!(work.qoperator,zero(eltype(work.qoperator)))
+    fill!(work.values,zero(eltype(work.values)))
+    for channel in 1:rank
+        effective=work.effective_operator
+        fill!(effective,zero(eltype(effective)))
+        @inbounds for operator_index in eachindex(kernel.operators)
+            coefficient=work.factor[operator_index,channel]
+            operator=kernel.operators[operator_index]
+            for index in eachindex(effective,operator)
+                effective[index]+=coefficient*operator[index]
+            end
+        end
+        mul!(work.qscratch,adjoint(effective),effective)
+        @inbounds for index in eachindex(work.qoperator,work.qscratch)
+            work.qoperator[index]+=work.qscratch[index]
+        end
+        index=0
+        @inbounds for (li,left_sector) in pairs(b.sectors),
+                      (ni,right_sector) in pairs(b.sectors)
+            isempty(kernel.geometry.connections[(li,ni)])&&continue
+            nl=length(b.patterns[li]);nn=length(b.patterns[ni])
+            for a in 1:nl,bb in 1:nl,c in 1:nn,d in 1:nn
+                index+=1
+                work.values[index]+=local_kernel_element(kernel.geometry,
+                    effective,effective,left_sector,a,bb,right_sector,c,d)
+            end
+        end
+    end
+    _fill_dynamic_blocks!(work.qblocks,
+        CollectiveOneBodyBlockBuilder(kernel.geometry),work.qoperator)
+    nothing
+end
 
 _apply_prepared_kernel!(y,x,kernel::AbstractStaticPIKernel,::Nothing,b,t,p,work)=
     _apply_kernel!(y,x,kernel,b,t,p,work)
@@ -943,6 +1157,67 @@ function _apply_adjoint_prepared_kernel!(y,x,kernel::InPlaceLocalJumpPIKernel,
     gain=(I=kernel.I,J=kernel.J,V=prepared.values)
     _apply_adjoint_kernel!(y,x,LocalJumpPIKernel(prepared.qblocks,gain,kernel.scale),
                            b,t,p,work)
+end
+function _apply_prepared_kernel!(y,x,
+        kernel::InPlaceCorrelatedCollectiveJumpPIKernel,
+        prepared::InPlaceCorrelatedCollectiveJumpKernelWorkspace,b,t,p,work)
+    scale=convert(eltype(work[1][1]),
+                  _evaluated_dissipative_rate(kernel.scale,t,p))
+    for sector in eachindex(b.sectors)
+        n=length(b.patterns[sector]);offset=b.offsets[sector]
+        left,right,input=work[sector]
+        copyto!(input,1,x,offset,n*n)
+        for channel in 1:prepared.rank[]
+            block=prepared.effective_blocks[channel][sector]
+            mul!(left,block,input);mul!(right,left,adjoint(block))
+            @inbounds for index in eachindex(right)
+                y[offset+index-1]+=scale*right[index]
+            end
+        end
+        qblock=prepared.qblocks[sector]
+        mul!(left,qblock,input);mul!(right,input,qblock)
+        @inbounds for index in eachindex(left)
+            y[offset+index-1]-=(scale/2)*(left[index]+right[index])
+        end
+    end
+    nothing
+end
+function _apply_adjoint_prepared_kernel!(y,x,
+        kernel::InPlaceCorrelatedCollectiveJumpPIKernel,
+        prepared::InPlaceCorrelatedCollectiveJumpKernelWorkspace,b,t,p,work)
+    scale=conj(convert(eltype(work[1][1]),
+                       _evaluated_dissipative_rate(kernel.scale,t,p)))
+    for sector in eachindex(b.sectors)
+        n=length(b.patterns[sector]);offset=b.offsets[sector]
+        left,right,input=work[sector]
+        copyto!(input,1,x,offset,n*n)
+        for channel in 1:prepared.rank[]
+            block=prepared.effective_blocks[channel][sector]
+            mul!(left,adjoint(block),input);mul!(right,left,block)
+            @inbounds for index in eachindex(right)
+                y[offset+index-1]+=scale*right[index]
+            end
+        end
+        qblock=prepared.qblocks[sector]
+        mul!(left,adjoint(qblock),input);mul!(right,input,adjoint(qblock))
+        @inbounds for index in eachindex(left)
+            y[offset+index-1]-=(scale/2)*(left[index]+right[index])
+        end
+    end
+    nothing
+end
+function _apply_prepared_kernel!(y,x,kernel::InPlaceCorrelatedLocalJumpPIKernel,
+        prepared::InPlaceCorrelatedLocalJumpKernelWorkspace,b,t,p,work)
+    gain=(I=kernel.I,J=kernel.J,V=prepared.values)
+    _apply_kernel!(y,x,LocalJumpPIKernel(prepared.qblocks,gain,kernel.scale),
+                   b,t,p,work)
+end
+function _apply_adjoint_prepared_kernel!(y,x,
+        kernel::InPlaceCorrelatedLocalJumpPIKernel,
+        prepared::InPlaceCorrelatedLocalJumpKernelWorkspace,b,t,p,work)
+    gain=(I=kernel.I,J=kernel.J,V=prepared.values)
+    _apply_adjoint_kernel!(y,x,
+        LocalJumpPIKernel(prepared.qblocks,gain,kernel.scale),b,t,p,work)
 end
 
 # Appendix-D local gain maps have a Kraus-like factorization for every

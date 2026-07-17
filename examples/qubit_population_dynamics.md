@@ -12,7 +12,7 @@ diagonal one-particle Hamiltonian is included as well. In the package order
 \[
 j_- = |g\rangle\langle e|,\qquad
 j_+ = j_-^\dagger,\qquad
-j_z = \frac{1}{2}\operatorname{diag}(-1,1).
+j_z = \frac{1}{2}\mathrm{diag}(-1,1).
 \]
 
 The six keyword rates multiply the standard dissipators of these local

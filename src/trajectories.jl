@@ -7,6 +7,265 @@ struct QuantumTrajectory{T,S<:PIState}
 end
 
 """
+    TrajectoryEnsembleResult
+
+Memory-conscious result returned by [`quantum_trajectories`](@ref) when
+`observables` are requested or `save_states=false`. `trajectories` is either
+the ordinary vector of [`QuantumTrajectory`](@ref) objects or `nothing` when
+state histories were not saved. `observables` contains online Monte Carlo
+statistics and `jumps` contains online channel-resolved jump statistics; either
+field is `nothing` when the corresponding output was not requested.
+Indexing and iteration return stored trajectories and raise when histories
+were disabled.
+
+With `save_states=false`, no sampled `PIState` is constructed. Observable
+buffers and Welford accumulators are task-owned and their retained storage is
+`O(workers * length(times) * number_of_observables)`. Jump statistics retain
+only their summary and the pooled inter-jump waiting times. The pooled waiting
+samples have no trajectory-order guarantee under threaded scheduling.
+"""
+struct TrajectoryEnsembleResult{T,P,O}
+    times::Vector{T}
+    trajectories::P
+    observables::O
+    jumps::Union{Nothing,NamedTuple}
+    trajectory_count::Int
+end
+
+Base.length(result::TrajectoryEnsembleResult)=result.trajectory_count
+Base.firstindex(result::TrajectoryEnsembleResult)=1
+Base.lastindex(result::TrajectoryEnsembleResult)=result.trajectory_count
+Base.getindex(result::TrajectoryEnsembleResult,index::Integer)=begin
+    result.trajectories===nothing&&throw(ArgumentError(
+        "this result was created with save_states=false"))
+    result.trajectories[index]
+end
+Base.iterate(result::TrajectoryEnsembleResult,args...)=begin
+    result.trajectories===nothing&&throw(ArgumentError(
+        "this result was created with save_states=false"))
+    iterate(result.trajectories,args...)
+end
+
+function Base.show(io::IO,result::TrajectoryEnsembleResult)
+    stored=result.trajectories===nothing ? "state-free" : "with state histories"
+    print(io,"TrajectoryEnsembleResult($(result.trajectory_count) trajectories, $stored, $(length(result.times)) sampling times)")
+end
+
+function _named_observables(observables)
+    observables isa NamedTuple&&return collect(pairs(observables))
+    observables isa AbstractDict&&return collect(pairs(observables))
+    observables isa Pair&&return [observables]
+    observables isa AbstractVector{<:Pair}&&return collect(observables)
+    [(Symbol("observable"),observables)]
+end
+
+function _prepare_streaming_observables(b::PIBasis,observables;
+                                        require_hermitian::Bool)
+    observables===nothing&&return ()
+    named=_named_observables(observables)
+    isempty(named)&&throw(ArgumentError("observables cannot be empty"))
+    prepared=Pair[];seen=Set{Any}()
+    for (name,A) in named
+        name in seen&&throw(ArgumentError("duplicate observable name $name"))
+        push!(seen,name)
+        op=A isa AbstractMatrix ? collective_operator(b,A) : A
+        op isa PIOperator&&op.basis===b||throw(ArgumentError(
+            "observables must be local matrices or compatible PIOperators"))
+        require_hermitian&& !ishermitian(op)&&throw(ArgumentError(
+            "trajectory observable statistics require Hermitian observables"))
+        push!(prepared,name=>op)
+    end
+    # A tuple retains the concrete operator type of every observable. Keeping
+    # these pairs in the abstract `Pair[]` setup buffer would dynamically
+    # dispatch and box each scalar `dot` result at every sampled time.
+    Tuple(prepared)
+end
+
+function _observable_scalar_type(rho::PIState,ops)
+    T=eltype(rho.data)
+    for (_,op) in ops
+        T=promote_type(T,eltype(op.data))
+    end
+    _real_float_type(T)
+end
+
+function _record_observables!(values::AbstractMatrix,ops,x,index)
+    @inbounds for observable_index in eachindex(ops)
+        value=dot(last(ops[observable_index]).data,x)
+        values[observable_index,index]=real(value)
+    end
+    values
+end
+
+mutable struct _OnlineObservableAccumulator{R<:AbstractFloat}
+    count::Int
+    mean::Matrix{R}
+    m2::Matrix{R}
+end
+
+_OnlineObservableAccumulator(::Type{R},nobservables,ntimes) where R<:AbstractFloat=
+    _OnlineObservableAccumulator(0,zeros(R,nobservables,ntimes),
+                                 zeros(R,nobservables,ntimes))
+
+function _accumulate_observables!(acc::_OnlineObservableAccumulator,values)
+    acc.count+=1;n=acc.count
+    @inbounds for index in eachindex(values)
+        delta=values[index]-acc.mean[index]
+        acc.mean[index]+=delta/n
+        acc.m2[index]+=delta*(values[index]-acc.mean[index])
+    end
+    acc
+end
+
+function _merge_observables!(left::_OnlineObservableAccumulator,
+                             right::_OnlineObservableAccumulator)
+    right.count==0&&return left
+    left.count==0&&(left.count=right.count;copyto!(left.mean,right.mean);
+                    copyto!(left.m2,right.m2);return left)
+    total=left.count+right.count
+    R=eltype(left.mean)
+    @inbounds for index in eachindex(left.mean)
+        delta=right.mean[index]-left.mean[index]
+        left.m2[index]+=right.m2[index]+delta*delta*
+            R(left.count)*R(right.count)/R(total)
+        left.mean[index]+=delta*R(right.count)/R(total)
+    end
+    left.count=total;left
+end
+
+function _observable_statistic(acc::_OnlineObservableAccumulator{R},
+                               observable_index,n,z,confidence) where {R}
+    means=copy(view(acc.mean,observable_index,:))
+    ntimes=size(acc.mean,2)
+    vars=Vector{R}(undef,ntimes)
+    stderr=Vector{R}(undef,ntimes)
+    lower=Vector{R}(undef,ntimes)
+    upper=Vector{R}(undef,ntimes)
+    denominator=R(n)
+    @inbounds for time_index in 1:ntimes
+        variance=n>1 ? acc.m2[observable_index,time_index]/R(n-1) : zero(R)
+        standard_error=sqrt(variance/denominator)
+        half_width=z*standard_error
+        vars[time_index]=variance
+        stderr[time_index]=standard_error
+        lower[time_index]=means[time_index]-half_width
+        upper[time_index]=means[time_index]+half_width
+    end
+    (mean=means,variance=vars,standard_error=stderr,
+     confidence=confidence,lower,upper)
+end
+
+function _observable_statistics(acc::_OnlineObservableAccumulator{R},ops,times,
+                                confidence::Real) where {R}
+    0<confidence<1||throw(ArgumentError("confidence must lie in (0,1)"))
+    n=acc.count;n>0||throw(ArgumentError("no observable samples were accumulated"))
+    isempty(ops)&&throw(ArgumentError("at least one observable is required"))
+    z=R(_normal_quantile((1+confidence)/2))
+    results=Dict{Any,Any}()
+    for observable_index in eachindex(ops)
+        results[first(ops[observable_index])]=_observable_statistic(
+            acc,observable_index,n,z,confidence)
+    end
+    (;times=copy(times),trajectories=n,observables=results)
+end
+
+mutable struct _OnlineJumpAccumulator{R<:AbstractFloat}
+    count::Int
+    totals::Vector{Int}
+    channel_mean::Vector{R}
+    channel_m2::Vector{R}
+    total_mean::R
+    total_m2::R
+    no_jump::Int
+    waiting_times::Vector{R}
+    channel_counts::Vector{Int}
+end
+
+function _OnlineJumpAccumulator(::Type{R},nchannels::Integer) where R<:AbstractFloat
+    nc=Int(nchannels)
+    _OnlineJumpAccumulator(0,zeros(Int,nc),zeros(R,nc),zeros(R,nc),
+        zero(R),zero(R),0,R[],zeros(Int,nc))
+end
+
+function _accumulate_jumps!(acc::_OnlineJumpAccumulator,jump_times,jump_channels)
+    acc.count+=1;n=acc.count;fill!(acc.channel_counts,0)
+    for channel in jump_channels
+        1<=channel<=length(acc.totals)||throw(ArgumentError(
+            "jump channel index $channel is outside the prepared model"))
+        acc.channel_counts[channel]+=1
+    end
+    for channel in eachindex(acc.totals)
+        count=acc.channel_counts[channel];acc.totals[channel]+=count
+        delta=count-acc.channel_mean[channel]
+        acc.channel_mean[channel]+=delta/n
+        acc.channel_m2[channel]+=delta*(count-acc.channel_mean[channel])
+    end
+    total=length(jump_times);iszero(total)&&(acc.no_jump+=1)
+    delta=total-acc.total_mean;acc.total_mean+=delta/n
+    acc.total_m2+=delta*(total-acc.total_mean)
+    if total>=2
+        @inbounds for index in 2:total
+            push!(acc.waiting_times,jump_times[index]-jump_times[index-1])
+        end
+    end
+    acc
+end
+
+function _merge_jumps!(left::_OnlineJumpAccumulator,right::_OnlineJumpAccumulator)
+    right.count==0&&return left
+    if left.count==0
+        left.count=right.count;copyto!(left.totals,right.totals)
+        copyto!(left.channel_mean,right.channel_mean)
+        copyto!(left.channel_m2,right.channel_m2)
+        left.total_mean=right.total_mean;left.total_m2=right.total_m2
+        left.no_jump=right.no_jump;append!(left.waiting_times,right.waiting_times)
+        return left
+    end
+    total_count=left.count+right.count
+    R=eltype(left.channel_mean)
+    for channel in eachindex(left.totals)
+        delta=right.channel_mean[channel]-left.channel_mean[channel]
+        left.channel_m2[channel]+=right.channel_m2[channel]+
+            delta*delta*R(left.count)*R(right.count)/R(total_count)
+        left.channel_mean[channel]+=delta*R(right.count)/R(total_count)
+        left.totals[channel]+=right.totals[channel]
+    end
+    delta=right.total_mean-left.total_mean
+    left.total_m2+=right.total_m2+delta*delta*
+        R(left.count)*R(right.count)/R(total_count)
+    left.total_mean+=delta*R(right.count)/R(total_count)
+    left.count=total_count;left.no_jump+=right.no_jump
+    append!(left.waiting_times,right.waiting_times);left
+end
+
+function _jump_statistics(acc::_OnlineJumpAccumulator,times)
+    n=acc.count;n>0||throw(ArgumentError("no jump samples were accumulated"))
+    duration=times[end]-times[1];duration>=0||throw(ArgumentError(
+        "invalid sampling interval"))
+    R=eltype(acc.channel_mean);nan=R(NaN)
+    channels=[begin
+        variance=_sample_variance(acc.channel_m2[channel],n)
+        mean=acc.channel_mean[channel]
+        (channel=channel,total=acc.totals[channel],mean,
+         variance,fano=iszero(mean) ? nan : variance/mean,
+         rate=iszero(duration) ? nan : mean/duration)
+    end for channel in eachindex(acc.totals)]
+    total_variance=_sample_variance(acc.total_m2,n)
+    mean_waiting=isempty(acc.waiting_times) ? nan :
+        sum(acc.waiting_times)/length(acc.waiting_times)
+    waiting_variance=length(acc.waiting_times)>1 ?
+        sum(x->abs2(x-mean_waiting),acc.waiting_times)/
+            (length(acc.waiting_times)-1) : nan
+    (;trajectories=n,duration,total_jumps=sum(acc.totals),
+      mean_count=acc.total_mean,count_variance=total_variance,
+      fano=iszero(acc.total_mean) ? nan : total_variance/acc.total_mean,
+      rate=iszero(duration) ? nan : acc.total_mean/duration,
+      no_jump_probability=R(acc.no_jump)/R(n),channels,
+      waiting_times=copy(acc.waiting_times),mean_waiting_time=mean_waiting,
+      waiting_time_variance=waiting_variance)
+end
+
+"""
     TrajectoryPlan(model; T=nothing)
     TrajectoryPlan(compiled; T=nothing)
 
@@ -385,11 +644,21 @@ function _adaptive_factor(error::R) where R<:AbstractFloat
 end
 
 function _event_driven_trajectory(plan,rho0,ts,w,rng,parameters,dt,
-                                  abstol,reltol,dtmin,dtmax,event_time_tolerance)
+                                  abstol,reltol,dtmin,dtmax,event_time_tolerance;
+                                  observable_ops=nothing,
+                                  observable_values=nothing,
+                                  save_states::Bool=true,
+                                  record_jumps::Bool=true)
+    save_states&&!record_jumps&&throw(ArgumentError(
+        "saved trajectories require recorded jump histories"))
     b=plan.model.basis;tau=plan.liouvillian.tracevec;x=w.current
     copyto!(x,rho0.data)
-    states=Vector{typeof(rho0)}(undef,length(ts));states[1]=copy(rho0)
-    jt=eltype(ts)[];jc=Int[];t=ts[1]
+    states=save_states ? Vector{typeof(rho0)}(undef,length(ts)) : nothing
+    save_states&&(states[1]=copy(rho0))
+    observable_values===nothing||_record_observables!(
+        observable_values,observable_ops,x,1)
+    jt=record_jumps ? eltype(ts)[] : nothing
+    jc=record_jumps ? Int[] : nothing;t=ts[1]
     R=typeof(dt)
     threshold=randexp(rng,R);hazard=zero(threshold)
     h=min(dt,dtmax)
@@ -447,13 +716,19 @@ function _event_driven_trajectory(plan,rho0,ts,w,rng,parameters,dt,
             _apply_gain!(w.channel_gain,x,plan.jumps[channel],b,
                          w.jump_scales[channel],w.liouvillian_work)
             z=dot(tau,w.channel_gain);abs(z)>eps(R)||throw(ArgumentError("selected jump has zero probability"))
-            copyto!(x,w.channel_gain);x./=z;push!(jt,t);push!(jc,channel)
+            copyto!(x,w.channel_gain);x./=z
+            if record_jumps
+                push!(jt,t);push!(jc,channel)
+            end
             threshold=randexp(rng,typeof(threshold));hazard=zero(threshold)
             h=min(dtmax,max(dtmin,h-event_step))
         end
-        states[output_index]=PIState(b,x)
+        save_states&&(states[output_index]=PIState(b,x))
+        observable_values===nothing||_record_observables!(
+            observable_values,observable_ops,x,output_index)
     end
-    QuantumTrajectory(ts,states,jt,jc)
+    save_states ? QuantumTrajectory(ts,states,jt,jc) :
+        (;jump_times=jt,jump_channels=jc)
 end
 
 function _prepare_trajectory_arguments(times,::Type{R};dt::Real,
@@ -549,16 +824,27 @@ function _validate_trajectory_initial_state(plan,rho0)
     nothing
 end
 
-function _quantum_trajectory_prepared(plan,rho0,ts,w,rng,options)
+function _quantum_trajectory_prepared(plan,rho0,ts,w,rng,options;
+                                      observable_ops=nothing,
+                                      observable_values=nothing,
+                                      save_states::Bool=true,
+                                      record_jumps::Bool=true)
+    save_states&&!record_jumps&&throw(ArgumentError(
+        "saved trajectories require recorded jump histories"))
     b=plan.model.basis;tau=plan.liouvillian.tracevec
     R=eltype(w.intensities)
     options.algorithm!==:fixed&&return _event_driven_trajectory(
         plan,rho0,ts,w,rng,options.parameters,options.dt,options.abstol,
         options.reltol,options.dtmin,options.dtmax,
-        options.event_time_tolerance)
+        options.event_time_tolerance;observable_ops,observable_values,
+        save_states,record_jumps)
     x=w.current;copyto!(x,rho0.data)
-    states=Vector{typeof(rho0)}(undef,length(ts));states[1]=copy(rho0)
-    jt=eltype(ts)[];jc=Int[];t=ts[1]
+    states=save_states ? Vector{typeof(rho0)}(undef,length(ts)) : nothing
+    save_states&&(states[1]=copy(rho0))
+    observable_values===nothing||_record_observables!(
+        observable_values,observable_ops,x,1)
+    jt=record_jumps ? eltype(ts)[] : nothing
+    jc=record_jumps ? Int[] : nothing;t=ts[1]
     for output_index in 2:length(ts)
         target=ts[output_index]
         while t<target
@@ -580,12 +866,17 @@ function _quantum_trajectory_prepared(plan,rho0,ts,w,rng,options)
                 abs(z)>eps(R)||throw(ArgumentError(
                     "selected jump has zero probability"))
                 copyto!(x,w.channel_gain);x./=z
-                push!(jt,t);push!(jc,channel)
+                if record_jumps
+                    push!(jt,t);push!(jc,channel)
+                end
             end
         end
-        states[output_index]=PIState(b,x)
+        save_states&&(states[output_index]=PIState(b,x))
+        observable_values===nothing||_record_observables!(
+            observable_values,observable_ops,x,output_index)
     end
-    QuantumTrajectory(ts,states,jt,jc)
+    save_states ? QuantumTrajectory(ts,states,jt,jc) :
+        (;jump_times=jt,jump_channels=jc)
 end
 
 """
@@ -635,7 +926,9 @@ end
 
 """
     quantum_trajectories(source, rho0, times, n; seed=0, threaded=false,
-                         workspace=nothing, trajectory_keywords...)
+                         workspace=nothing, observables=nothing,
+                         save_states=true, jump_statistics=true,
+                         confidence=0.95, trajectory_keywords...)
 
 Generate independent PI trajectories. Model geometry is lowered once per
 batch and shared read-only. Serial execution reuses one worker; threaded
@@ -653,13 +946,57 @@ storage. With `threaded=true`, callable scalar rates and objects supplied via
 every requested state is returned, output storage scales as
 `n * length(times) * length(rho0.data)`; request only the sampling times needed
 for analysis when state-history memory is limiting.
+
+Pass named `observables` and set `save_states=false` for memory-light online
+ensemble statistics. This returns a [`TrajectoryEnsembleResult`](@ref) and
+never constructs sampled `PIState` objects. One observable buffer and one
+Welford accumulator are retained per active worker. Channel-resolved jump
+statistics are accumulated online by default; set `jump_statistics=false` to
+omit them. A state-free call requires at least one observable because the
+no-observable route preserves the legacy trajectory-vector return type.
 """
 function quantum_trajectories(source::Union{PIModel,CompiledPIModel,TrajectoryPlan},
         rho0::PIState{R},times,n::Integer;seed::Integer=0,
         threaded::Bool=false,workspace=nothing,dt::Real,
         parameters=nothing,max_jump_probability=nothing,
         algorithm::Symbol=:fixed,abstol=nothing,reltol=nothing,
-        dtmin=nothing,dtmax=nothing,event_time_tolerance=nothing) where {R<:AbstractFloat}
+        dtmin=nothing,dtmax=nothing,event_time_tolerance=nothing,
+        observables=nothing,save_states::Bool=true,
+        jump_statistics::Bool=true,confidence::Real=0.95) where {R<:AbstractFloat}
+    _quantum_trajectories_dispatch(observables,
+        source,rho0,times,n;
+        seed,threaded,workspace,dt,parameters,max_jump_probability,algorithm,
+        abstol,reltol,dtmin,dtmax,event_time_tolerance,save_states,
+        jump_statistics,confidence)
+end
+
+function _quantum_trajectories_dispatch(::Nothing,
+        source,rho0,times,n;
+        seed,threaded,workspace,dt,parameters,max_jump_probability,algorithm,
+        abstol,reltol,dtmin,dtmax,event_time_tolerance,save_states,
+        jump_statistics,confidence)
+    save_states||throw(ArgumentError(
+        "save_states=false requires at least one observable"))
+    _quantum_trajectories_legacy(source,rho0,times,n;seed,threaded,workspace,
+        dt,parameters,max_jump_probability,algorithm,abstol,reltol,dtmin,
+        dtmax,event_time_tolerance)
+end
+
+function _quantum_trajectories_dispatch(observables,
+        source,rho0,times,n;seed,threaded,workspace,dt,parameters,
+        max_jump_probability,algorithm,abstol,reltol,dtmin,dtmax,
+        event_time_tolerance,save_states,jump_statistics,confidence)
+    _quantum_trajectories_streaming(source,rho0,times,n;
+        seed,threaded,workspace,dt,parameters,max_jump_probability,algorithm,
+        abstol,reltol,dtmin,dtmax,event_time_tolerance,observables,
+        save_states,jump_statistics,confidence)
+end
+
+function _quantum_trajectories_legacy(
+        source::Union{PIModel,CompiledPIModel,TrajectoryPlan},
+        rho0::PIState{R},times,n::Integer;seed::Integer,threaded::Bool,
+        workspace,dt::Real,parameters,max_jump_probability,algorithm::Symbol,
+        abstol,reltol,dtmin,dtmax,event_time_tolerance) where {R<:AbstractFloat}
     n>0||throw(ArgumentError("trajectory count must be positive"))
     if workspace===nothing
         plan=_plan_for_source(source,rho0)
@@ -751,6 +1088,135 @@ function quantum_trajectories(source::Union{PIModel,CompiledPIModel,TrajectoryPl
     out
 end
 
+function _stream_trajectory_path!(out,observable_accumulators,jump_accumulators,
+        observable_buffers,observable_ops,plan,rho0,ts,worker,rng,options,
+        trajectory_index,worker_index,save_states,record_jumps)
+    values=observable_buffers===nothing ? nothing :
+        observable_buffers[worker_index]
+    result=_quantum_trajectory_prepared(plan,rho0,
+        save_states ? copy(ts) : ts,worker,rng,options;
+        observable_ops,observable_values=values,save_states,record_jumps)
+    save_states&&(out[trajectory_index]=result)
+    observable_accumulators===nothing||_accumulate_observables!(
+        observable_accumulators[worker_index],values)
+    if jump_accumulators!==nothing
+        _accumulate_jumps!(jump_accumulators[worker_index],
+            result.jump_times,result.jump_channels)
+    end
+    nothing
+end
+
+function _quantum_trajectories_streaming(
+        source::Union{PIModel,CompiledPIModel,TrajectoryPlan},
+        rho0::PIState{R},times,n::Integer;seed::Integer,threaded::Bool,
+        workspace,dt::Real,parameters,max_jump_probability,algorithm::Symbol,
+        abstol,reltol,dtmin,dtmax,event_time_tolerance,observables,
+        save_states::Bool,jump_statistics::Bool,confidence::Real) where {R<:AbstractFloat}
+    n>0||throw(ArgumentError("trajectory count must be positive"))
+    !save_states&&observables===nothing&&throw(ArgumentError(
+        "save_states=false requires at least one observable"))
+    if workspace===nothing
+        plan=_plan_for_source(source,rho0)
+        requested_workers=threaded ? min(Int(n),Threads.nthreads()) : 1
+        batch=TrajectoryBatchWorkspace(plan,rho0;workers=requested_workers)
+    elseif workspace isa TrajectoryBatchWorkspace
+        batch=_check_trajectory_batch_workspace(workspace,source,rho0)
+        plan=batch.plan
+    elseif workspace isa TrajectoryWorkspace
+        threaded&&throw(ArgumentError(
+            "threaded ensembles require a TrajectoryBatchWorkspace with independent worker scratch"))
+        _check_trajectory_workspace(workspace,source,rho0)
+        plan=workspace.plan;batch=nothing
+    else
+        throw(ArgumentError(
+            "workspace must be a TrajectoryWorkspace or TrajectoryBatchWorkspace"))
+    end
+    _validate_trajectory_initial_state(plan,rho0)
+    ts,options=_prepare_trajectory_arguments(times,R;dt,parameters,
+        max_jump_probability,algorithm,abstol,reltol,dtmin,dtmax,
+        event_time_tolerance)
+    ops=_prepare_streaming_observables(rho0.basis,observables;
+                                       require_hermitian=true)
+    0<confidence<1||throw(ArgumentError(
+        "confidence must lie in (0,1)"))
+
+    if batch===nothing
+        master=MersenneTwister(seed);seeds=rand(master,UInt64,n)
+        workers=(workspace,);rngs=(master,);worker_count=1
+    else
+        master=batch.rngs[1];Random.seed!(master,seed)
+        resize!(batch.seeds,n);rand!(master,batch.seeds);seeds=batch.seeds
+        available=length(batch.workers)
+        worker_count=threaded ? min(Int(n),Threads.nthreads(),available) : 1
+        workers=batch.workers;rngs=batch.rngs
+    end
+    TT=eltype(ts)
+    out=save_states ? Vector{QuantumTrajectory{TT,typeof(rho0)}}(undef,n) : nothing
+    Rstats=_observable_scalar_type(rho0,ops)
+    observable_buffers=
+        [Matrix{Rstats}(undef,length(ops),length(ts)) for _ in 1:worker_count]
+    observable_accumulators=
+        [_OnlineObservableAccumulator(Rstats,length(ops),length(ts))
+         for _ in 1:worker_count]
+    jump_accumulators=jump_statistics ?
+        [_OnlineJumpAccumulator(R,length(plan.jumps)) for _ in 1:worker_count] :
+        nothing
+    record_jumps=save_states||jump_statistics
+
+    if worker_count==1
+        worker=workers[1];rng=rngs[1]
+        for trajectory_index in 1:Int(n)
+            Random.seed!(rng,seeds[trajectory_index])
+            _stream_trajectory_path!(out,observable_accumulators,
+                jump_accumulators,observable_buffers,ops,plan,rho0,ts,worker,
+                rng,options,trajectory_index,1,save_states,record_jumps)
+        end
+    else
+        chunk_size=max(1,Int(n)÷(8worker_count))
+        next_index=Threads.Atomic{Int}(1)
+        @sync for worker_index in 1:worker_count
+            let worker=workers[worker_index],rng=rngs[worker_index],
+                worker_id=worker_index,counter=next_index
+                Threads.@spawn begin
+                    while true
+                        first_index=Threads.atomic_add!(counter,chunk_size)
+                        first_index>Int(n)&&break
+                        final_index=min(Int(n),first_index+chunk_size-1)
+                        for trajectory_index in first_index:final_index
+                            Random.seed!(rng,seeds[trajectory_index])
+                            _stream_trajectory_path!(out,
+                                observable_accumulators,jump_accumulators,
+                                observable_buffers,ops,plan,rho0,ts,worker,rng,
+                                options,trajectory_index,worker_id,save_states,
+                                record_jumps)
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    merged_observables=observable_accumulators[1]
+    for worker_index in 2:worker_count
+        _merge_observables!(merged_observables,
+                            observable_accumulators[worker_index])
+    end
+    observable_summary=_observable_statistics(
+        merged_observables,ops,ts,confidence)
+    jump_summary=if jump_accumulators===nothing
+        nothing
+    else
+        merged=jump_accumulators[1]
+        for worker_index in 2:worker_count
+            _merge_jumps!(merged,jump_accumulators[worker_index])
+        end
+        _jump_statistics(merged,ts)
+    end
+    P=Union{Nothing,Vector{QuantumTrajectory{TT,typeof(rho0)}}}
+    TrajectoryEnsembleResult{TT,P,typeof(observable_summary)}(
+        copy(ts),out,observable_summary,jump_summary,Int(n))
+end
+
 """Average equally sampled quantum trajectories into PI density matrices."""
 function trajectory_average(trajs::AbstractVector{<:QuantumTrajectory})
     isempty(trajs)&&throw(ArgumentError("at least one trajectory is required"));times=trajs[1].times;m=length(times);b=trajs[1].states[1].basis
@@ -824,14 +1290,6 @@ function _normal_quantile(p::Real)
     (((((a[1]*r+a[2])*r+a[3])*r+a[4])*r+a[5])*r+a[6])*q/(((((b[1]*r+b[2])*r+b[3])*r+b[4])*r+b[5])*r+1)
 end
 
-function _named_observables(observables)
-    observables isa NamedTuple&&return collect(pairs(observables))
-    observables isa AbstractDict&&return collect(pairs(observables))
-    observables isa Pair&&return [observables]
-    observables isa AbstractVector{<:Pair}&&return collect(observables)
-    [(Symbol("observable"),observables)]
-end
-
 """
     trajectory_observable_statistics(trajectories, observables; confidence=0.95)
 
@@ -841,12 +1299,8 @@ pair collection, or a single Hermitian local matrix/`PIOperator`.
 """
 function trajectory_observable_statistics(trajs::AbstractVector{<:QuantumTrajectory},observables;confidence::Real=0.95)
     times,b=_check_trajectory_ensemble(trajs);0<confidence<1||throw(ArgumentError("confidence must lie in (0,1)"));n=length(trajs);nt=length(times)
-    named=_named_observables(observables);ops=Pair[]
-    for (name,A) in named
-        op=A isa AbstractMatrix ? collective_operator(b,A) : A
-        op isa PIOperator&&op.basis===b||throw(ArgumentError("observables must be local matrices or compatible PIOperators"))
-        ishermitian(op)||throw(ArgumentError("trajectory statistics require Hermitian observables"));push!(ops,name=>op)
-    end
+    ops=_prepare_streaming_observables(b,observables;
+                                       require_hermitian=true)
     z=_normal_quantile((1+confidence)/2);results=Dict{Any,Any}()
     for (name,A) in ops
         means=zeros(Float64,nt);m2=zeros(Float64,nt)

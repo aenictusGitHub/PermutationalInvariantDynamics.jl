@@ -111,7 +111,7 @@ peak_structure = schur_block_structure(
 sector,
 
 \[
-P_\nu=f^\nu\operatorname{tr}(\rho_\nu),
+P_\nu=f^\nu\mathrm{tr}(\rho_\nu),
 \qquad \sum_\nu P_\nu=1.
 \]
 

@@ -82,6 +82,57 @@ diagnostics(rho_ss)
 recommend_solver(model; task=:steady_state)
 ```
 
+When only a few observables are needed, the fixed-step solver can discard the
+sampled PI states and retain scalar series only:
+
+```julia
+series = solve_dynamics(
+    prepared, rho0, (0.0, 20.0);
+    saveat=0.1,
+    observables=(magnetization=sz/2,),
+    save_states=false,
+)
+```
+
+The same output policy is available for trajectory ensembles, where means,
+variances, standard errors, and confidence intervals are accumulated online.
+See the [streaming-output guide](docs/src/streaming_output.md).
+
+For pure auxiliary paths in the direct sum of Schur irreps, the opt-in
+`WeakPITrajectoryPlan` factorizes unresolved local gains into
+sector-changing Kraus branches. These pseudo-kets are not labeled-particle
+wavefunctions, but their ensemble average reproduces the same PI master
+equation without constructing a `d^N` object. See the
+[weak-PI trajectory guide](docs/src/weak_pi_trajectories.md).
+
+Autonomous models also support exact PI quantum regression without a dense
+Liouvillian. `CorrelationPlan` and `CorrelationWorkspace` are reusable across
+two-time correlations, delayed second-order correlations, connected
+shifted-GMRES spectra, and finite-window FFTs; see the
+[correlation guide](docs/src/correlations.md).
+
+Collective homodyne and heterodyne records are available through preallocated
+`DiffusivePlan`/`DiffusiveWorkspace` paths; the monitored collapse dissipator
+must already be present in the unconditional model. See the
+[diffusive-monitoring guide](docs/src/diffusive_monitoring.md).
+
+PI channels, POVM sampling and tomography, versioned checkpoints, compressed
+population metadata, simultaneous weak symmetries, and matrix-free control
+gradients are collected in the experimental
+[research-utilities guide](docs/src/research_utilities.md).
+
+`CorrelatedLocalJumps` and `CorrelatedCollectiveJumps` accept a Hermitian
+positive-semidefinite Kossakowski matrix for cross-correlated one-body noise.
+Fixed channel matrices are factorized once, while `InPlaceTimeOperator`
+provides a preallocated driven path. See the
+[correlated-reservoir example](examples/correlated_reservoirs.md).
+
+Several independently PI ensembles and small truncated auxiliaries can be
+combined with `CompositePIBasis`. Factorized local and cross-system maps are
+applied without forming the global Kronecker superoperator. This deterministic
+backend is experimental and does not yet compile composite quantum
+trajectories; see [composite systems](docs/src/composite_systems.md).
+
 Stationary and spectral routines reject time-dependent generators. Select an
 instant explicitly with `freeze(model; time=t, parameters=p)` or use Floquet
 analysis for periodic dynamics.

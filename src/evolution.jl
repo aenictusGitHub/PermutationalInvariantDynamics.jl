@@ -88,7 +88,7 @@ time_evolve(rho::PIState,L::_EvolutionLiouvillian,tspan;kwargs...)=time_evolve(L
 """Return states at ordered sampling times using one reusable workspace."""
 function time_evolution(L::_EvolutionLiouvillian,rho::PIState,times;
                         steps_per_interval::Integer=64,parameters=nothing)
-    ts=collect(times);isempty(ts)&&return PIState[]
+    ts=collect(times);isempty(ts)&&return typeof(rho)[]
     all(diff(ts).>=0)||throw(ArgumentError("times must be nondecreasing"))
     steps_per_interval>0||throw(ArgumentError("steps_per_interval must be positive"))
     prepared=_evolution_liouvillian(L)

@@ -425,6 +425,16 @@ path = ".."
 uuid = "8edbc7f6-5364-4b2e-9e03-73a6d67b7c8a"
 version = "0.1.0"
 
+    [deps.PermutationalInvariantDynamics.extensions]
+    PermutationalInvariantDynamicsHDF5Ext = "HDF5"
+    PermutationalInvariantDynamicsJLD2Ext = "JLD2"
+    PermutationalInvariantDynamicsQuantumCumulantsExt = "QuantumCumulants"
+
+    [deps.PermutationalInvariantDynamics.weakdeps]
+    HDF5 = "f67ccb44-e63f-5c2f-98bd-6dc0ccc4ba2f"
+    JLD2 = "033835bb-8acc-5ee8-8aae-3f567f8a3819"
+    QuantumCumulants = "35bcea6d-e19f-57db-af74-8011de6c7255"
+
 [[deps.Pkg]]
 deps = ["Artifacts", "Dates", "Downloads", "FileWatching", "LibGit2", "Libdl", "Logging", "Markdown", "Printf", "Random", "SHA", "TOML", "Tar", "UUIDs", "p7zip_jll"]
 uuid = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"

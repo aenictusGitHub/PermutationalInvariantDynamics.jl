@@ -33,6 +33,13 @@ makedocs(sitename="PermutationalInvariantDynamics.jl", modules=[PermutationalInv
                 "Spin phase space"=>"spin_phase_space.md",
                 "API tiers and prepared analysis"=>"api_tiers.md",
                 "Mean-field predictions"=>"meanfield.md",
+                "Streaming output"=>"streaming_output.md",
+                "Diffusive monitoring"=>"diffusive_monitoring.md",
+                "Weak-PI pseudo-ket trajectories"=>"weak_pi_trajectories.md",
+                "Quantum regression and spectra"=>"correlations.md",
+                "Higher-order cumulant bridge"=>"cumulant_bridge.md",
+                "Research utilities and control"=>"research_utilities.md",
+                "Composite systems"=>"composite_systems.md",
                 "Matrix-free Krylov solvers"=>"matrix_free_krylov.md",
                 "Mathematics"=>"mathematics.md",
                 "Public API"=>[

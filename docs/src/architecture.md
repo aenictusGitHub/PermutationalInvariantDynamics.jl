@@ -16,6 +16,10 @@ PIBasis → PIModel → compile → CompiledPIModel
 
 invariant PIModel → PopulationPlan → reduced sparse action
                                    └─ PopulationWorkspace per task
+
+(PIBasis..., finite factors...) → CompositePIBasis
+                               → CompositeSuperoperator
+                                 └─ CompositeSuperoperatorWorkspace per task
 ```
 
 `PIBasis` stores only polynomial-size Schur data. `PIModel` is an immutable
@@ -25,6 +29,12 @@ scratch. A `LiouvillianWorkspace` contains the multiplication matrices needed
 for each Schur sector and, for an in-place operator schedule, the evaluated
 operator and dynamic Schur/gain buffers. It can be reused by dynamics and
 Krylov algorithms.
+
+Composite coordinates keep each PI factor in the same equation-(7)
+normalization and each finite factor in column-major matrix-unit coordinates.
+The first factor varies fastest. Tensor-mode kernels apply a sum of factorized
+maps with two reusable composite buffers and one small fibre buffer per active
+factor; they do not construct the corresponding global Kronecker matrix.
 
 ## Recommended commands
 
@@ -38,6 +48,34 @@ values = liouvillian_spectrum(prepared; target=:largest_real, nev=6)
 diagnostics(rho_ss)
 recommend_solver(model; task=:steady_state)
 ```
+
+When only observables are needed, replace the first call by
+
+```julia
+series = solve_dynamics(
+    prepared, rho0, (0.0, 10.0);
+    saveat=0.1,
+    observables=(Jz=sz/2,),
+    save_states=false,
+)
+```
+
+This retains one evolving PI vector and the requested scalar series. The same
+keywords on `quantum_trajectories` produce online Welford statistics without
+sampled `PIState` histories. See [Streaming output](streaming_output.md).
+
+Autonomous dynamical correlations have their own prepared flow:
+
+```text
+compiled Liouvillian + A,B[,R] → CorrelationPlan
+                               → CorrelationWorkspace
+                               ├─ sequential RK4 QRT samples
+                               └─ shifted-GMRES connected spectra
+```
+
+The readout convention is explicitly `tr(A*exp(L*tau)*(B*rho*R))`; it differs
+from the adjoint implicit in a Hilbert--Schmidt `expectation` call. See
+[Quantum regression and optical correlations](correlations.md).
 
 These are high-level commands. Lower-level research control remains available
 through `liouvillian`, `apply!`, `steady_state`,
