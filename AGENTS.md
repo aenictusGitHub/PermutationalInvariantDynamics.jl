@@ -1172,6 +1172,43 @@ QuantumCumulants-0.5 smoke run in addition to `Pkg.test()`.
   transverse pair order rather than its vanishing `X,Y` to one selected
   broken-symmetry branch. Never claim the finite product closure is exact
   correlated finite PI dynamics.
+- The Debecker *et al.* (2026 draft) local-pseudomode example is the exact PI
+  **uniform-all-pair specialization**, not a reproduction of the manuscript's
+  nearest-neighbour periodic Ising chain. One supersite is spin tensor a mode
+  truncated to `0:nmax`, with local dimension `d=2(nmax+1)` and complete-basis
+  PI dimension `binomial(N+d^2-1,N)`. The enlarged truncated state follows a
+  Markovian Lindblad equation; tracing the modes gives the intended
+  finite-memory, generally non-Markovian spin dynamics. The helper's `Jpair`
+  is the literal unordered-pair coefficient; the executable explicitly plots
+  the Kac scale `J` defined by `Jpair=J/(N-1)`. It maps the manuscript
+  convention
+  `D_paper=2D_package` to a local mode-jump rate `2kappa` and uses
+  `g=sqrt(gamma*kappa)`. Both `coupling=:minus` and `:z` are constructed; the
+  latter has a strong spin-parity symmetry, so do not assume an unrestricted
+  unique steady state. Its Fig.-4 analogue starts from parity-even
+  `|e,0>^N`, uses adaptive matrix-free exponential action to select that
+  long-time component, and checks the action error estimate, `norm(L*rho)` at
+  every grid point, and a half-settling-time witness value. The optimized
+  spin x-GHZ fidelity uses full `N`-body moments with an identity on every
+  mode, optimizes only the GHZ relative phase, and draws the standard `0.5`
+  witness contour. The long `:minus` dynamics curves use a reusable
+  dimension-30 `KrylovExpvWorkspace` and preallocated matrix-free
+  `krylov_expv!` between output times, totaling 6000 Liouvillian applications
+  per curve. A tighter dimension-40 repeat checks the broad
+  `kappa/omega_c=20` curve; do not replace this with the unstable explicit-RK4
+  step-halving route merely to match the short examples. All distinct pairs
+  have one common correlation and no spatial correlation length. The example
+  reconstructs the physical two-spin state from Pauli moments with identity
+  on both modes before taking its negativity, compares `nmax=1,2`, and checks
+  the wider-cutoff boundary
+  population. That short fixed-step cutoff comparison covers the `:minus`
+  correlation, not the long-sweep Krylov convergence or the separate `:z`
+  GHZ map. Its manuscript-style Makie heat maps are finite-size all-pair
+  diagnostics, not a nearest-neighbour phase diagram. Keep the stable
+  figure stems `debecker2026_all_to_all_ising_pseudomodes`,
+  `debecker2026_all_to_all_ising_pseudomodes_cutoff`, and
+  `debecker2026_all_to_all_ising_pseudomodes_ghz`; the optional
+  `PI_PSEUDOMODE_FULL_SCAN=1` changes the stationary and GHZ grid density.
 - `examples/quantum_trajectories.jl` is the foundational
   Dalibard--Castin--Mølmer / Mølmer--Castin--Dalibard independent-emitter
   regression. It checks the exact tensor-power density state, binomial
@@ -1290,6 +1327,7 @@ julia --project=. examples/getting_started.jl
 julia --project=examples -e 'using Pkg; Pkg.develop(path="."); Pkg.instantiate()'
 julia --project=examples examples/pra94_033838_superradiance.jl
 julia --project=examples examples/pra110_062208_lmg.jl
+julia --project=examples examples/debecker2026_all_to_all_ising_pseudomodes.jl
 julia --project=examples examples/huelga1997_ramsey_dephasing.jl
 julia --project=examples examples/kitagawa1993_one_axis_twisting.jl
 julia --project=examples examples/shammah2018_local_pumping.jl
@@ -1351,6 +1389,13 @@ dependency of the active examples environment. The earlier literature,
 trajectory, population, phase-space, mean-field, time-crystal,
 Schur/density-, and complex-spectrum examples remain covered by their
 dedicated regression groups and prior executable audits.
+The Debecker spin--pseudomode guide and figures must continue to state that the
+implemented geometry is uniform over all pairs. Keep its literal-`Jpair`
+constructor, explicit example-level Kac scaling, dissipator factor of two,
+spin-only partial trace, cutoff comparison, and parity-selected GHZ
+long-time/error/residual checks synchronized whenever the example changes.
+Preserve the reusable matrix-free Krylov exponential-action long sweep and its
+tighter broad-curve repeat separately from the short fixed-step cutoff run.
 Regression groups
 cover exact combinatorics, CG orthogonality, PI algebra/generators, Appendix-D,
 finite/thermodynamic mean-field closure and precision, Floquet and direct

@@ -12,7 +12,9 @@ export spin_matrices, damanet2016_model, damanet2016_intensity_operator,
 export morrison2008_model, morrison2008_exact_state,
        meiser2009_superradiance_model, iemini2018_btc_model,
        nakanishi2023_pt_model, nakanishi2023_pt_spectrum,
-       piccitto2021_interacting_btc_model
+       piccitto2021_interacting_btc_model,
+       debecker2026_pseudomode_operators,
+       debecker2026_all_to_all_ising_pseudomode_model
 
 """PRA 94, 033838 (2016), Eqs. (3)-(5), with `delta_gamma=gamma0-gamma`."""
 function damanet2016_model(N;gamma0=1.0,gamma=gamma0)
@@ -188,6 +190,143 @@ function piccitto2021_interacting_btc_model(N;omega_z=1.0,omega_x=3.0,
                PBodyHamiltonian(kron(sz,sz),2;rate=-2omega_z/N),
                CollectiveJump(s.jp;rate=4Gamma_up/N),
                CollectiveJump(s.jm;rate=4Gamma_down/N)])
+end
+
+"""
+    debecker2026_pseudomode_operators(nmax; T=Float64)
+
+Construct the local matrices for one spin coupled to one pseudomode truncated
+to occupations `0:nmax`.  The supersite ordering is `spin tensor mode`, its
+dimension is `2(nmax+1)`, and the returned named tuple contains Pauli matrices,
+their supersite lifts, the mode annihilation/number/top-level operators, and
+the two spin--mode exchange operators associated with `sigma_minus` and
+`sigma_z` coupling.
+"""
+function debecker2026_pseudomode_operators(
+        nmax::Integer;T::Type{<:AbstractFloat}=Float64)
+    nmax>=1||throw(ArgumentError(
+        "the pseudomode cutoff must retain at least occupations 0 and 1"))
+    nmax_int=try
+        Int(nmax)
+    catch error
+        (error isa InexactError||error isa OverflowError)||rethrow()
+        throw(ArgumentError("nmax is too large for an explicit local cutoff"))
+    end
+    levels=try
+        Base.checked_add(nmax_int,1)
+    catch error
+        error isa OverflowError||rethrow()
+        throw(ArgumentError("nmax is too large for an explicit local cutoff"))
+    end
+    dsite=try
+        Base.checked_mul(2,levels)
+    catch error
+        error isa OverflowError||rethrow()
+        throw(ArgumentError("the spin--pseudomode dimension overflows Int"))
+    end
+
+    spin=spin_matrices(2;T)
+    identity_spin=Matrix{Complex{T}}(I,2,2)
+    identity_mode=Matrix{Complex{T}}(I,levels,levels)
+    sigma_x=2spin.jx
+    sigma_y=2spin.jy
+    sigma_z=2spin.jz
+    sigma_minus=spin.jm
+
+    annihilation=zeros(Complex{T},levels,levels)
+    @inbounds for occupation in 1:levels-1
+        annihilation[occupation,occupation+1]=sqrt(T(occupation))
+    end
+    mode_annihilation=kron(identity_spin,annihilation)
+    mode_number=adjoint(mode_annihilation)*mode_annihilation
+    mode_top=zeros(Complex{T},levels,levels)
+    mode_top[end,end]=one(T)
+
+    spin_paulis=(identity_spin,sigma_x,sigma_y,sigma_z)
+    lifted_paulis=map(operator->kron(operator,identity_mode),spin_paulis)
+    lowering_site=kron(sigma_minus,identity_mode)
+    z_site=lifted_paulis[4]
+    exchange_minus=lowering_site*adjoint(mode_annihilation)+
+                   adjoint(lowering_site)*mode_annihilation
+    exchange_z=z_site*adjoint(mode_annihilation)+
+               adjoint(z_site)*mode_annihilation
+
+    (;nmax=nmax_int,levels,dsite,spin_paulis,lifted_paulis,
+      x_site=lifted_paulis[2],z_site,lowering_site,
+      mode_annihilation,mode_number,
+      mode_top=kron(identity_spin,mode_top),
+      exchange_minus,exchange_z)
+end
+
+"""
+    debecker2026_all_to_all_ising_pseudomode_model(
+        basis, operators; Jpair, omega_c=1, gamma=0.05, kappa=1,
+        coupling=:minus)
+    debecker2026_all_to_all_ising_pseudomode_model(
+        N, nmax; Jpair, omega_c=1, gamma=0.05, kappa=1,
+        coupling=:minus)
+
+Construct the permutation-invariant all-to-all specialization of the local
+pseudomode embedding in Debecker *et al.* (2026).  Each of the `N` identical
+spin--pseudomode supersites has the matrices returned by
+[`debecker2026_pseudomode_operators`](@ref).  The Hamiltonian is
+
+`-Jpair * sum(i<j) X_i*X_j + omega_c * sum_i a_i' a_i +
+ sqrt(gamma*kappa) * sum_i (L_i*a_i' + L_i'*a_i)`.
+
+`coupling` is `:minus` or `:z`.  The local mode jump has package rate
+`2kappa`, matching the manuscript convention
+`D_paper[a] = 2D_package[a]`.  `Jpair` is the literal coefficient of every
+unordered pair: no Kac scaling is inserted.  The basis-taking method supports
+reuse across scans; the convenience method constructs a complete
+`PIBasis(N,2(nmax+1))` with a non-narrowing scalar type inferred from the
+parameters.
+"""
+function debecker2026_all_to_all_ising_pseudomode_model(
+        basis::PIBasis,operators;Jpair,omega_c=1,gamma=0.05,kappa=1,
+        coupling::Symbol=:minus)
+    basis.N>=2||throw(ArgumentError(
+        "the all-to-all pair interaction requires N >= 2"))
+    basis.d==operators.dsite||throw(DimensionMismatch(
+        "the PI basis local dimension must equal the spin--pseudomode dimension $(operators.dsite)"))
+    all(value->value isa Real&&isfinite(value),
+        (Jpair,omega_c,gamma,kappa))||throw(ArgumentError(
+        "Jpair, omega_c, gamma, and kappa must be finite real numbers"))
+    gamma>=0||throw(ArgumentError("gamma must be nonnegative"))
+    kappa>0||throw(ArgumentError("kappa must be positive"))
+    exchange = coupling===:minus ? operators.exchange_minus :
+        coupling===:z ? operators.exchange_z : throw(ArgumentError(
+            "coupling must be :minus or :z"))
+    # Taking the square roots before multiplying avoids a spurious overflow
+    # when the representable geometric mean has very different factors.
+    g=sqrt(gamma)*sqrt(kappa)
+    decay_rate=2*float(kappa)
+    isfinite(g)||throw(ArgumentError(
+        "sqrt(gamma*kappa) is not representable in the parameter precision"))
+    isfinite(decay_rate)||throw(ArgumentError(
+        "2kappa is not representable in the parameter precision"))
+    PIModel(basis,(
+        LocalHamiltonian(operators.mode_number;rate=omega_c),
+        LocalHamiltonian(exchange;rate=g),
+        PBodyHamiltonian(kron(operators.x_site,operators.x_site),2;
+                         rate=-Jpair),
+        LocalJump(operators.mode_annihilation;rate=decay_rate),
+    ))
+end
+
+function debecker2026_all_to_all_ising_pseudomode_model(
+        N::Integer,nmax::Integer;Jpair,omega_c=1,gamma=0.05,kappa=1,
+        coupling::Symbol=:minus)
+    N>=2||throw(ArgumentError(
+        "the all-to-all pair interaction requires N >= 2"))
+    all(value->value isa Real,(Jpair,omega_c,gamma,kappa))||throw(
+        ArgumentError("Jpair, omega_c, gamma, and kappa must be real numbers"))
+    R=promote_type(typeof(float(Jpair)),typeof(float(omega_c)),
+                   typeof(float(gamma)),typeof(float(kappa)))
+    operators=debecker2026_pseudomode_operators(nmax;T=R)
+    basis=PIBasis(N,operators.dsite)
+    debecker2026_all_to_all_ising_pseudomode_model(
+        basis,operators;Jpair,omega_c,gamma,kappa,coupling)
 end
 
 end

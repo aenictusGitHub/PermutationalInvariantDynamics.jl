@@ -17,6 +17,7 @@ script. Then choose the closest workflow below.
 | Study periodic dynamics | [`floquet_periodic_decay.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/floquet_periodic_decay.jl) | One-period maps, multipliers, and a periodic state |
 | Combine ensembles or an ancilla | [`composite_ensembles.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/composite_ensembles.jl) | Factorized composite coordinates and cross-system maps |
 | Add a finite-memory bath | [`pi_heom.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/pi_heom.jl) | HEOM construction and hierarchy-depth convergence |
+| Embed one truncated pseudomode per spin | [`debecker2026_all_to_all_ising_pseudomodes.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/debecker2026_all_to_all_ising_pseudomodes.jl) | Uniform-all-pair PI supersites, spin-only negativity, a parity-selected x-GHZ witness, and cutoff checks |
 
 Each script has a same-basename guide in the repository's `examples/`
 directory. The sections below explain the specialized workflows and link to
@@ -169,6 +170,98 @@ ensemble in PI coordinates and compares three hierarchy depths with an exact
 exponential-bath coherence. It separately demonstrates that convergence of
 one observable is weaker than convergence of the complete reduced state. See
 [PI--HEOM](heom.md) and [Numerical convergence reports](convergence.md).
+
+## Uniform all-pair Ising spins with local pseudomodes
+
+`examples/debecker2026_all_to_all_ising_pseudomodes.jl` demonstrates a
+different finite-memory strategy: each spin and its truncated local
+pseudomode are combined into one supersite of dimension
+`d=2(nmax+1)`. The all-to-all interaction has the same coefficient for every
+unordered spin pair, and every supersite has the same spin--mode coupling and
+mode-loss channel. The enlarged model is therefore exactly PI and can use the
+ordinary prepared Liouvillian workflow. At fixed cutoff the enlarged
+spin-plus-pseudomode state follows a Markovian Lindblad equation, while
+tracing the modes produces the intended finite-memory, generally
+non-Markovian spin dynamics:
+
+```julia
+include("examples/paper_models.jl")
+using .PaperModels
+
+operators = debecker2026_pseudomode_operators(nmax)
+basis = PIBasis(N, operators.dsite)
+model = debecker2026_all_to_all_ising_pseudomode_model(
+    basis, operators;
+    Jpair=J / (N - 1), omega_c, gamma, kappa,
+    coupling=:minus,
+)
+prepared = compile(model; backend=:matrixfree)
+```
+
+That snippet is the basic prepared workflow, not the integrator used for the
+long manuscript-style panel. The executable propagates each
+`omega_c*t=0:0.5:100` curve interval by interval with a matrix-free generator,
+one reusable dimension-30 `KrylovExpvWorkspace`, and preallocated
+`krylov_expv!`. This costs 6000 Liouvillian applications per curve and avoids
+retaining a state history. A separate dimension-40 run with tighter
+tolerances checks the broad `kappa/omega_c=20` curve; the current pointwise
+`Cxx` difference is about `8e-16`. This replaces a fixed-step RK4 refinement,
+which was not stable enough in that broad-decay regime.
+
+The helper treats `Jpair` as the literal coefficient of every unordered pair;
+the displayed `J` uses the explicit Kac choice `Jpair=J/(N-1)`. It also maps
+the manuscript convention `D_paper=2D_package` to a local mode-jump rate
+`2kappa` and sets the exchange strength to `sqrt(gamma*kappa)`. Both
+`coupling=:minus` and `coupling=:z` are available. The latter retains a strong
+spin-parity symmetry, so an unrestricted steady state need not be unique. For
+that branch the script evolves the even-parity `|e,0>^N` state with adaptive
+matrix-free `krylov_expv` to `omega_c*t=1600`, checks the exponential-action
+error estimate and `norm(L*rho)` over the grid, and compares the witness at
+full and half settling times at one grid corner.
+
+The supplied manuscript studies a nearest-neighbour periodic chain. That
+geometry is not invariant under arbitrary permutations, so this runnable
+model is deliberately the uniform-all-pair specialization, not a reproduction
+of the spatial chain. All distinct pairs share one `Cxx`; there is no distance
+coordinate or spatial correlation length. The finite-size stationary heat
+maps must likewise not be advertised as a thermodynamic phase diagram.
+
+The example reconstructs the two-spin density matrix from 16 Pauli moments
+whose mode factor is the identity. Its partial-transpose negativity therefore
+measures the two physical spins after tracing both pseudomodes, rather than
+the entanglement of two spin--mode supersites. For longitudinal coupling it
+similarly uses full `N`-particle moments with the mode identity to evaluate
+the relative-phase-optimized spin x-GHZ fidelity
+
+```math
+F_{\mathrm{GHZ}_x}^{\max}
+=\frac{P_{+x}+P_{-x}}{2}
+ +\left|\langle {+x}|^{\otimes N}\rho_{\mathrm{spin}}
+                    |{-x}\rangle^{\otimes N}\right|.
+```
+
+The plotted `0.5` contour is the usual genuine-multipartite-entanglement
+witness threshold. No full spin or spin--mode Hilbert matrix is formed.
+
+The script also compares `nmax=1` and 2 and checks the wider calculation's
+highest-level population for the `coupling=:minus` correlation curve. That
+short cutoff comparison still uses fixed-step `solve_dynamics`; it does not by
+itself certify either the long-sweep integration or the cutoff of the separate
+longitudinal GHZ map.
+The retained PI dimension is
+
+```math
+n_{\mathrm{PI}}=\binom{N+[2(n_{\max}+1)]^2-1}{N},
+```
+
+so cutoff growth must be estimated and convergence repeated for each claimed
+observable. The optional Makie output contains a manuscript-style dynamics
+panel, stationary correlation and spin-negativity maps, and a separate cutoff
+figure. A third, manuscript-Fig.-4-style figure shows the parity-selected
+x-GHZ witness, its `0.5` contour, and the maximum long-time residual. The
+[complete example
+guide](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/debecker2026_all_to_all_ising_pseudomodes.md)
+records the model boundary, rate conversion, solver checks, and figure stems.
 
 ## Visualizing Liouvillian and Floquet spectra
 

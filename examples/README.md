@@ -63,6 +63,7 @@ project and does not borrow a potentially incompatible global installation.
 | `composite_quantum_trajectories.jl` | [Composite stochastic systems](composite_quantum_trajectories.md) | Density-valued cross-factor quantum jumps, online statistics, and deterministic master comparison |
 | `cumulant_bridge.jl` | [Higher-order cumulant bridge](cumulant_bridge.md) | Exact PI local moments, neutral model metadata, and closure-error comparisons |
 | `correlated_reservoirs.jl` | [Correlated Kossakowski reservoirs](correlated_reservoirs.md) | Cross-correlated local/collective one-body noise and preallocated matrix schedules |
+| `debecker2026_all_to_all_ising_pseudomodes.jl` | [All-to-all Ising spins with local pseudomodes](debecker2026_all_to_all_ising_pseudomodes.md) | Exact PI supersites, spin-only negativity, a parity-selected x-GHZ witness, and pseudomode-cutoff checks |
 | `driven_qubits.jl` | [Driven qubits](driven_qubits.md) | Coherent drive and local decay |
 | `floquet_periodic_decay.jl` | [Floquet decay](floquet_periodic_decay.md) | Periodic Liouvillians |
 | `gambetta2019_dissipative_discrete_time_crystal.jl` | [Dissipative discrete time crystal](gambetta2019_dissipative_discrete_time_crystal.md) | Floquet period-doubling precursor |
@@ -105,7 +106,10 @@ julia --project=. examples/<name>.jl
 Use `--project=examples` for the Makie-enabled literature scripts: the
 year-named examples in the table, both `pra*.jl` validations,
 `quantum_trajectories.jl`, `meanfield_time_crystal.jl`, `pi_heom.jl`, and
-`qudit_husimi.jl`. Each paired guide describes its panels and output stem.
+`qudit_husimi.jl`. The Debecker example is the permutation-invariant
+uniform-all-pair specialization of the manuscript's nearest-neighbour model,
+not a reproduction of its spatial chain. Each paired guide describes its
+panels and output stem.
 Running the same script with
 `--project=.` keeps all numerical assertions and skips only the optional
 Makie block.

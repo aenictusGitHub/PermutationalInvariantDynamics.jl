@@ -76,6 +76,78 @@ end
     end
 end
 
+@testset "Debecker 2026 all-to-all Ising pseudomode specialization" begin
+    # One retained boson is enough to fix the supersite ordering and scalar
+    # contract without making this literature-model gate expensive.
+    operators32=debecker2026_pseudomode_operators(1;T=Float32)
+    @test (operators32.levels,operators32.dsite)==(2,4)
+    @test all(matrix->eltype(matrix)===ComplexF32,
+              (operators32.spin_paulis...,operators32.lifted_paulis...,
+               operators32.mode_annihilation,operators32.mode_number,
+               operators32.mode_top,operators32.exchange_minus,
+               operators32.exchange_z))
+
+    model32=debecker2026_all_to_all_ising_pseudomode_model(
+        2,1;Jpair=.23f0,omega_c=.9f0,gamma=.04f0,kappa=.5f0)
+    @test model32.basis.d==4
+    @test model32.terms[1] isa LocalHamiltonian
+    @test model32.terms[2] isa LocalHamiltonian
+    @test model32.terms[3] isa PBodyHamiltonian
+    @test model32.terms[4] isa LocalJump
+    @test model32.terms[1].rate===.9f0
+    @test model32.terms[2].rate isa Float32
+    @test model32.terms[2].rate≈Float32(sqrt(.04*.5)) rtol=eps(Float32)
+    @test model32.terms[3].rate===-.23f0
+    # The manuscript uses twice the package dissipator, so its kappa becomes
+    # the package rate 2kappa.
+    @test model32.terms[4].rate===1.0f0
+    @test eltype(liouvillian(model32;representation=:sparse))===ComplexF32
+
+    Jpair=.23;omega_c=.9;gamma=.04;kappa=.5
+    operators=debecker2026_pseudomode_operators(1)
+    basis=PIBasis(2,operators.dsite)
+    model=debecker2026_all_to_all_ising_pseudomode_model(
+        basis,operators;Jpair,omega_c,gamma,kappa)
+    sparse=liouvillian(model;representation=:sparse)
+    matrixfree=liouvillian(model;representation=:matrixfree)
+    local_vacuum=ComplexF64[1,0,0,0]
+    rho0=iid_pure_state(basis,local_vacuum)
+    @test sparse*rho0.data≈matrixfree*rho0.data atol=2e-11 rtol=2e-11
+    @test check_generator(model).trace_preservation_error<2e-10
+    @test abs(trace(PIState(basis,sparse*rho0.data)))<2e-11
+
+    # sum_(i<j) X_i X_j differs from Jx^2/2 only by the identity term N/2,
+    # which drops out of the Hamiltonian commutator.  This independently fixes
+    # the unordered-pair normalization of the Appendix-D term.
+    Jx=collective_operator(basis,operators.x_site)
+    direct_pair=(-(Jpair/2))*(Jx*Jx)
+    direct_model=PIModel(basis,(
+        model.terms[1],model.terms[2],DirectPIHamiltonian(direct_pair),
+        model.terms[4]))
+    @test Matrix(sparse)≈
+          Matrix(liouvillian(direct_model;representation=:sparse)) atol=3e-11 rtol=3e-11
+
+    z_model=debecker2026_all_to_all_ising_pseudomode_model(
+        basis,operators;Jpair,omega_c,gamma,kappa,coupling=:z)
+    @test z_model.terms[2].operator==operators.exchange_z
+    @test_throws ArgumentError debecker2026_pseudomode_operators(0)
+    @test_throws ArgumentError debecker2026_pseudomode_operators(typemax(Int))
+    @test_throws ArgumentError debecker2026_pseudomode_operators(
+        big(typemax(Int))+1)
+    @test_throws ArgumentError debecker2026_all_to_all_ising_pseudomode_model(
+        1,1;Jpair)
+    @test_throws ArgumentError debecker2026_all_to_all_ising_pseudomode_model(
+        2,1;Jpair,gamma=-gamma)
+    @test_throws ArgumentError debecker2026_all_to_all_ising_pseudomode_model(
+        2,1;Jpair,kappa=0)
+    @test_throws ArgumentError debecker2026_all_to_all_ising_pseudomode_model(
+        basis,operators;Jpair,coupling=:raising)
+    @test_throws DimensionMismatch debecker2026_all_to_all_ising_pseudomode_model(
+        PIBasis(2,3),operators;Jpair)
+    @test_throws ArgumentError debecker2026_all_to_all_ising_pseudomode_model(
+        PIBasis(2,4;sectors=[(2,0,0,0)]),operators;Jpair)
+end
+
 @testset "dissipative time-crystal literature models" begin
     # Nakanishi--Sasamoto Eq. (14) is an exact finite-N oracle. Match the
     # spectra as multisets because the dense eigensolver may permute exact
