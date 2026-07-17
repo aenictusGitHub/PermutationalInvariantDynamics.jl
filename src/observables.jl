@@ -240,6 +240,28 @@ function _weighted_sector_eigen(rho::PIState,p::Partition;
       zero_tolerance,block=B)
 end
 
+# Values-only analyses (entropies and spectral traces) must not pay for an
+# eigenvector matrix in every Schur sector.  Keep the validation and numerical
+# rank conventions exactly synchronized with `_weighted_sector_eigen`.
+function _weighted_sector_eigvals(rho::PIState,p::Partition;
+                                  atol::Real=_analysis_atol(rho),
+                                  rtol::Real=_state_rtol(rho),
+                                  operation::AbstractString="multiplicity-weighted density-block spectral analysis")
+    B=_multiplicity_weighted_block(rho,p)
+    R=_real_float_type(eltype(B));scale=max(norm(B,Inf),zero(R))
+    tolerance=R(atol)+R(rtol)*scale
+    herr=norm(B-B',Inf)
+    herr<=tolerance||throw(ArgumentError(
+        "state is not Hermitian in sector $p: weighted error=$herr, tolerance=$tolerance"))
+    values=_hermitian_eigvals(Hermitian((B+B')/2);operation)
+    spectral_scale=maximum(abs,values)
+    spectral_tolerance=R(atol)+R(rtol)*spectral_scale
+    minimum(values)>=-spectral_tolerance||throw(ArgumentError(
+        "state has a negative eigenvalue in sector $p in multiplicity-weighted coordinates"))
+    zero_tolerance=R(32)*R(max(length(values),1))*eps(R)*spectral_scale
+    (;values,tolerance=spectral_tolerance,zero_tolerance)
+end
+
 function _check_local_observable(rho::PIState,X::AbstractMatrix)
     size(X)==(rho.basis.d,rho.basis.d)||throw(DimensionMismatch(
         "local observable must be $(rho.basis.d)×$(rho.basis.d)"))

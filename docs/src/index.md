@@ -6,7 +6,12 @@ operator space. It supports time-local open dynamics, local and collective
 dissipation, symmetric many-body processes, stationary states, spectra,
 entanglement and information measures, trajectories, Floquet dynamics, and
 mean-field predictions. Observable-only output, PI quantum regression, and
-factorized deterministic dynamics of several PI ensembles are also available.
+factorized deterministic and density-valued stochastic dynamics of several PI
+ensembles are also available.
+Prepared continuation scans, confidence-controlled ensembles, generalized
+qudit Husimi data, advanced matrix-free Krylov families, explicit convergence
+reports, and finite-exponential PI--HEOM extend that workflow for larger
+research calculations.
 
 The exact PI representation scales polynomially with `N` at fixed `d` and
 does not construct the full `d^N` Hilbert space in production algorithms.
@@ -30,6 +35,13 @@ using Pkg
 Pkg.develop(path="/path/to/PermutationalInvariantDynamics.jl")
 ```
 
+To run examples from a fresh repository checkout, instantiate its root
+environment once:
+
+```sh
+julia --project=. -e 'using Pkg; Pkg.instantiate()'
+```
+
 After the package is registered in Julia's General registry, installation is:
 
 ```julia
@@ -39,42 +51,64 @@ Pkg.add("PermutationalInvariantDynamics")
 
 The package supports Julia 1.10 and later.
 
-## Five-minute example
+## Start here
 
-This example evolves 20 qubits subject to independent spontaneous emission.
-The matrix `sm` maps the local state `|1>` to `|0>`; local labels become Julia
-indices `1` and `2`.
+For a first calculation, follow [Getting started: from a model to a
+solution](getting_started.md). It explains, line by line, how to:
+
+1. decide whether PI symmetry applies;
+2. choose a basis and local-state convention;
+3. translate a master equation into physical terms;
+4. build and compile a reusable model;
+5. compute dynamics or an autonomous stationary state;
+6. read result objects, validate states, and check numerical convergence.
+
+The runnable companion is
+[`examples/getting_started.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/getting_started.jl).
+
+## Five-minute preview
+
+This compact version evolves eight driven qubits with independent emission
+and pumping, records their excitation fraction, and computes the autonomous
+stationary state. The getting-started chapter explains every choice.
 
 ```julia
 using PermutationalInvariantDynamics
 
-basis = PIBasis(20, 2)
-sm = ComplexF64[0 1; 0 0]
-sz = ComplexF64[1 0; 0 -1]
+basis = PIBasis(8, 2)
+spin = spin_matrices()  # local order: (|g>, |e>)
+number = spin.jp * spin.jm
 
-rho0 = iid_pure_state(basis, ComplexF64[0, 1])
-model = PIModel(basis, [LocalJump(sm; rate=0.1)])
+rho0 = computational_product_state(basis, 2)
+model = PIModel(basis, (
+    LocalHamiltonian(spin.jx; rate=0.7),
+    LocalJump(spin.jm; rate=0.12),
+    LocalJump(spin.jp; rate=0.02),
+))
 prepared = compile(model; backend=:auto)
 
 solution = solve_dynamics(
-    prepared, rho0, (0.0, 10.0);
+    prepared, rho0, (0.0, 4.0);
     saveat=0.1, steps_per_interval=16,
-    observables=(magnetization=sz / 2,),
+    observables=(excited=number,),
     save_states=false,
 )
 
-magnetization = real.(solution.observables[:magnetization]) / basis.N
+excited_fraction = real.(solution.observables[:excited]) / basis.N
 
-rho_ss = stationary_state(prepared)
-report = diagnostics(rho_ss)
+steady = stationary_state(prepared; return_info=true)
+report = diagnostics(steady.state)
 ```
 
 Compile a model once and reuse `prepared` for dynamics, stationary states,
-spectra, and repeated analysis. Adaptive or stiff integration is available
-through `dynamics_problem` and an installed SciML solver package.
+spectra, and repeated analysis. `steady.info` carries the stationary residual
+and convergence metadata. Adaptive or stiff integration is available through
+`dynamics_problem` and an installed SciML solver package.
 
 ## Where to continue
 
+- [Getting started](getting_started.md) is the task-oriented model-to-solution
+  tutorial and troubleshooting guide.
 - [Framework introduction](framework.md) derives the PI Schur-block
   representation, scaling, model terms, and validity conditions.
 - [Architecture and efficient workflows](architecture.md) explains sparse and
@@ -85,8 +119,16 @@ through `dynamics_problem` and an installed SciML solver package.
   trajectories](weak_pi_trajectories.md), [quantum regression and
   spectra](correlations.md), [higher-order cumulant closures](cumulant_bridge.md),
   [diffusive monitoring](diffusive_monitoring.md), [research utilities and
-  control](research_utilities.md), and [composite systems](composite_systems.md) describe memory-conscious
-  research extension workflows.
+  control](research_utilities.md), and [composite systems](composite_systems.md)
+  describe memory-conscious research extension workflows.
+- [Prepared parameter scans](parameter_scans.md), [advanced Krylov
+  families](krylov_extensions.md), and [numerical convergence
+  reports](convergence.md) cover continuation and explicit numerical evidence.
+- [PI--HEOM](heom.md) documents the finite-memory bath convention, while
+  [qudit Husimi phase space](qudit_phase_space.md) describes generalized
+  coherent-state Q data.
+- [Optional ecosystem integrations](interoperability.md) records the precise
+  Tables, Makie, Distributed, QuantumCumulants, JLD2, and HDF5 boundaries.
 - [Complete public API index](api_reference.md) categorizes every exported
   function and type and links its full description.
 - [Published validation](published_validation.md) and

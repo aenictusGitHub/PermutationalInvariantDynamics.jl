@@ -96,13 +96,24 @@ symbolic_map = Dict((:x,) => symbolic_average_x,
 u0 = quantumcumulants_initial_values(exact, symbolic_map)
 ```
 
-The extension calls the public `QuantumCumulants.get_order` function and
-rejects an order mismatch. It does not construct a symbolic Hamiltonian,
-jumps, or indices automatically: those choices are model-specific, and the
-QuantumCumulants 0.5 rewrite intentionally changed that surface. A research
-adapter may use the neutral term payload to build its chosen symbols, call the
-official `meanfield(...; order=k)` and `complete` workflow, and merge the
-returned dictionary into its initial-value map.
+The extension also provides automatic indexed lowering for microscopic PI
+models:
+
+```julia
+symbolic = quantumcumulants_model(model; order=2,
+    complete=true, scale=true)
+eqs = symbolic.equations
+```
+
+The adapter constructs an `NLevelSpace`, distinct symbolic indices for
+`p`-body operators, local or collective jump semantics, and the exact
+ordered-tuple to unordered-subset factor. Fixed correlated baths are lowered
+through their checked independent-channel factorization. Direct PI terms are
+rejected because their Schur blocks do not identify a unique microscopic
+operator; schedules require an explicit `time` and `parameters`. Custom seed
+operators can be supplied when a smaller symmetry-closed moment set is known.
+The resulting equations remain a selected-order cumulant approximation and
+should be checked against the exact PI moments above.
 
 The complete runnable dependency-free example is
 [`examples/cumulant_bridge.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/cumulant_bridge.jl).
@@ -121,4 +132,5 @@ cumulant_model_payload
 cumulant_bridge_payload
 compare_cumulant_closure
 quantumcumulants_initial_values
+quantumcumulants_model
 ```

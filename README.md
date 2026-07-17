@@ -29,6 +29,13 @@ using Pkg
 Pkg.develop(path="/path/to/PermutationalInvariantDynamics.jl")
 ```
 
+For a cloned repository, instantiate the root environment once before running
+its examples or tests:
+
+```sh
+julia --project=. -e 'using Pkg; Pkg.instantiate()'
+```
+
 After registration in Julia's General registry, use
 `Pkg.add("PermutationalInvariantDynamics")`. Julia 1.10 and later are
 supported.
@@ -36,30 +43,46 @@ supported.
 ## Documentation
 
 Read the [hosted documentation](https://aenictusgithub.github.io/PermutationalInvariantDynamics.jl/stable/),
-starting with the framework introduction. Its sources are also available in
-[docs/src](docs/src). Then consult
+starting with the step-by-step
+[model-to-solution tutorial](https://aenictusgithub.github.io/PermutationalInvariantDynamics.jl/stable/getting_started/).
+Its sources are
+also available in [docs/src](docs/src). Then consult the
+[framework and physical conventions](docs/src/framework.md),
 the [architecture and efficient workflows](docs/src/architecture.md) and the
 [complete public API index](docs/src/api_reference.md). Every exported binding
 has the same source description in Julia's interactive help, for example
 `?PIBasis` or `?stationary_state`.
 
+Prepared continuation scans, advanced matrix-free Krylov families, explicit
+convergence reports, and PI--HEOM non-Markovian dynamics are documented in
+[parameter scans](docs/src/parameter_scans.md),
+[Krylov extensions](docs/src/krylov_extensions.md),
+[convergence reports](docs/src/convergence.md), and
+[PI--HEOM](docs/src/heom.md). Generalized qudit coherent-state Q data and
+confidence-controlled stochastic stopping are covered by
+[qudit phase space](docs/src/qudit_phase_space.md) and
+[diffusive/trajectory monitoring](docs/src/diffusive_monitoring.md).
+Optional Tables, Makie, Distributed, QuantumCumulants, JLD2, and HDF5 adapters
+are summarized in the
+[interoperability guide](docs/src/interoperability.md).
+An executable prepared-workflow notebook and its isolated Pluto environment
+are available under [notebooks](notebooks/README.md).
+
 ```julia
 using PermutationalInvariantDynamics
 
 basis = PIBasis(20, 2)
-sx = ComplexF64[0 1; 1 0]
-sz = ComplexF64[1 0; 0 -1]
-sm = ComplexF64[0 1; 0 0]
+spin = spin_matrices()  # local order: (|g>, |e>)
 model = PIModel(basis, [
-    LocalHamiltonian(0.5sx),
-    LocalJump(sm; rate=0.1),
-    CollectiveJump(sm; rate=0.02),
+    LocalHamiltonian(spin.jx),
+    LocalJump(spin.jm; rate=0.1),
+    CollectiveJump(spin.jm; rate=0.02),
 ])
-rho0 = iid_pure_state(basis, ComplexF64[1, 0])
+rho0 = computational_product_state(basis, 1)
 prepared = compile(model)                 # geometry is built once
 sol = solve_dynamics(prepared, rho0, (0.0, 20.0);
                      saveat=0.1, steps_per_interval=16)
-Jz = CollectiveObservablePlan(basis, 0.5sz)
+Jz = CollectiveObservablePlan(basis, spin.jz)
 mz = [collective_expectation(rho, Jz) / basis.N for rho in sol]
 ```
 
@@ -89,7 +112,7 @@ sampled PI states and retain scalar series only:
 series = solve_dynamics(
     prepared, rho0, (0.0, 20.0);
     saveat=0.1,
-    observables=(magnetization=sz/2,),
+    observables=(magnetization=spin.jz,),
     save_states=false,
 )
 ```
@@ -129,9 +152,11 @@ provides a preallocated driven path. See the
 
 Several independently PI ensembles and small truncated auxiliaries can be
 combined with `CompositePIBasis`. Factorized local and cross-system maps are
-applied without forming the global Kronecker superoperator. This deterministic
-backend is experimental and does not yet compile composite quantum
-trajectories; see [composite systems](docs/src/composite_systems.md).
+applied without forming the global Kronecker superoperator. Explicit
+`CompositeJumpChannel`s add density-valued, preallocated quantum-jump
+trajectories with reproducible threaded batches and online statistics. See
+[composite systems](docs/src/composite_systems.md) and the
+[stochastic composite example](examples/composite_quantum_trajectories.md).
 
 Stationary and spectral routines reject time-dependent generators. Select an
 instant explicitly with `freeze(model; time=t, parameters=p)` or use Floquet
@@ -193,7 +218,7 @@ small_basis = PIBasis(3, 2)
 period = 2pi
 periodic_rate = (t, p) -> 0.1 * (1 + 0.5 * cos(2pi * t / period))
 periodic_model = PIModel(
-    small_basis, [LocalJump(sm; rate=periodic_rate)])
+    small_basis, [LocalJump(spin.jm; rate=periodic_rate)])
 F = floquet_propagator(periodic_model, period; steps=256)
 multipliers = floquet_spectrum_data(F; period=period)
 display(visualize_spectrum(multipliers))
@@ -223,6 +248,9 @@ The [example index](examples/README.md) lists every runnable script and its
 same-basename guide. See `docs/src/mathematics.md` for the mathematics,
 `docs/src/meanfield.md` for product-state predictions, and
 `docs/src/matrix_free_krylov.md` for large-scale solver choices.
+Release-candidate changes are recorded in the [changelog](CHANGELOG.md); the
+[release guide](docs/src/releasing.md) is the maintainer gate for General
+registration.
 
 ## Development disclosure
 

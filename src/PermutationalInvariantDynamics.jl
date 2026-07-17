@@ -35,6 +35,7 @@ include("spin.jl")
 include("vectorization.jl")
 include("liouvillian.jl")
 include("krylov.jl")
+include("krylov_extensions.jl")
 include("symmetries.jl")
 include("spectra.jl")
 include("evans.jl")
@@ -44,17 +45,24 @@ include("cumulants.jl")
 include("information.jl")
 include("symmetry_information.jl")
 include("phase_space.jl")
+include("qudit_phase_space.jl")
 include("sciml.jl")
 include("meanfield.jl")
 include("composite.jl")
 include("evolution.jl")
+include("heom.jl")
 include("trajectories.jl")
+include("composite_trajectories.jl")
 include("weak_pi_trajectories.jl")
 include("diffusive.jl")
+include("adaptive_ensembles.jl")
+include("distributed_api.jl")
 include("floquet.jl")
 include("response.jl")
 include("correlations.jl")
 include("highlevel.jl")
+include("scans.jl")
+include("convergence.jl")
 include("populations.jl")
 include("research_utilities.jl")
 include("channels.jl")
@@ -114,6 +122,9 @@ export Partition, partitions, weight, length_nonzero, removable_corners,
        TrajectoryBatchWorkspace, quantum_trajectory,
        quantum_trajectories, trajectory_average, jump_statistics,
        trajectory_observable_statistics, trajectory_statistics,
+       CompositeJumpChannel, CompositeTrajectoryPlan,
+       CompositeTrajectoryWorkspace, CompositeTrajectoryBatchWorkspace,
+       CompositeQuantumTrajectory, composite_master_superoperator,
        WeakPIPseudoKet, weak_pi_dimension, weak_pi_density,
        weak_pi_pseudoket, weak_pi_expectation,
        WeakPIKrausBranch, WeakPIJumpRecord, WeakPIQuantumTrajectory,
@@ -122,8 +133,13 @@ export Partition, partitions, weight, length_nonzero, removable_corners,
        weak_pi_quantum_trajectories, weak_pi_trajectory_average,
        weak_pi_trajectory_statistics,
        DiffusiveMonitor, homodyne_monitor, heterodyne_monitor,
-       DiffusivePlan, DiffusiveWorkspace, DiffusiveTrajectory,
+       DiffusivePlan, DiffusiveWorkspace, DiffusiveBatchPlan,
+       DiffusiveBatchWorkspace, DiffusiveTrajectory,
        diffusive_trajectory, diffusive_trajectories, diffusive_average,
+       AdaptiveTrajectoryResult, adaptive_quantum_trajectories,
+       adaptive_diffusive_trajectories,
+       distributed_quantum_trajectories,
+       distributed_diffusive_trajectories,
        expectation, variance, covariance, collective_expectation,
        collective_variance, collective_moments, CollectiveObservablePlan,
        one_body_rdm, trace_error,
@@ -135,6 +151,7 @@ export Partition, partitions, weight, length_nonzero, removable_corners,
        CumulantTermPayload, CumulantModelPayload, CumulantBridgePayload,
        CumulantComparison, cumulant_model_payload, cumulant_bridge_payload,
        compare_cumulant_closure, quantumcumulants_initial_values,
+       quantumcumulants_model,
        qfi_entanglement_depth, spin_squeezing_entangled,
        quantum_fisher_information, qfi, quantum_fisher_information_matrix,
        qfim,
@@ -157,6 +174,7 @@ export Partition, partitions, weight, length_nonzero, removable_corners,
        sector_resolved_qfi, relative_entropy_decomposition,
        qfim_sector_decomposition,
        SpinPhaseSpaceData, spin_husimi_q, spin_wigner,
+       QuditHusimiPlan, QuditHusimiData, qudit_husimi_q,
        hermiticity_error, minimum_sector_eigenvalue, check_generator,
        negativity, logarithmic_negativity, ReductionPlan, ReductionWorkspace,
        reduced_state, reduced_state!, reduced_purity,
@@ -168,6 +186,10 @@ export Partition, partitions, weight, length_nonzero, removable_corners,
        littlewood_richardson_coefficient,
        steady_state, krylov_steady_state, KrylovWorkspace, ArnoldiWorkspace,
        JacobiDavidsonWorkspace,
+       BlockGMRESWorkspace, block_gmres!, block_gmres,
+       MultiShiftGMRESWorkspace, multishift_gmres!, multishift_gmres,
+       RecycledGMRESWorkspace, recycled_gmres!, recycled_gmres,
+       KrylovExpvWorkspace, krylov_expv!, krylov_expv,
        SchurSectorPreconditioner, schur_sector_preconditioner,
        preconditioner_cost,
        krylov_liouvillian_spectrum, harmonic_arnoldi_spectrum,
@@ -204,6 +226,19 @@ export Partition, partitions, weight, length_nonzero, removable_corners,
        estimate_state_bytes, estimate_basis_bytes,
        estimate_liouvillian_bytes, estimate_geometry_bytes,
        estimate_solver_bytes, recommend_solver,
+       ParameterScanPlan, ParameterScanWorkspace, ParameterScanPoint,
+       ParameterScanResult, clear_parameter_scan_workspace!, parameter_scan,
+       resume_parameter_scan, merge_parameter_scan_results,
+       distributed_parameter_scan, parameter_scan_rows,
+       parameter_scan_columns,
+       HEOMBath, HEOMPlan, HEOMWorkspace, HEOMEvolutionWorkspace, HEOMState,
+       heom_number_ados, heom_multiindices, heom_initial_state, heom_ado,
+       heom_reduced_state, heom_evolve!, heom_evolve,
+       heom_time_evolution, heom_liouvillian, heom_steady_state,
+       heom_depth_convergence,
+       ConvergenceStudyResult, convergence_study, convergence_estimate,
+       timestep_convergence, krylov_dimension_convergence,
+       hierarchy_depth_convergence, sector_cutoff_convergence,
        PopulationInvarianceReport, PopulationPlan, PopulationWorkspace,
        PopulationSolution, population_dimension, population_invariance,
        diagonal_populations, diagonal_populations!, state_from_populations,

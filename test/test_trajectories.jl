@@ -2,6 +2,25 @@
     sm=ComplexF64[0 1;0 0];sx=ComplexF64[0 1;1 0];b=PIBasis(2,2)
     excited=iid_pure_state(b,ComplexF64[0,1]);times=collect(range(0,0.5;length=6))
 
+    # Decimal fixed steps must not leave a one-ulp remainder that triggers an
+    # eleventh stochastic/RK evaluation on the nominal ten-step interval.
+    t=0.0;target=0.1;steps=0
+    while t<target
+        h,lands=PermutationalInvariantDynamics._trajectory_step_to_target(
+            t,target,0.01)
+        t=lands ? target : t+h
+        steps+=1
+    end
+    @test t==target
+    @test steps==10
+
+    # Roundoff snapping must remain relative to the time scale; it may not
+    # turn a genuinely small maximum step into one much larger physical step.
+    tiny_h,tiny_lands=PermutationalInvariantDynamics.
+        _trajectory_step_to_target(0.0,1e-16,1e-20)
+    @test tiny_h==1e-20
+    @test !tiny_lands
+
     # With no jump channels the stochastic path reduces to deterministic RK4.
     hm=PIModel(b,[LocalHamiltonian(sx;rate=0.2)])
     qh=quantum_trajectory(hm,excited,times;dt=0.002,rng=MersenneTwister(3))

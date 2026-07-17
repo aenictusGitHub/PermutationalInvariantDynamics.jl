@@ -81,7 +81,7 @@ function _prepare_streaming_observables(b::PIBasis,observables;
     Tuple(prepared)
 end
 
-function _observable_scalar_type(rho::PIState,ops)
+function _observable_scalar_type(rho,ops)
     T=eltype(rho.data)
     for (_,op) in ops
         T=promote_type(T,eltype(op.data))
@@ -107,11 +107,24 @@ _OnlineObservableAccumulator(::Type{R},nobservables,ntimes) where R<:AbstractFlo
     _OnlineObservableAccumulator(0,zeros(R,nobservables,ntimes),
                                  zeros(R,nobservables,ntimes))
 
+@inline function _checked_statistics_count(::Type{R},n::Int,context) where R<:AbstractFloat
+    converted=R(n)
+    roundtrips=isfinite(converted)&&try
+        Int(converted)==n
+    catch
+        false
+    end
+    roundtrips||throw(ArgumentError(
+        "$context count $n is not exactly representable in statistics precision $R; use wider observable/state precision or a smaller ensemble"))
+    converted
+end
+
 function _accumulate_observables!(acc::_OnlineObservableAccumulator,values)
     acc.count+=1;n=acc.count
+    nR=_checked_statistics_count(eltype(acc.mean),n,"observable")
     @inbounds for index in eachindex(values)
         delta=values[index]-acc.mean[index]
-        acc.mean[index]+=delta/n
+        acc.mean[index]+=delta/nR
         acc.m2[index]+=delta*(values[index]-acc.mean[index])
     end
     acc
@@ -124,11 +137,14 @@ function _merge_observables!(left::_OnlineObservableAccumulator,
                     copyto!(left.m2,right.m2);return left)
     total=left.count+right.count
     R=eltype(left.mean)
+    left_count=_checked_statistics_count(R,left.count,"observable")
+    right_count=_checked_statistics_count(R,right.count,"observable")
+    total_count=_checked_statistics_count(R,total,"observable")
     @inbounds for index in eachindex(left.mean)
         delta=right.mean[index]-left.mean[index]
         left.m2[index]+=right.m2[index]+delta*delta*
-            R(left.count)*R(right.count)/R(total)
-        left.mean[index]+=delta*R(right.count)/R(total)
+            left_count*right_count/total_count
+        left.mean[index]+=delta*right_count/total_count
     end
     left.count=total;left
 end
@@ -141,9 +157,12 @@ function _observable_statistic(acc::_OnlineObservableAccumulator{R},
     stderr=Vector{R}(undef,ntimes)
     lower=Vector{R}(undef,ntimes)
     upper=Vector{R}(undef,ntimes)
-    denominator=R(n)
+    denominator=_checked_statistics_count(R,n,"observable")
+    variance_denominator=n>1 ?
+        _checked_statistics_count(R,n-1,"observable") : one(R)
     @inbounds for time_index in 1:ntimes
-        variance=n>1 ? acc.m2[observable_index,time_index]/R(n-1) : zero(R)
+        variance=n>1 ?
+            acc.m2[observable_index,time_index]/variance_denominator : zero(R)
         standard_error=sqrt(variance/denominator)
         half_width=z*standard_error
         vars[time_index]=variance
@@ -189,6 +208,7 @@ end
 
 function _accumulate_jumps!(acc::_OnlineJumpAccumulator,jump_times,jump_channels)
     acc.count+=1;n=acc.count;fill!(acc.channel_counts,0)
+    nR=_checked_statistics_count(eltype(acc.channel_mean),n,"jump")
     for channel in jump_channels
         1<=channel<=length(acc.totals)||throw(ArgumentError(
             "jump channel index $channel is outside the prepared model"))
@@ -197,11 +217,11 @@ function _accumulate_jumps!(acc::_OnlineJumpAccumulator,jump_times,jump_channels
     for channel in eachindex(acc.totals)
         count=acc.channel_counts[channel];acc.totals[channel]+=count
         delta=count-acc.channel_mean[channel]
-        acc.channel_mean[channel]+=delta/n
+        acc.channel_mean[channel]+=delta/nR
         acc.channel_m2[channel]+=delta*(count-acc.channel_mean[channel])
     end
     total=length(jump_times);iszero(total)&&(acc.no_jump+=1)
-    delta=total-acc.total_mean;acc.total_mean+=delta/n
+    delta=total-acc.total_mean;acc.total_mean+=delta/nR
     acc.total_m2+=delta*(total-acc.total_mean)
     if total>=2
         @inbounds for index in 2:total
@@ -223,17 +243,20 @@ function _merge_jumps!(left::_OnlineJumpAccumulator,right::_OnlineJumpAccumulato
     end
     total_count=left.count+right.count
     R=eltype(left.channel_mean)
+    left_count=_checked_statistics_count(R,left.count,"jump")
+    right_count=_checked_statistics_count(R,right.count,"jump")
+    total_count_R=_checked_statistics_count(R,total_count,"jump")
     for channel in eachindex(left.totals)
         delta=right.channel_mean[channel]-left.channel_mean[channel]
         left.channel_m2[channel]+=right.channel_m2[channel]+
-            delta*delta*R(left.count)*R(right.count)/R(total_count)
-        left.channel_mean[channel]+=delta*R(right.count)/R(total_count)
+            delta*delta*left_count*right_count/total_count_R
+        left.channel_mean[channel]+=delta*right_count/total_count_R
         left.totals[channel]+=right.totals[channel]
     end
     delta=right.total_mean-left.total_mean
     left.total_m2+=right.total_m2+delta*delta*
-        R(left.count)*R(right.count)/R(total_count)
-    left.total_mean+=delta*R(right.count)/R(total_count)
+        left_count*right_count/total_count_R
+    left.total_mean+=delta*right_count/total_count_R
     left.count=total_count;left.no_jump+=right.no_jump
     append!(left.waiting_times,right.waiting_times);left
 end
@@ -243,6 +266,7 @@ function _jump_statistics(acc::_OnlineJumpAccumulator,times)
     duration=times[end]-times[1];duration>=0||throw(ArgumentError(
         "invalid sampling interval"))
     R=eltype(acc.channel_mean);nan=R(NaN)
+    count_R=_checked_statistics_count(R,n,"jump")
     channels=[begin
         variance=_sample_variance(acc.channel_m2[channel],n)
         mean=acc.channel_mean[channel]
@@ -260,7 +284,7 @@ function _jump_statistics(acc::_OnlineJumpAccumulator,times)
       mean_count=acc.total_mean,count_variance=total_variance,
       fano=iszero(acc.total_mean) ? nan : total_variance/acc.total_mean,
       rate=iszero(duration) ? nan : acc.total_mean/duration,
-      no_jump_probability=R(acc.no_jump)/R(n),channels,
+      no_jump_probability=R(acc.no_jump)/count_R,channels,
       waiting_times=copy(acc.waiting_times),mean_waiting_time=mean_waiting,
       waiting_time_variance=waiting_variance)
 end
@@ -643,6 +667,24 @@ function _adaptive_factor(error::R) where R<:AbstractFloat
     clamp((R(9)/R(10))*error^(-one(R)/R(5)),R(1)/R(5),R(5))
 end
 
+# Floating addition can leave `t` one ulp below a requested output time after
+# an apparently exact number of fixed steps (for example 0:0.01:0.1).  Treat
+# a final interval that exceeds the nominal bound only by roundoff as one step
+# and snap its accepted endpoint to the caller's target.  This avoids a tiny
+# extra stochastic/RK stage without skipping a physically resolvable interval.
+@inline function _trajectory_step_to_target(t::R,target::R,
+                                            maximum_step::R) where
+        R<:AbstractFloat
+    remaining=target-t
+    # Scale the tolerance with the local ulp, not with an absolute unit scale.
+    # The latter would let, for example, a `1e-20` maximum step jump directly
+    # across a physically resolvable `1e-16` interval in Float64.
+    scale=max(abs(t),abs(target),abs(maximum_step))
+    tolerance=R(8)*eps(scale)
+    lands=remaining<=maximum_step+tolerance
+    lands ? (remaining,true) : (maximum_step,false)
+end
+
 function _event_driven_trajectory(plan,rho0,ts,w,rng,parameters,dt,
                                   abstol,reltol,dtmin,dtmax,event_time_tolerance;
                                   observable_ops=nothing,
@@ -666,7 +708,8 @@ function _event_driven_trajectory(plan,rho0,ts,w,rng,parameters,dt,
         target=ts[output_index]
         while t<target
             remaining_to_target=target-t
-            h=min(h,remaining_to_target,dtmax)
+            h,lands_on_target=_trajectory_step_to_target(
+                t,target,min(h,dtmax))
             # As in standard adaptive integrators, landing exactly on a saved
             # output time may require one final step shorter than dtmin.
             minimum_step=min(dtmin,remaining_to_target)
@@ -687,7 +730,7 @@ function _event_driven_trajectory(plan,rho0,ts,w,rng,parameters,dt,
             if hazard+increment < threshold
                 copyto!(x,w.trial);z=dot(tau,x)
                 abs(z)>eps(R)||throw(ArgumentError("conditional state acquired zero trace"));x./=z
-                t+=h;hazard+=increment
+                t=lands_on_target ? target : t+h;hazard+=increment
                 h=min(dtmax,max(dtmin,h*_adaptive_factor(error)))
                 continue
             end
@@ -848,12 +891,16 @@ function _quantum_trajectory_prepared(plan,rho0,ts,w,rng,options;
     for output_index in 2:length(ts)
         target=ts[output_index]
         while t<target
-            h=min(options.dt,target-t)
+            h,lands_on_target=_trajectory_step_to_target(
+                t,target,options.dt)
             rates=_channel_intensities!(w,x,b,t,options.parameters)
             lambda=_total_intensity(rates)
-            lambda*h>options.max_jump_probability&&
-                (h=options.max_jump_probability/lambda)
-            _conditional_rk4!(x,w,b,t,h,options.parameters,tau);t+=h
+            if lambda*h>options.max_jump_probability
+                h=options.max_jump_probability/lambda
+                lands_on_target=false
+            end
+            _conditional_rk4!(x,w,b,t,h,options.parameters,tau)
+            t=lands_on_target ? target : t+h
             rates=_channel_intensities!(w,x,b,t,options.parameters)
             lambda=_total_intensity(rates)
             jump_probability=-expm1(-lambda*h)

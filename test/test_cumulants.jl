@@ -112,3 +112,40 @@
     @test_throws ArgumentError quantumcumulants_initial_values(moments,
         Dict((:x,)=>:placeholder))
 end
+
+# This smoke test is activated only when an optional-test environment has
+# explicitly loaded QuantumCumulants.  The ordinary package test target does
+# not acquire or compile that weak dependency.
+quantumcumulants_extension=Base.get_extension(
+    PermutationalInvariantDynamics,
+    :PermutationalInvariantDynamicsQuantumCumulantsExt)
+if quantumcumulants_extension!==nothing
+    @testset "QuantumCumulants exact p-body normalization" begin
+        sm=ComplexF32[0 1;0 0]
+        small_basis=PIBasis(2,2)
+        small_model=PIModel(small_basis,(
+            LocalPBodyJump(kron(sm,sm),2;rate=1f0),))
+        small_result=quantumcumulants_model(small_model;order=1)
+        @test only(small_result.rates)===0.5f0
+
+        # d=1 keeps the symbolic smoke test tiny while reaching an order whose
+        # factorial is not representable as a machine Int.
+        SQA=quantumcumulants_extension.SQA
+        hilbert=SQA.NLevelSpace(:pid_atom,1,1)
+        probe=SQA.Index(hilbert,:z,21,hilbert)
+        seed=SQA.IndexedOperator(
+            SQA.Transition(hilbert,:σ,1,1),probe)
+        large_basis=PIBasis(21,1)
+        operator=ones(ComplexF64,1,1)
+        hamiltonian_result=quantumcumulants_model(
+            PIModel(large_basis,(PBodyHamiltonian(operator,21),));
+            order=1,seed_operators=[seed])
+        @test length(hamiltonian_result.equations)==1
+        local_result=quantumcumulants_model(
+            PIModel(large_basis,(LocalPBodyJump(operator,21;rate=1),));
+            order=1,seed_operators=[seed])
+        @test only(local_result.rates) isa Rational{BigInt}
+        @test only(local_result.rates)==
+            one(BigInt)//factorial(big(21))
+    end
+end

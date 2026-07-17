@@ -3,6 +3,11 @@
 Every Julia example has a companion guide describing the physical model, its
 permutationally invariant (PI) representation, and the numerical method used.
 
+Start with [`getting_started.jl`](getting_started.jl) and its
+[line-by-line model-to-solution tutorial](../docs/src/getting_started.md).
+It covers the basis, local operators, physical terms, initial state,
+compilation, dynamics, stationary state, diagnostics, and a time-step check.
+
 ## Recommended workflow
 
 New research scripts should prepare a model once and use the typed high-level
@@ -48,10 +53,14 @@ under the ignored `examples/figures/` directory. Set
 `PI_EXAMPLE_FIGURE_DIR=/path/to/output` to choose another destination. The
 same scripts still perform all numerical assertions when run from the root
 environment without CairoMakie; only the figure-generation step is skipped.
+The loader deliberately requires CairoMakie to be declared by the active
+project and does not borrow a potentially incompatible global installation.
 
 | Example | Guide | Topic |
 |---|---|---|
+| `getting_started.jl` | [Getting started](getting_started.md) | First PI model from local matrices through dynamics, stationary state, diagnostics, and convergence |
 | `composite_ensembles.jl` | [Composite PI ensembles](composite_ensembles.md) | Two compressed ensembles, a finite ancilla, and factorized matrix-free dynamics |
+| `composite_quantum_trajectories.jl` | [Composite stochastic systems](composite_quantum_trajectories.md) | Density-valued cross-factor quantum jumps, online statistics, and deterministic master comparison |
 | `cumulant_bridge.jl` | [Higher-order cumulant bridge](cumulant_bridge.md) | Exact PI local moments, neutral model metadata, and closure-error comparisons |
 | `correlated_reservoirs.jl` | [Correlated Kossakowski reservoirs](correlated_reservoirs.md) | Cross-correlated local/collective one-body noise and preallocated matrix schedules |
 | `driven_qubits.jl` | [Driven qubits](driven_qubits.md) | Coherent drive and local decay |
@@ -66,10 +75,13 @@ environment without CairoMakie; only the figure-generation step is skipped.
 | `nakanishi2023_pt_time_crystal.jl` | [PT-symmetric time crystal](nakanishi2023_pt_time_crystal.md) | Exact balanced-gain/loss spectrum and matrix-free dynamics |
 | `paper_models.jl` | [Paper model constructors](paper_models.md) | Reusable literature models |
 | `pbody_pair_processes.jl` | [Pair processes](pbody_pair_processes.md) | Appendix-D p-body terms |
+| `parameter_scan.jl` | [Prepared parameter scans](parameter_scan.md) | Continuation, restart, tabular diagnostics, and threaded independent points |
+| `pi_heom.jl` | [PI--HEOM](pi_heom.md) | Non-Markovian exponential-bath hierarchy, analytic dephasing, and depth comparisons |
 | `piccitto2021_interacting_time_crystal.jl` | [Interacting boundary time crystal](piccitto2021_interacting_time_crystal.md) | Nonlinear collective-spin slow modes |
 | `pra110_062208_lmg.jl` | [Dissipative LMG model](pra110_062208_lmg.md) | Exact finite PI versus finite-product and thermodynamic mean-field predictions |
 | `pra94_033838_superradiance.jl` | [Correlated superradiance](pra94_033838_superradiance.md) | Two-atom analytic benchmark, `N=30` radiated pulse, and peak-state Schur blocks |
 | `qubit_population_dynamics.jl` | [Certified qubit population dynamics](qubit_population_dynamics.md) | Six-rate model, reduced population evolution, and stationary populations |
+| `qudit_husimi.jl` | [Generalized qudit Husimi Q](qudit_husimi.md) | Qutrit Schur-sector coherent-state data and qubit normalization sanity check |
 | `quantum_regression.jl` | [Quantum regression](quantum_regression.md) | Exact PI two-time correlations, antibunching, and optical spectra |
 | `research_utilities.jl` | [Research utilities](research_utilities.md) | PI channels, POVMs, tomography, checkpoints, population metadata, and joint symmetries |
 | `quantum_trajectories.jl` | [Analytic Mølmer trajectory benchmark](quantum_trajectories.md) | Independent-emitter state, count, and no-jump laws |
@@ -86,13 +98,15 @@ environment without CairoMakie; only the figure-generation step is skipped.
 Run a numerical example from the package root with:
 
 ```sh
+julia --project=. -e 'using Pkg; Pkg.instantiate()'  # first local run only
 julia --project=. examples/<name>.jl
 ```
 
 Use `--project=examples` for the Makie-enabled literature scripts: the
 year-named examples in the table, both `pra*.jl` validations,
-`quantum_trajectories.jl`, and `meanfield_time_crystal.jl`. Each paired guide
-describes its panels and output stem. Running the same script with
+`quantum_trajectories.jl`, `meanfield_time_crystal.jl`, `pi_heom.jl`, and
+`qudit_husimi.jl`. Each paired guide describes its panels and output stem.
+Running the same script with
 `--project=.` keeps all numerical assertions and skips only the optional
 Makie block.
 

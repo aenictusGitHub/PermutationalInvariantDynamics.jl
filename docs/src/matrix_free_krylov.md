@@ -6,6 +6,11 @@ Liouvillian matrix, compute a dense spectrum, or perform a sparse LU
 factorization. This is the preferred path when the PI Liouville dimension is
 large enough that storing the superoperator is the dominant cost.
 
+This page covers stationary and selected-eigenvalue solvers. For several
+right-hand sides, a common shift family, continuation with a recycled
+subspace, or direct exponential action, see [Block, shifted, recycled, and
+exponential Krylov methods](krylov_extensions.md).
+
 ## Constructing the matrix-free Liouvillian
 
 From a static `PIModel`, request the matrix-free representation explicitly:

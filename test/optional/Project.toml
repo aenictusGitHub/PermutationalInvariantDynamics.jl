@@ -1,0 +1,18 @@
+[deps]
+HDF5 = "f67ccb44-e63f-5c2f-98bd-6dc0ccc4ba2f"
+JLD2 = "033835bb-8acc-5ee8-8aae-3f567f8a3819"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+Makie = "ee78f7c6-11fb-53f2-987a-cfe4a2b5a57a"
+PermutationalInvariantDynamics = "8edbc7f6-5364-4b2e-9e03-73a6d67b7c8a"
+QuantumCumulants = "35bcea6d-e19f-57db-af74-8011de6c7255"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[compat]
+HDF5 = "0.16, 0.17"
+JLD2 = "0.4, 0.5"
+LinearAlgebra = "1.10"
+Makie = "0.21, 0.22, 0.23, 0.24"
+PermutationalInvariantDynamics = "0.1"
+QuantumCumulants = "0.5"
+Test = "1.10"
+julia = "1.10"

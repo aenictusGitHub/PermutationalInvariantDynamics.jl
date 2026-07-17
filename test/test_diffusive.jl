@@ -78,6 +78,25 @@
     @test map(x->x.records,serial)==map(x->x.records,threaded)
     @test map(x->last(x).data,serial)==map(x->last(x).data,threaded)
 
+    batch=DiffusiveBatchPlan(plan,rho0,[0.0,0.02];dt=0.002,
+        observables=(population=ComplexF64[0 0;0 1],))
+    batch_work=DiffusiveBatchWorkspace(batch,rho0;workers=2)
+    prepared_serial=diffusive_trajectories(batch,rho0,4;
+        seed=123,workspace=batch_work)
+    prepared_threaded=diffusive_trajectories(batch,rho0,4;
+        seed=123,threaded=true,workspace=batch_work)
+    @test map(x->x.records,prepared_serial)==map(x->x.records,serial)
+    @test map(x->x.records,prepared_serial)==map(x->x.records,prepared_threaded)
+    @test all(result->result.observables.names==(:population,),prepared_serial)
+    @test occursin("DiffusiveBatchPlan",sprint(show,batch))
+    @test_throws ArgumentError DiffusiveBatchWorkspace(batch,rho0;workers=0)
+    other_batch=DiffusiveBatchPlan(plan,rho0,[0.0,0.01];dt=0.001)
+    @test_throws ArgumentError diffusive_trajectories(
+        other_batch,rho0,2;workspace=batch_work)
+    same_basis_rho32=computational_product_state(b,2;T=Float32)
+    @test_throws ArgumentError diffusive_trajectories(
+        batch,same_basis_rho32,2;workspace=batch_work)
+
     scheduled=DiffusivePlan(model,homodyne_monitor(sm;
         efficiency=(t,p)->p.eta,phase=(t,p)->p.phase))
     @test length(diffusive_trajectory(scheduled,rho0,[0.0,0.01];dt=0.002,

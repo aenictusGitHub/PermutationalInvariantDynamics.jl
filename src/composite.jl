@@ -56,6 +56,14 @@ show(io::IO,b::CompositePIBasis)=print(io,
 
 abstract type AbstractCompositePIOperator{T} end
 
+# Public composite containers copy caller-owned coordinate vectors.  Internal
+# constructors which have just allocated and completely initialized a fresh
+# `Vector` may transfer that ownership instead, avoiding an otherwise redundant
+# full-coordinate copy.  Keep the tag private so the public copy contract does
+# not depend on caller discipline.
+struct _OwnedCompositeCoordinates end
+const _OWNED_COMPOSITE_COORDINATES=_OwnedCompositeCoordinates()
+
 """
     CompositePIOperator(basis, data)
     CompositePIOperator(basis; T=Float64)
@@ -74,6 +82,14 @@ struct CompositePIOperator{T<:AbstractFloat,B<:CompositePIBasis} <:
         length(data)==length(b)||throw(DimensionMismatch(
             "composite coefficient vector has the wrong length"))
         new{T,typeof(b)}(b,collect(data))
+    end
+    function CompositePIOperator(b::CompositePIBasis,
+                                 data::Vector{Complex{T}},
+                                 ::_OwnedCompositeCoordinates) where
+            T<:AbstractFloat
+        length(data)==length(b)||throw(DimensionMismatch(
+            "composite coefficient vector has the wrong length"))
+        new{T,typeof(b)}(b,data)
     end
 end
 
@@ -96,12 +112,25 @@ struct CompositePIState{T<:AbstractFloat,B<:CompositePIBasis} <:
             "composite coefficient vector has the wrong length"))
         new{T,typeof(b)}(b,collect(data))
     end
+    function CompositePIState(b::CompositePIBasis,
+                              data::Vector{Complex{T}},
+                              ::_OwnedCompositeCoordinates) where
+            T<:AbstractFloat
+        length(data)==length(b)||throw(DimensionMismatch(
+            "composite coefficient vector has the wrong length"))
+        new{T,typeof(b)}(b,data)
+    end
 end
 
+_owned_composite_operator(b::CompositePIBasis,data::Vector{<:Complex})=
+    CompositePIOperator(b,data,_OWNED_COMPOSITE_COORDINATES)
+_owned_composite_state(b::CompositePIBasis,data::Vector{<:Complex})=
+    CompositePIState(b,data,_OWNED_COMPOSITE_COORDINATES)
+
 CompositePIOperator(b::CompositePIBasis;T=Float64)=
-    CompositePIOperator(b,zeros(Complex{T},length(b)))
+    _owned_composite_operator(b,zeros(Complex{T},length(b)))
 CompositePIState(b::CompositePIBasis;T=Float64)=
-    CompositePIState(b,zeros(Complex{T},length(b)))
+    _owned_composite_state(b,zeros(Complex{T},length(b)))
 copy(A::CompositePIOperator)=CompositePIOperator(A.basis,A.data)
 copy(rho::CompositePIState)=CompositePIState(rho.basis,rho.data)
 eltype(A::AbstractCompositePIOperator)=eltype(A.data)
@@ -156,7 +185,7 @@ Construct a factorized composite operator.  A PI component is a
 coordinates use `kron(x_last, ..., x_first)` ordering.
 """
 function composite_tensor_operator(b::CompositePIBasis,components...)
-    CompositePIOperator(b,_composite_tensor_data(b,components,false))
+    _owned_composite_operator(b,_composite_tensor_data(b,components,false))
 end
 
 """
@@ -167,7 +196,7 @@ factor and one density matrix per finite factor.  Inputs are copied and are
 not normalized implicitly.
 """
 function composite_tensor_state(b::CompositePIBasis,components...)
-    CompositePIState(b,_composite_tensor_data(b,components,true))
+    _owned_composite_state(b,_composite_tensor_data(b,components,true))
 end
 
 function _finite_identity(b::FiniteOperatorBasis,::Type{T}) where T<:AbstractFloat
@@ -268,6 +297,61 @@ end
 
 """Return `tr(rho^2)` from the orthonormal composite coordinates."""
 purity(rho::CompositePIState)=real(dot(rho.data,rho.data))
+
+function _factor_adjoint_coordinate(b::FiniteOperatorBasis,index::Int)
+    row=mod(index-1,b.d)+1
+    column=div(index-1,b.d)+1
+    column+(row-1)*b.d
+end
+
+function _factor_adjoint_coordinate(b::PIBasis,index::Int)
+    sector=searchsortedlast(b.offsets,index)
+    sector<=length(b.sectors)||throw(BoundsError(b,index))
+    n=length(b.patterns[sector])
+    local_index=index-b.offsets[sector]
+    row=mod(local_index,n)+1
+    column=div(local_index,n)+1
+    b.offsets[sector]+column-1+(row-1)*n
+end
+
+function _composite_adjoint_coordinate(b::CompositePIBasis,index::Int)
+    1<=index<=length(b)||throw(BoundsError(b,index))
+    remaining=index-1
+    destination=1
+    stride=1
+    @inbounds for factor_index in eachindex(b.factors)
+        n=b.dimensions[factor_index]
+        coordinate=mod(remaining,n)+1
+        remaining=div(remaining,n)
+        adjoint_coordinate=_factor_adjoint_coordinate(
+            b.factors[factor_index],coordinate)
+        destination+=(adjoint_coordinate-1)*stride
+        stride*=n
+    end
+    destination
+end
+
+function _composite_hermiticity_metrics(A::AbstractCompositePIOperator)
+    R=_real_float_type(eltype(A.data))
+    error=zero(R)
+    scale=zero(R)
+    @inbounds for index in eachindex(A.data)
+        adjoint_index=_composite_adjoint_coordinate(A.basis,index)
+        error=max(error,abs(A.data[index]-conj(A.data[adjoint_index])))
+        scale=max(scale,abs(A.data[index]))
+    end
+    (;error,scale)
+end
+
+"""Test Hermiticity directly in the tensor-product operator coordinates."""
+function ishermitian(A::AbstractCompositePIOperator;
+                     atol::Real=0,
+                     rtol::Real=sqrt(eps(_real_float_type(eltype(A.data)))))
+    atol>=0||throw(ArgumentError("atol must be nonnegative"))
+    rtol>=0||throw(ArgumentError("rtol must be nonnegative"))
+    metrics=_composite_hermiticity_metrics(A)
+    metrics.error<=atol+rtol*metrics.scale
+end
 
 """
     expectation(rho, A)
@@ -544,8 +628,8 @@ function _composite_factor_apply!(y,A,x,t,p,work)
     apply!(y,A,x,t,p)
 end
 
-function _apply_tensor_mode!(destination,action,source,factor::Int,dims,
-                             t,p,work::_CompositeFactorWorkspace)
+function _apply_tensor_mode_generic!(destination,action,source,factor::Int,dims,
+                                     t,p,work::_CompositeFactorWorkspace)
     stride=1
     @inbounds for i in 1:factor-1
         stride*=dims[i]
@@ -564,6 +648,63 @@ function _apply_tensor_mode!(destination,action,source,factor::Int,dims,
         end
     end
     destination
+end
+
+@inline function _apply_tensor_mode!(destination,action,source,factor::Int,dims,
+                                     t,p,work::_CompositeFactorWorkspace)
+    _apply_tensor_mode_generic!(destination,action,source,factor,dims,t,p,work)
+end
+
+# `reshape(vector, ...)` creates small wrappers which escape through BLAS on
+# supported Julia releases.  Calling the same GEMM ABI on the contiguous vector
+# storage keeps the explicit-workspace application path allocation-free.  The
+# generic false return retains the gather/GEMV/scatter fallback for non-BLAS
+# scalar types.
+_composite_first_mode_gemm!(destination,action,source,n,columns)=false
+for (gemm,elty) in ((:dgemm_,:Float64),(:sgemm_,:Float32),
+                    (:zgemm_,:ComplexF64),(:cgemm_,:ComplexF32))
+    @eval function _composite_first_mode_gemm!(
+            destination::StridedVector{$elty},action::StridedMatrix{$elty},
+            source::StridedVector{$elty},n::Int,columns::Int)
+        stride(destination,1)==1&&stride(source,1)==1&&stride(action,1)==1||
+            return false
+        BI=LinearAlgebra.BLAS.BlasInt
+        m=BI(n);batch=BI(columns);k=BI(n)
+        lda=BI(max(1,stride(action,2)));ldb=BI(max(1,n));ldc=BI(max(1,n))
+        alpha=one($elty);beta=zero($elty);trans=UInt8('N')
+        GC.@preserve destination action source begin
+            ccall((LinearAlgebra.BLAS.@blasfunc($gemm),
+                   LinearAlgebra.BLAS.libblastrampoline),Cvoid,
+                  (Ref{UInt8},Ref{UInt8},Ref{LinearAlgebra.BLAS.BlasInt},
+                   Ref{LinearAlgebra.BLAS.BlasInt},
+                   Ref{LinearAlgebra.BLAS.BlasInt},Ref{$elty},Ptr{$elty},
+                   Ref{LinearAlgebra.BLAS.BlasInt},Ptr{$elty},
+                   Ref{LinearAlgebra.BLAS.BlasInt},Ref{$elty},Ptr{$elty},
+                   Ref{LinearAlgebra.BLAS.BlasInt},Clong,Clong),
+                  trans,trans,m,batch,k,alpha,pointer(action),lda,
+                  pointer(source),ldb,beta,pointer(destination),ldc,1,1)
+        end
+        true
+    end
+end
+
+# The first declared factor is contiguous in the composite coordinate vector.
+# For a homogeneous dense matrix action, all of its tensor fibers are therefore
+# the columns of one reshaped matrix and can be applied by one GEMM.  Preserve
+# the gather/GEMV/scatter implementation above for later factors, non-strided
+# inputs, sparse/custom actions, and mixed scalar types (the latter avoids the
+# substantial Julia-1.10 mixed-real/complex packing fallback).
+@inline function _apply_tensor_mode!(destination::StridedVector{T},
+                                     action::StridedMatrix{T},
+                                     source::StridedVector{T},factor::Int,dims,
+                                     t,p,work::_CompositeFactorWorkspace) where T
+    factor==1||return _apply_tensor_mode_generic!(
+        destination,action,source,factor,dims,t,p,work)
+    n=dims[1]
+    columns=length(source)÷n
+    _composite_first_mode_gemm!(destination,action,source,n,columns)&&
+        return destination
+    _apply_tensor_mode_generic!(destination,action,source,factor,dims,t,p,work)
 end
 
 function _checked_composite_coefficient(::Type{T},value) where T

@@ -1,16 +1,29 @@
 module ExampleMakie
 
+import TOML
+
 export makie_available, makie_module, save_example_figure,
        figure_output_directory
 
 const _load_error = Ref{Any}(nothing)
-const _available = try
-    @eval import CairoMakie
-    CairoMakie.activate!(type="png")
-    true
-catch error
-    _load_error[] = error
+const _declared_in_active_project = let project=Base.active_project()
+    project!==nothing&&isfile(project)&&
+        haskey(get(TOML.parsefile(project),"deps",Dict{String,Any}()),
+               "CairoMakie")
+end
+const _available = if !_declared_in_active_project
+    _load_error[]=ArgumentError(
+        "CairoMakie is not a direct dependency of the active project")
     false
+else
+    try
+        @eval import CairoMakie
+        CairoMakie.activate!(type="png")
+        true
+    catch error
+        _load_error[] = error
+        false
+    end
 end
 
 """Return whether CairoMakie is available in the active Julia environment."""

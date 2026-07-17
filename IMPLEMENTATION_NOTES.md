@@ -274,9 +274,24 @@ sum of Kronecker-product maps is applied without retaining the global
 Kronecker matrix. Compiled PI factor actions keep separate nested
 `LiouvillianWorkspace`s. Recursive tuple traversal specializes heterogeneous
 factor maps and terms, so a warmed explicit-workspace application remains
-allocation-free. The current layer is deterministic: it does not
-compile composite jump trajectories or silently extend single-ensemble
-reductions to a composite state.
+allocation-free.
+
+Composite stochastic plans add explicit tensor-product monitored channels to
+a trace-preserving background. Each channel prepares unit-rate sandwich,
+left-`Q`, and right-`Q` factor maps. The conditional RHS evaluates its scalar
+rate once, takes the physical intensity from the already-applied left-`Q`
+term, adds both losses, and restores normalized trace with the total
+intensity. A selected jump applies only its unscaled sandwich map because the
+scalar rate cancels during normalization. Prepared joint-sector diagonal
+lists and exact multiplicity scales contract traces without a standalone
+composite trace vector. All channels share one pair of full tensor buffers per
+task; only factor-fibre workspaces scale with channel count. Per-channel
+hazards use the conditional RK4 stages, and a step that violates the jump-
+probability cap is retried before its state update is committed. Fixed and
+driven rate values share the deterministic composite coefficient checker, so
+the stochastic and unconditional generators reject the same narrowing. The
+layer does not infer an unraveling from arbitrary superoperator terms or
+silently extend single-ensemble reductions to a composite state.
 
 ## Current limitations
 

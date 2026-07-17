@@ -185,15 +185,100 @@ sequentially; use one workspace per concurrent task.  The Euler--Maruyama hot
 step applies the unconditional Liouvillian and all Schur-block innovations
 without constructing a global superoperator or allocating integration arrays.
 """
-struct DiffusiveWorkspace{V,L,P}
+struct DiffusiveWorkspace{V,Q,L,P}
     current::V
     start::V
     drift::V
     quadrature::V
     left::V
     right::V
+    record_increment::Q
+    innovation_increment::Q
     liouvillian_work::L
     plan::P
+end
+
+"""
+    DiffusiveBatchPlan(source, rho0, times, monitors=nothing;
+                       dt, observables=nothing)
+
+Prepare the immutable setup shared by a batch of diffusive trajectories.  In
+addition to the [`DiffusivePlan`](@ref), this stores the validated time grid,
+integration step, and concrete tuple of Hermitian observable operators.  A
+batch therefore performs no repeated time conversion, collective-operator
+construction, or observable validation for individual paths.
+
+The plan is read-only and may be shared across tasks.  Mutable stochastic
+scratch belongs to [`DiffusiveBatchWorkspace`](@ref).
+"""
+struct DiffusiveBatchPlan{P,T,R,O}
+    plan::P
+    times::Vector{T}
+    dt::R
+    observables::O
+end
+
+function Base.show(io::IO,batch::DiffusiveBatchPlan)
+    print(io,"DiffusiveBatchPlan($(length(batch.times)) times, ",
+          "$(length(batch.observables)) observables, dt=$(batch.dt))")
+end
+
+function DiffusiveBatchPlan(source,rho0::PIState,times,monitors=nothing;
+        dt,observables=nothing)
+    plan=source isa DiffusivePlan ? source : DiffusivePlan(source,monitors)
+    source isa DiffusivePlan&&monitors!==nothing&&throw(ArgumentError(
+        "monitors are already stored in the supplied DiffusivePlan"))
+    rho0.basis===plan.model.basis||throw(ArgumentError(
+        "initial state and diffusive plan use incompatible PI bases"))
+    _check_liouvillian_source_precision(plan.liouvillian,eltype(rho0.data),
+                                        "diffusive initial state")
+    ts,hmax=_prepare_diffusive_times(times,plan.real_type,dt)
+    ops=_prepare_streaming_observables(rho0.basis,observables;
+                                       require_hermitian=true)
+    DiffusiveBatchPlan(plan,ts,hmax,ops)
+end
+
+"""
+    DiffusiveBatchWorkspace(batch, rho0; workers=1)
+
+Task-owned mutable workspaces and trajectory-indexed RNG storage for a
+prepared diffusive batch.  Use at least as many workers as concurrent tasks.
+One batch workspace may be reused sequentially, but not by overlapping batch
+calls.
+"""
+struct DiffusiveBatchWorkspace{B,W,G}
+    batch::B
+    workers::W
+    rngs::G
+    seeds::Vector{UInt64}
+end
+
+function DiffusiveBatchWorkspace(batch::DiffusiveBatchPlan,rho0::PIState;
+        workers::Integer=1)
+    workers>=1||throw(ArgumentError("workers must be positive"))
+    count=Int(workers)
+    scratch=[DiffusiveWorkspace(batch.plan,rho0) for _ in 1:count]
+    rngs=[MersenneTwister(0) for _ in 1:count]
+    DiffusiveBatchWorkspace(batch,scratch,rngs,UInt64[])
+end
+
+function _check_diffusive_batch_workspace(work::DiffusiveBatchWorkspace,
+        batch::DiffusiveBatchPlan,rho0::PIState)
+    work.batch===batch||throw(ArgumentError(
+        "diffusive batch workspace belongs to a different batch plan"))
+    isempty(work.workers)&&throw(ArgumentError(
+        "diffusive batch workspace has no workers"))
+    length(work.workers)==length(work.rngs)||throw(ArgumentError(
+        "diffusive batch workspace has incompatible RNG storage"))
+    for worker in work.workers
+        worker.plan===batch.plan||throw(ArgumentError(
+            "diffusive batch worker belongs to a different diffusive plan"))
+        rho0.basis===worker.plan.model.basis||throw(ArgumentError(
+            "state and diffusive batch workspace use incompatible PI bases"))
+        eltype(worker.current)===eltype(rho0.data)||throw(ArgumentError(
+            "diffusive batch workspace scalar type $(eltype(worker.current)) does not match initial-state scalar type $(eltype(rho0.data)); construct a workspace for this state precision"))
+    end
+    work
 end
 
 function DiffusiveWorkspace(plan::DiffusivePlan,rho::PIState)
@@ -204,8 +289,9 @@ function DiffusiveWorkspace(plan::DiffusivePlan,rho::PIState)
     promote_type(eltype(rho.data),plan.scalar_type)===eltype(rho.data)||
         throw(ArgumentError("diffusive state cannot represent plan precision without narrowing"))
     v=similar(rho.data)
+    increments=zeros(plan.real_type,plan.record_count)
     DiffusiveWorkspace(v,similar(v),similar(v),similar(v),similar(v),similar(v),
-                        LiouvillianWorkspace(plan.liouvillian),plan)
+        increments,similar(increments),LiouvillianWorkspace(plan.liouvillian),plan)
 end
 
 """
@@ -264,10 +350,9 @@ function _monitor_parameters(monitor,t,p,::Type{R}) where R<:AbstractFloat
     eta,phase
 end
 
-function _quadrature_innovation!(destination,w::_PreparedDiffusiveMonitor,
-        x,z,b,weights,left,right)
+function _diffusive_monitor_products!(w::_PreparedDiffusiveMonitor,x,b,
+                                      left,right)
     fill!(left,zero(eltype(left)));fill!(right,zero(eltype(right)))
-    mean_value=zero(eltype(weights))
     for sector in eachindex(b.sectors)
         n=length(b.patterns[sector]);range=b.offsets[sector]:b.offsets[sector+1]-1
         X=reshape(view(x,range),n,n)
@@ -275,12 +360,26 @@ function _quadrature_innovation!(destination,w::_PreparedDiffusiveMonitor,
         R=reshape(view(right,range),n,n)
         K=w.blocks[sector]
         mul!(L,K,X);mul!(R,X,adjoint(K))
-        @inbounds for index in eachindex(L)
-            L[index]=z*L[index]+conj(z)*R[index]
-        end
-        mean_value+=weights[sector]*real(tr(L))
     end
-    copyto!(destination,left)
+    nothing
+end
+
+function _quadrature_from_products!(destination,x,z,b,weights,left,right)
+    mean_value=zero(eltype(weights))
+    for sector in eachindex(b.sectors)
+        n=length(b.patterns[sector]);range=b.offsets[sector]:b.offsets[sector+1]-1
+        D=reshape(view(destination,range),n,n)
+        L=reshape(view(left,range),n,n)
+        R=reshape(view(right,range),n,n)
+        @inbounds for index in eachindex(D,L,R)
+            D[index]=z*L[index]+conj(z)*R[index]
+        end
+        sector_trace=zero(eltype(weights))
+        @inbounds for diagonal in 1:n
+            sector_trace+=real(D[diagonal,diagonal])
+        end
+        mean_value+=weights[sector]*sector_trace
+    end
     @. destination=destination-mean_value*x
     mean_value
 end
@@ -292,24 +391,26 @@ end
     monitor=first(monitors);R=eltype(records)
     eta,phase=_monitor_parameters(monitor,t,p,R)
     z=cis(-phase)
+    _diffusive_monitor_products!(monitor,start,b,w.left,w.right)
+    root_h=sqrt(h)
     if monitor.kind===:homodyne
-        mean_value=_quadrature_innovation!(w.quadrature,monitor,start,z,b,
+        mean_value=_quadrature_from_products!(w.quadrature,start,z,b,
             w.plan.trace_weights,w.left,w.right)
-        dW=sqrt(h)*randn(rng,R);scale=sqrt(eta)
+        dW=root_h*randn(rng,R);scale=sqrt(eta)
         @. x=x+scale*dW*w.quadrature
         row=monitor.first_record
         records[row]+=scale*mean_value*h+dW
         innovations[row]+=dW
     else
         scale=sqrt(eta/R(2));row=monitor.first_record
-        mean_i=_quadrature_innovation!(w.quadrature,monitor,start,z,b,
+        mean_i=_quadrature_from_products!(w.quadrature,start,z,b,
             w.plan.trace_weights,w.left,w.right)
-        dWi=sqrt(h)*randn(rng,R)
+        dWi=root_h*randn(rng,R)
         @. x=x+scale*dWi*w.quadrature
         records[row]+=scale*mean_i*h+dWi;innovations[row]+=dWi
-        mean_q=_quadrature_innovation!(w.quadrature,monitor,start,-im*z,b,
+        mean_q=_quadrature_from_products!(w.quadrature,start,-im*z,b,
             w.plan.trace_weights,w.left,w.right)
-        dWq=sqrt(h)*randn(rng,R)
+        dWq=root_h*randn(rng,R)
         @. x=x+scale*dWq*w.quadrature
         records[row+1]+=scale*mean_q*h+dWq;innovations[row+1]+=dWq
     end
@@ -366,53 +467,91 @@ Decrease `dt` to convergence.  Euler--Maruyama is trace-normalized but is not a
 finite-step positivity certificate; use [`validate_state`](@ref) on saved
 states when strict physicality auditing is required.
 """
-function diffusive_trajectory(source,rho0::PIState,times,monitors=nothing;
-        dt,rng=Random.default_rng(),parameters=nothing,workspace=nothing,
-        save_states::Bool=true,observables=nothing)
-    plan=source isa DiffusivePlan ? source : DiffusivePlan(source,monitors)
-    source isa DiffusivePlan&&monitors!==nothing&&throw(ArgumentError(
-        "monitors are already stored in the supplied DiffusivePlan"))
+function diffusive_trajectory end
+
+function _diffusive_trajectory_prepared(batch::DiffusiveBatchPlan,
+        rho0::PIState,w::DiffusiveWorkspace,rng::AbstractRNG;
+        parameters=nothing,save_states::Bool=true,save_records::Bool=true,
+        observable_values=nothing,return_result::Bool=true)
+    return_result&&!save_records&&throw(ArgumentError(
+        "return_result=true requires save_records=true"))
+    plan=batch.plan
     rho0.basis===plan.model.basis||throw(ArgumentError(
         "initial state and diffusive plan use incompatible PI bases"))
     _check_liouvillian_source_precision(plan.liouvillian,eltype(rho0.data),
                                         "diffusive initial state")
-    w=workspace===nothing ? DiffusiveWorkspace(plan,rho0) : workspace
     w isa DiffusiveWorkspace&&w.plan===plan||throw(ArgumentError(
         "workspace belongs to a different diffusive plan"))
-    R=plan.real_type;ts,hmax=_prepare_diffusive_times(times,R,dt)
+    eltype(w.current)===eltype(rho0.data)||throw(ArgumentError(
+        "diffusive workspace scalar type $(eltype(w.current)) does not match initial-state scalar type $(eltype(rho0.data)); construct a workspace for this state precision"))
+    length(w.record_increment)==plan.record_count&&
+        length(w.innovation_increment)==plan.record_count||throw(
+        DimensionMismatch("diffusive workspace has incompatible record scratch"))
+    R=plan.real_type;ts=batch.times;hmax=batch.dt
     copyto!(w.current,rho0.data)
     _normalize_diffusive!(w.current,plan.liouvillian.tracevec,R)
     states=save_states ? Vector{typeof(rho0)}(undef,length(ts)) : nothing
     save_states&&(states[1]=PIState(rho0.basis,w.current))
-    ops=_prepare_streaming_observables(rho0.basis,observables;
-                                       require_hermitian=true)
-    observable_values=isempty(ops) ? nothing : zeros(R,length(ops),length(ts))
-    observable_values===nothing||_record_observables!(observable_values,ops,
-                                                       w.current,1)
-    records=zeros(R,plan.record_count,length(ts))
-    innovations=zeros(R,plan.record_count,length(ts))
-    record_increment=zeros(R,plan.record_count)
-    innovation_increment=zeros(R,plan.record_count)
+    ops=batch.observables
+    values=if isempty(ops)
+        observable_values===nothing||throw(ArgumentError(
+            "observable_values was supplied for a batch without observables"))
+        nothing
+    elseif observable_values===nothing
+        zeros(R,length(ops),length(ts))
+    else
+        size(observable_values)==(length(ops),length(ts))||throw(
+            DimensionMismatch("observable_values has incompatible dimensions"))
+        promote_type(R,eltype(observable_values))===eltype(observable_values)||
+            throw(ArgumentError(
+                "observable_values cannot represent diffusive observable precision"))
+        observable_values
+    end
+    values===nothing||_record_observables!(values,ops,w.current,1)
+    records=save_records ? zeros(R,plan.record_count,length(ts)) : nothing
+    innovations=save_records ? zeros(R,plan.record_count,length(ts)) : nothing
+    record_increment=w.record_increment
+    innovation_increment=w.innovation_increment
     for output_index in 2:length(ts)
         t=ts[output_index-1];target=ts[output_index]
-        copyto!(view(records,:,output_index),view(records,:,output_index-1))
-        copyto!(view(innovations,:,output_index),view(innovations,:,output_index-1))
+        if save_records
+            copyto!(view(records,:,output_index),view(records,:,output_index-1))
+            copyto!(view(innovations,:,output_index),view(innovations,:,output_index-1))
+        end
         while t<target
-            h=min(hmax,target-t)
+            h,lands_on_target=_trajectory_step_to_target(t,target,hmax)
             _diffusive_step!(w,t,h,parameters,rng,record_increment,
                               innovation_increment)
-            @views records[:,output_index].+=record_increment
-            @views innovations[:,output_index].+=innovation_increment
-            t+=h
+            if save_records
+                @views records[:,output_index].+=record_increment
+                @views innovations[:,output_index].+=innovation_increment
+            end
+            t=lands_on_target ? target : t+h
         end
         save_states&&(states[output_index]=PIState(rho0.basis,w.current))
-        observable_values===nothing||_record_observables!(
-            observable_values,ops,w.current,output_index)
+        values===nothing||_record_observables!(
+            values,ops,w.current,output_index)
     end
-    observable_result=observable_values===nothing ? nothing :
-        (;names=map(first,ops),values=observable_values)
-    DiffusiveTrajectory(ts,states,records,innovations,
+    return_result||return nothing
+    observable_result=values===nothing ? nothing :
+        (;names=map(first,ops),values)
+    DiffusiveTrajectory(copy(ts),states,records,innovations,
                         copy(plan.record_labels),observable_result)
+end
+
+function diffusive_trajectory(batch::DiffusiveBatchPlan,rho0::PIState;
+        rng=Random.default_rng(),parameters=nothing,workspace=nothing,
+        save_states::Bool=true)
+    w=workspace===nothing ? DiffusiveWorkspace(batch.plan,rho0) : workspace
+    _diffusive_trajectory_prepared(batch,rho0,w,rng;parameters,save_states)
+end
+
+function diffusive_trajectory(source,rho0::PIState,times,monitors=nothing;
+        dt,rng=Random.default_rng(),parameters=nothing,workspace=nothing,
+        save_states::Bool=true,observables=nothing)
+    batch=DiffusiveBatchPlan(source,rho0,times,monitors;dt,observables)
+    w=workspace===nothing ? DiffusiveWorkspace(batch.plan,rho0) : workspace
+    _diffusive_trajectory_prepared(batch,rho0,w,rng;parameters,save_states)
 end
 
 """
@@ -424,34 +563,77 @@ derived from trajectory index, so ordered results are independent of threaded
 scheduling.  Each worker owns a reusable [`DiffusiveWorkspace`](@ref).
 """
 function diffusive_trajectories(source,rho0::PIState,times,monitors,n::Integer;
-        seed::Integer=0,threaded::Bool=false,kwargs...)
+        seed::Integer=0,threaded::Bool=false,dt,parameters=nothing,
+        workspace=nothing,save_states::Bool=true,observables=nothing)
     n>0||throw(ArgumentError("trajectory count must be positive"))
-    plan=source isa DiffusivePlan ? source : DiffusivePlan(source,monitors)
-    source isa DiffusivePlan&&monitors!==nothing&&throw(ArgumentError(
-        "monitors are already stored in the supplied DiffusivePlan"))
-    master=MersenneTwister(seed);seeds=rand(master,UInt64,n)
+    batch=DiffusiveBatchPlan(source,rho0,times,monitors;dt,observables)
+    if workspace isa DiffusiveWorkspace
+        threaded&&throw(ArgumentError(
+            "threaded diffusive ensembles require a DiffusiveBatchWorkspace"))
+        workspace.plan===batch.plan||throw(ArgumentError(
+            "workspace belongs to a different diffusive plan"))
+        master=MersenneTwister(seed);seeds=rand(master,UInt64,n)
+        results=Vector{DiffusiveTrajectory}(undef,n)
+        for index in 1:Int(n)
+            Random.seed!(master,seeds[index])
+            results[index]=_diffusive_trajectory_prepared(
+                batch,rho0,workspace,master;parameters,save_states)
+        end
+        return results
+    end
+    diffusive_trajectories(batch,rho0,n;seed,threaded,workspace,
+                           parameters,save_states)
+end
+
+
+"""
+    diffusive_trajectories(batch, rho0, n; seed=0, threaded=false,
+                           workspace=nothing, parameters=nothing,
+                           save_states=true)
+
+Generate `n` trajectories from a [`DiffusiveBatchPlan`](@ref).  Prepared times
+and observables are reused by every path.  Random streams are derived from the
+trajectory index, so serial and threaded results agree for a fixed seed.
+"""
+function diffusive_trajectories(batch::DiffusiveBatchPlan,rho0::PIState,
+        n::Integer;seed::Integer=0,threaded::Bool=false,workspace=nothing,
+        parameters=nothing,save_states::Bool=true)
+    n>0||throw(ArgumentError("trajectory count must be positive"))
+    requested_workers=threaded ? min(Int(n),Threads.nthreads()) : 1
+    work=workspace===nothing ?
+        DiffusiveBatchWorkspace(batch,rho0;workers=requested_workers) :
+        _check_diffusive_batch_workspace(workspace,batch,rho0)
+    master=work.rngs[1];Random.seed!(master,seed)
+    resize!(work.seeds,n);rand!(master,work.seeds);seeds=work.seeds
     results=Vector{DiffusiveTrajectory}(undef,n)
-    if threaded&&n>1&&Threads.nthreads()>1
+    available=length(work.workers)
+    worker_count=threaded ? min(Int(n),Threads.nthreads(),available) : 1
+    if worker_count>1
+        chunk_size=max(1,Int(n)÷(8worker_count))
         next=Threads.Atomic{Int}(1)
-        tasks=map(1:min(n,Threads.nthreads())) do _
-            Threads.@spawn begin
-                work=DiffusiveWorkspace(plan,rho0);local_rng=MersenneTwister(0)
-                while true
-                    index=Threads.atomic_add!(next,1)
-                    index>n&&break
-                    Random.seed!(local_rng,seeds[index])
-                    results[index]=diffusive_trajectory(plan,rho0,times;
-                        rng=local_rng,workspace=work,kwargs...)
+        @sync for worker_index in 1:worker_count
+            let worker=work.workers[worker_index],rng=work.rngs[worker_index],
+                counter=next
+                Threads.@spawn begin
+                    while true
+                        first_index=Threads.atomic_add!(counter,chunk_size)
+                        first_index>Int(n)&&break
+                        final_index=min(Int(n),first_index+chunk_size-1)
+                        for index in first_index:final_index
+                            Random.seed!(rng,seeds[index])
+                            results[index]=_diffusive_trajectory_prepared(
+                                batch,rho0,worker,rng;parameters,save_states)
+                        end
+                    end
                 end
             end
         end
-        foreach(fetch,tasks)
     else
-        work=DiffusiveWorkspace(plan,rho0);local_rng=MersenneTwister(0)
+        worker=work.workers[1];rng=work.rngs[1]
         for index in 1:n
-            Random.seed!(local_rng,seeds[index])
-            results[index]=diffusive_trajectory(plan,rho0,times;
-                rng=local_rng,workspace=work,kwargs...)
+            Random.seed!(rng,seeds[index])
+            results[index]=_diffusive_trajectory_prepared(
+                batch,rho0,worker,rng;parameters,save_states)
         end
     end
     results
@@ -486,5 +668,8 @@ function diffusive_average(trajectories::AbstractVector{<:DiffusiveTrajectory})
         end
     end
     R=_real_float_type(T);scale=one(R)/R(length(trajectories))
-    [PIState(basis,mean.*scale) for mean in means]
+    for mean in means
+        mean .*= scale
+    end
+    [PIState(basis,mean) for mean in means]
 end

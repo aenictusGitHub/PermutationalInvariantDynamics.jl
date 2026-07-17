@@ -16,6 +16,9 @@ println("operation                                time          allocated")
 println("----------------------------------------------------------------")
 
 b=measure("PIBasis(N=10,d=2)",()->PIBasis(10,2))
+b3=measure("PIBasis(N=8,d=3)",()->PIBasis(8,3);samples=1)
+g3=first(first(b3.patterns));measure("GT content tuple",()->content(g3))
+measure("qudit one-body geometry",()->OneBodyGeometry(b3);samples=1)
 sm=ComplexF64[0 1;0 0];sx=ComplexF64[0 1;1 0]
 model=PIModel(b,[LocalJump(sm),CollectiveHamiltonian(sx;rate=0.15)])
 Ls=measure("sparse Liouvillian assembly",()->liouvillian(model;representation=:sparse);samples=1)
@@ -31,6 +34,93 @@ measure("batched matrix-free application",()->apply!(batch_out,prepared.plan,bat
 measure("batched adjoint application",()->apply_adjoint!(batch_out,prepared.plan,batch,0.0,nothing,liouvillian_work))
 w=EvolutionWorkspace(Lm,rho)
 measure("preallocated RK4 step",()->evolve!(y,Lm,rho.data,(0.0,1e-3);steps=1,workspace=w))
+
+# Stochastic backends separate reusable propagation scratch from the returned
+# histories.  Report both path generation and ensemble reconstruction because
+# their memory scaling differs materially.
+trajectory_plan=measure("density trajectory plan",()->TrajectoryPlan(model);samples=1)
+trajectory_batch=TrajectoryBatchWorkspace(trajectory_plan,rho;workers=1)
+density_paths=measure("density trajectory batch",()->quantum_trajectories(
+    trajectory_plan,rho,[0.0,0.02],16;dt=0.005,seed=101,
+    workspace=trajectory_batch);samples=1)
+measure("density trajectory average",()->trajectory_average(density_paths))
+
+weak_state=weak_pi_pseudoket(rho)
+weak_plan=measure("weak-PI trajectory plan",()->WeakPITrajectoryPlan(model);samples=1)
+weak_batch=WeakPITrajectoryBatchWorkspace(weak_plan,weak_state;workers=1)
+weak_paths=measure("weak-PI trajectory batch",()->weak_pi_quantum_trajectories(
+    weak_plan,weak_state,[0.0,0.02],16;dt=0.005,seed=102,
+    workspace=weak_batch);samples=1)
+measure("weak-PI trajectory average",()->weak_pi_trajectory_average(weak_paths))
+
+diffusive_model=PIModel(b,(CollectiveJump(sm;rate=0.05),))
+diffusive_plan=measure("diffusive trajectory plan",()->DiffusivePlan(
+    diffusive_model,homodyne_monitor(sqrt(0.05)*sm;efficiency=0.8));samples=1)
+diffusive_work=DiffusiveWorkspace(diffusive_plan,rho)
+measure("prepared diffusive path",()->diffusive_trajectory(
+    diffusive_plan,rho,[0.0,0.002];dt=0.001,rng=MersenneTwister(103),
+    workspace=diffusive_work,save_states=false);samples=1)
+
+# Composite application is genuinely tensor-mode matrix-free: this audit uses
+# a nontrivial finite auxiliary factor but never forms its global Kronecker
+# superoperator.
+composite_basis=CompositePIBasis(b,FiniteOperatorBasis(2;label=:auxiliary))
+lifted=local_superoperator_term(composite_basis,1,prepared)
+composite_map=measure("composite matrix-free setup",()->
+    CompositeSuperoperator(composite_basis,lifted);samples=1)
+composite_x=randn(MersenneTwister(104),ComplexF64,length(composite_basis))
+composite_y=similar(composite_x)
+composite_work=CompositeSuperoperatorWorkspace(composite_map,composite_x)
+measure("composite workspace application",()->apply!(
+    composite_y,composite_map,composite_x,0.0,nothing,composite_work))
+
+composite_state=composite_tensor_state(
+    composite_basis,rho,ComplexF64[0 0;0 1])
+composite_jump=CompositeJumpChannel(
+    composite_basis,1=>collective_operator(b,sm),2=>sm;rate=0.05)
+composite_trajectory_plan=measure("composite trajectory plan",()->
+    CompositeTrajectoryPlan(composite_basis,composite_jump);samples=1)
+composite_trajectory_work=CompositeTrajectoryWorkspace(
+    composite_trajectory_plan,composite_state)
+composite_rhs=similar(composite_state.data)
+measure("composite conditional RHS",()->
+    PermutationalInvariantDynamics._composite_conditional_action!(
+        composite_rhs,composite_state.data,composite_trajectory_work,
+        0.0,nothing))
+composite_step_state=copy(composite_state.data)
+composite_hazard_limit=-log1p(-0.05)
+measure("composite RK4/hazard step",()->begin
+    copyto!(composite_step_state,composite_state.data)
+    PermutationalInvariantDynamics._composite_capped_conditional_step!(
+        composite_step_state,composite_trajectory_work,0.0,0.005,nothing,
+        0.05,composite_hazard_limit)
+end)
+composite_batch=CompositeTrajectoryBatchWorkspace(
+    composite_trajectory_plan,composite_state;workers=1)
+measure("composite trajectory batch",()->quantum_trajectories(
+    composite_trajectory_plan,composite_state,[0.0,0.02],8;
+    dt=0.005,seed=105,workspace=composite_batch);samples=1)
+
+identity_map=identity_channel(b);channel_output=PIState(b)
+measure("in-place PI channel",()->apply_channel!(
+    channel_output,identity_map,rho))
+
+lowering=collective_operator(b,sm)
+correlation_plan=measure("quantum-regression plan",()->CorrelationPlan(
+    prepared,adjoint(lowering),lowering);samples=1)
+correlation_work=CorrelationWorkspace(correlation_plan;krylovdim=30)
+correlation_delays=[0.0,0.002,0.004]
+correlation_output=zeros(ComplexF64,length(correlation_delays))
+measure("prepared two-time correlation",()->two_time_correlation!(
+    correlation_output,correlation_plan,rho,correlation_delays;
+    steps_per_interval=2,workspace=correlation_work))
+
+floquet_map=Matrix{ComplexF64}(I,length(b),length(b))
+floquet_map[1,2]=0.001
+measure("Floquet repeated-vector evolution",()->floquet_evolve(
+    rho,floquet_map,8))
+measure("stroboscopic saved evolution",()->stroboscopic_evolution(
+    rho,floquet_map,8))
 spin=spin_matrices()
 population_model=qubit_ensemble_model(b;
     hamiltonian=spin.jz,emission=0.4,dephasing=0.1,pumping=0.07,
@@ -69,6 +159,9 @@ measure("QFI (cached)",()->qfi(rho,sx;cache=geometry))
 measure("von Neumann entropy",()->von_neumann_entropy(rho))
 measure("five-particle reduced state",()->reduced_state(rho,5);samples=1)
 reduction_plan=measure("five-particle reduction plan",()->ReductionPlan(b,5);samples=1)
+reduction_setup_basis=PIBasis(16,2)
+measure("qubit reduction plan (N=16)",()->ReductionPlan(
+    reduction_setup_basis,8);samples=1)
 measure("reduced state (prepared)",()->reduced_state(rho,5;plan=reduction_plan))
 reduction_work=ReductionWorkspace(reduction_plan,rho)
 reduction_out=PIState(reduction_plan.output_basis)

@@ -41,6 +41,20 @@ function isvalid(g::GTPattern{D}) where D
     true
 end
 
+@inline function _content_entry(g::GTPattern,::Val{K}) where K
+    value=0
+    @inbounds for i in 1:K
+        value+=g.entries[_gidx(i,K)]
+    end
+    @inbounds for i in 1:K-1
+        value-=g.entries[_gidx(i,K-1)]
+    end
+    value
+end
+@inline _content_tuple(g::GTPattern,::Val{0})=()
+@inline _content_tuple(g::GTPattern,::Val{K}) where K=
+    (_content_tuple(g,Val(K-1))...,_content_entry(g,Val(K)))
+
 """
     content(g)
 
@@ -49,8 +63,11 @@ row-sum differences. Its entries give the local-label occupations and sum to
 `weight(shape(g))`.
 """
 function content(g::GTPattern{D}) where D
-    sums = [sum(gt_entry(g,i,k) for i in 1:k) for k in 1:D]
-    ntuple(k -> sums[k] - (k==1 ? 0 : sums[k-1]), D)
+    # `content` is used in the innermost staging loops for one-body geometry
+    # and LR intertwiners. Compile-time tuple recursion is allocation-free on
+    # Julia 1.10 as well as newer releases; a closure-based static `ntuple`
+    # still boxed 32 bytes on the minimum supported release.
+    _content_tuple(g,Val(D))
 end
 show(io::IO,g::GTPattern) = print(io,"GTPattern",g.entries)
 

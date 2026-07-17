@@ -55,8 +55,9 @@ Both reproduce the master equation and linear ensemble observables, but a
 Kraus decomposition is not unique, so individual ``(J,M)`` paths and
 trajectory variances are not asserted to equal the article's record. Lloyd,
 Ziolkowska, and Keeling's 2026 construction also includes a shared bosonic
-cavity; composite pseudo-ket trajectory compilation remains outside the
-single-ensemble backend. The weak-PI example uses the article's
+cavity; density-valued composite jumps are available, but composite
+pseudo-ket trajectory compilation remains outside the single-ensemble
+backend. The weak-PI example uses the article's
 ``\gamma_l/\Gamma_c=1`` case and independently checks certified population
 and general matrix-free PI master evolution before comparing equal-size,
 equal-control stochastic batches.

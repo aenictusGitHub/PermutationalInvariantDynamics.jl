@@ -55,6 +55,57 @@ trajectory_batch_alloc=@allocated quantum_trajectories(
 @assert trajectory_batch_alloc<=256*1024 "reused trajectory batch allocated $trajectory_batch_alloc bytes"
 @assert trajectory_batch.workers[1].plan===trajectory_plan
 
+composite_factor=FiniteOperatorBasis(2;label=:trajectory_auxiliary)
+composite_basis=CompositePIBasis(b,composite_factor)
+composite_state=composite_tensor_state(
+    composite_basis,trajectory_state,ComplexF64[0 0;0 1])
+composite_jump=CompositeJumpChannel(
+    composite_basis,1=>collective_operator(b,sm),2=>sm;rate=0.05)
+composite_trajectory_plan=CompositeTrajectoryPlan(
+    composite_basis,composite_jump)
+composite_trajectory_work=CompositeTrajectoryWorkspace(
+    composite_trajectory_plan,composite_state)
+composite_rhs=similar(composite_state.data)
+PermutationalInvariantDynamics._composite_conditional_action!(
+    composite_rhs,composite_state.data,composite_trajectory_work,0.0,nothing)
+composite_trajectory_apply_alloc=@allocated(
+    PermutationalInvariantDynamics._composite_conditional_action!(
+        composite_rhs,composite_state.data,composite_trajectory_work,
+        0.0,nothing))
+@assert composite_trajectory_apply_alloc<=4096 "prepared composite trajectory RHS allocated $composite_trajectory_apply_alloc bytes"
+composite_step_state=copy(composite_state.data)
+composite_hazard_limit=-log1p(-0.05)
+PermutationalInvariantDynamics._composite_capped_conditional_step!(
+    composite_step_state,composite_trajectory_work,0.0,0.005,nothing,
+    0.05,composite_hazard_limit)
+copyto!(composite_step_state,composite_state.data)
+composite_trajectory_step_alloc=@allocated(
+    PermutationalInvariantDynamics._composite_capped_conditional_step!(
+        composite_step_state,composite_trajectory_work,0.0,0.005,nothing,
+        0.05,composite_hazard_limit))
+@assert composite_trajectory_step_alloc<=4096 "prepared composite trajectory RK4/hazard step allocated $composite_trajectory_step_alloc bytes"
+composite_batch=CompositeTrajectoryBatchWorkspace(
+    composite_trajectory_plan,composite_state;workers=1)
+quantum_trajectories(
+    composite_trajectory_plan,composite_state,[0.0,0.02],8;
+    dt=0.005,seed=83,workspace=composite_batch)
+composite_trajectory_batch_alloc=@allocated quantum_trajectories(
+    composite_trajectory_plan,composite_state,[0.0,0.02],8;
+    dt=0.005,seed=83,workspace=composite_batch)
+@assert composite_trajectory_batch_alloc<=256*1024 "reused composite trajectory batch allocated $composite_trajectory_batch_alloc bytes"
+
+weak_state=weak_pi_pseudoket(trajectory_state)
+weak_plan=WeakPITrajectoryPlan(model)
+weak_batch=WeakPITrajectoryBatchWorkspace(weak_plan,weak_state;workers=1)
+weak_paths=weak_pi_quantum_trajectories(
+    weak_plan,weak_state,[0.0,0.05],16;
+    dt=0.01,seed=82,workspace=weak_batch)
+weak_pi_trajectory_average(weak_paths)
+weak_average_alloc=@allocated weak_pi_trajectory_average(weak_paths)
+weak_average=weak_pi_trajectory_average(weak_paths)
+@assert weak_average_alloc<=256*1024 "weak-PI trajectory averaging allocated $weak_average_alloc bytes"
+@assert all(abs(trace(state)-1)<=2e-12 for state in weak_average)
+
 population_model=qubit_ensemble_model(b;
     hamiltonian=spin_matrices().jz,
     emission=0.4,dephasing=0.1,pumping=0.07,
@@ -89,6 +140,20 @@ reduction=ReductionPlan(b,2)
 planned_reduced=reduced_state(rho,2;plan=reduction)
 reduction_alloc=@allocated reduced_state(rho,2;plan=reduction)
 @assert reduction_alloc<=2*1024^2 "prepared reduction allocated $reduction_alloc bytes"
+
+# Compare allocations rather than wall time so this setup regression remains
+# stable across Julia versions and CI hosts.  The uncached route is retained
+# privately as a bit-identical oracle for the plan-local factorial cache.
+reduction_setup_basis=PIBasis(16,2)
+ReductionPlan(reduction_setup_basis,8)
+PermutationalInvariantDynamics._qubit_reduction_couplings(
+    reduction_setup_basis,8,nothing)
+reduction_setup_alloc=@allocated ReductionPlan(reduction_setup_basis,8)
+reduction_uncached_alloc=@allocated(
+    PermutationalInvariantDynamics._qubit_reduction_couplings(
+        reduction_setup_basis,8,nothing))
+@assert 3*reduction_setup_alloc<2*reduction_uncached_alloc "cached qubit reduction setup allocated $reduction_setup_alloc bytes versus $reduction_uncached_alloc uncached bytes"
+
 reduction_work=ReductionWorkspace(reduction,rho)
 reduction_out=PIState(reduction.output_basis)
 reduced_state!(reduction_out,rho,reduction,reduction_work)
@@ -108,4 +173,4 @@ meanfield_alloc=@allocated meanfield_rhs!(meanfield_out,meanfield,sigma,0.0,noth
 @assert meanfield_alloc<=256 "explicit-workspace mean-field RHS allocated $meanfield_alloc bytes"
 @assert abs(tr(meanfield_out))<=1e-12 "mean-field RHS did not preserve trace"
 
-println("Performance regression gates passed (threads=$(Threads.nthreads()), apply_alloc=$allocated, batch_alloc=$batch_alloc, batch_adjoint_alloc=$batch_adjoint_alloc, trajectory_batch_alloc=$trajectory_batch_alloc, population_apply_alloc=$population_apply_alloc, population_evolve_alloc=$population_evolve_alloc, observable_alloc=$planned, reduction_alloc=$reduction_alloc, reduction_inplace_alloc=$reduction_inplace_alloc, meanfield_alloc=$meanfield_alloc)")
+println("Performance regression gates passed (threads=$(Threads.nthreads()), apply_alloc=$allocated, batch_alloc=$batch_alloc, batch_adjoint_alloc=$batch_adjoint_alloc, trajectory_batch_alloc=$trajectory_batch_alloc, composite_trajectory_apply_alloc=$composite_trajectory_apply_alloc, composite_trajectory_step_alloc=$composite_trajectory_step_alloc, composite_trajectory_batch_alloc=$composite_trajectory_batch_alloc, weak_average_alloc=$weak_average_alloc, population_apply_alloc=$population_apply_alloc, population_evolve_alloc=$population_evolve_alloc, observable_alloc=$planned, reduction_alloc=$reduction_alloc, reduction_setup_alloc=$reduction_setup_alloc, reduction_uncached_alloc=$reduction_uncached_alloc, reduction_inplace_alloc=$reduction_inplace_alloc, meanfield_alloc=$meanfield_alloc)")

@@ -42,6 +42,23 @@ result = diffusive_trajectory(
 )
 ```
 
+For repeated or threaded ensembles, prepare the complete sampling request
+once. `DiffusiveBatchPlan` validates and stores the output grid, time step,
+and observable plans; `DiffusiveBatchWorkspace` owns one numerical workspace
+and random stream per worker:
+
+```julia
+batch = DiffusiveBatchPlan(plan, rho0, range(0, 1; length=101);
+    dt=0.001,
+    observables=(magnetization=collective_spin(basis, :z),))
+batch_workspace = DiffusiveBatchWorkspace(batch, rho0; workers=Threads.nthreads())
+paths = diffusive_trajectories(batch, rho0, 1000;
+    workspace=batch_workspace, seed=7, threaded=true)
+```
+
+The immutable batch plan is shareable. Its workspace is mutable, reusable
+sequentially, and must not be shared by concurrent callers.
+
 A one-particle monitor matrix is always lifted to the collective operator
 ``\sum_i c^{(i)}``.  Passing a prepared `PIOperator` monitors that PI operator
 directly.  Particle-resolved local records reveal particle labels and do not
@@ -78,6 +95,60 @@ positivity.  Converge `dt`, and call `validate_state` when strict conditional
 state auditing is required.  The ensemble mean converges to the unconditional
 master equation already stored in the model.
 
+## Confidence-controlled stopping
+
+`adaptive_quantum_trajectories` and `adaptive_diffusive_trajectories` process
+deterministic batches until every requested observable at every saved time has
+a confidence half-width below `atol + rtol*abs(mean)`. They retain only online
+means and variances, not trajectory state histories. The result reports
+`converged=false` and `stopping_reason=:maximum_trajectories` when the sample
+cap is reached; it never silently accepts the cap as convergence.
+
+Stopping uses a finite-horizon simultaneous empirical-Bernstein bound. For
+each observable and saved time, the implementation combines its sample
+variance with a certified spectral-range bound of the Hermitian PI operator.
+The failure probability `1-confidence` is divided across all requested
+observable/time pairs and every possible batch check up to
+`max_trajectories`. Consequently, seeing no rare jump in an early batch does
+not produce a zero-width certificate for a nonconstant observable. This bound
+controls the complete adaptive stopping request; the pointwise normal
+intervals retained in `result.observables` remain useful descriptive output
+but are not the stopping certificate. The simultaneous half-width and worst
+tolerance ratio used at each check are stored in `convergence_history`.
+Every sampled value is checked against the padded spectral bound. A value
+outside it raises instead of producing an invalid confidence claim. This
+observed-value check is not, by itself, a bounded-support proof for the
+finite-step diffusive sampler: Euler--Maruyama is not positivity preserving
+and its Gaussian increments have unbounded support. The diffusive
+empirical-Bernstein result is therefore a Monte Carlo stopping diagnostic
+conditional on a separate `dt` convergence and conditional-state physicality
+study, not an unconditional coverage certificate. Quantum-jump paths likewise
+require their deterministic no-jump integrator tolerances to be converged.
+
+```julia
+adaptive = adaptive_diffusive_trajectories(batch, rho0;
+    min_trajectories=128, max_trajectories=20_000,
+    batch_size=64, confidence=0.95, rtol=0.02,
+    seed=7, threaded=true)
+```
+
+The quantum-jump variant takes a model or `TrajectoryPlan`, `times`, `dt`, and
+an observable collection. Both routes preserve trajectory-index-derived
+random streams, so serial and threaded runs of the same request use the same
+samples at each checked batch boundary. Parallel accumulation can change the
+last floating-point bits because worker partial sums are merged in a different
+order; scientific reproducibility should therefore compare at the requested
+statistical tolerance rather than assume bitwise identity.
+
+The stopping certificate controls Monte Carlo sampling only. Converge the
+quantum-jump integrator or diffusive Euler--Maruyama step separately, and do
+not reuse sampling convergence as evidence for a hierarchy, finite-size, or
+model approximation. Optional quantum-jump summaries can still retain pooled
+waiting times; disable them when that jump-count-scaled storage is
+unnecessary. Adaptive stopping currently covers density-valued PI jump paths
+and collective diffusive paths, not weak-PI pseudo-kets or Distributed
+workers.
+
 The runnable
 [`wiseman_milburn_homodyne.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/wiseman_milburn_homodyne.jl)
 compares the conditional paths, their ensemble average, and the PI master
@@ -91,8 +162,13 @@ homodyne_monitor
 heterodyne_monitor
 DiffusivePlan
 DiffusiveWorkspace
+DiffusiveBatchPlan
+DiffusiveBatchWorkspace
 DiffusiveTrajectory
 diffusive_trajectory
 diffusive_trajectories
 diffusive_average
+AdaptiveTrajectoryResult
+adaptive_quantum_trajectories
+adaptive_diffusive_trajectories
 ```

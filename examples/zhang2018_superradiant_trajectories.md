@@ -81,9 +81,10 @@ Lloyd, Ziolkowska, and Keeling's recent
 [permutation-symmetric trajectory method](https://arxiv.org/abs/2605.11103)
 is especially relevant to this distinction and directly builds on the same PI
 operator framework. Its published numerical cases all include a shared
-bosonic cavity mode (and one uses a jump/diffusion hybrid). A finite cavity is
-available for deterministic composite dynamics, but reproducing those
-trajectory figures still requires a composite pseudo-ket compiler; the
+bosonic cavity mode (and one uses a jump/diffusion hybrid). A finite cavity
+and density-valued tensor-product jumps are available in the composite
+backend, but reproducing those trajectory figures still requires a composite
+pseudo-ket compiler; the
 single-ensemble weak-PI backend does not emulate that missing coupling.
 
 ## Makie figure

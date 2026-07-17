@@ -16,7 +16,7 @@ function spectral_trace(rho::PIState,f;
     validate_state(rho;atol,rtol)
     R=_real_float_type(eltype(rho.data));result=nothing
     for sector in rho.basis.sectors
-        E=_weighted_sector_eigen(rho,sector;atol,rtol,
+        E=_weighted_sector_eigvals(rho,sector;atol,rtol,
                                   operation="spectral trace")
         multiplicity=symmetric_group_dimension(sector)
         inverse_scale=_prepare_exact_scale(R,one(BigInt),multiplicity,

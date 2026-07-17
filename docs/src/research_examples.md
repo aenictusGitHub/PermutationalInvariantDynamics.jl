@@ -1,5 +1,27 @@
 # Research examples
 
+## Choose an example by goal
+
+If you are new to the package, begin with the fully explained
+[model-to-solution tutorial](getting_started.md) and its
+[`getting_started.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/getting_started.jl)
+script. Then choose the closest workflow below.
+
+| Goal | Suggested runnable example | What it adds |
+|:--|:--|:--|
+| First deterministic model | [`getting_started.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/getting_started.jl) | Basis, terms, compilation, dynamics, stationary state, diagnostics, and time-step refinement |
+| Prepared observables and a reduced state | [`driven_qubits.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/driven_qubits.jl) | Reusable observable and reduction plans |
+| Compare stationary solvers | [`steady_state_methods.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/steady_state_methods.jl) | Direct, shift-invert, SVD, and matrix-free GMRES paths |
+| Keep observables but not states | [`streaming_output.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/streaming_output.jl) | Memory-light deterministic and stochastic output |
+| Simulate jump records | [`quantum_trajectories.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/quantum_trajectories.jl) | Event-driven paths and analytical ensemble checks |
+| Study periodic dynamics | [`floquet_periodic_decay.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/floquet_periodic_decay.jl) | One-period maps, multipliers, and a periodic state |
+| Combine ensembles or an ancilla | [`composite_ensembles.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/composite_ensembles.jl) | Factorized composite coordinates and cross-system maps |
+| Add a finite-memory bath | [`pi_heom.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/pi_heom.jl) | HEOM construction and hierarchy-depth convergence |
+
+Each script has a same-basename guide in the repository's `examples/`
+directory. The sections below explain the specialized workflows and link to
+their numerical conventions.
+
 ## PI research utilities
 
 `examples/research_utilities.jl` demonstrates compressed spectral and
@@ -99,9 +121,12 @@ apply!(destination, generator, rho.data, 0.0, nothing, work)
 ```
 
 No global Kronecker superoperator or full Hilbert representation of either PI
-ensemble is formed. Finite auxiliaries are explicitly truncated, and the
-current backend is deterministic: composite quantum trajectories are not yet
-compiled. See [Composite PI systems](composite_systems.md).
+ensemble is formed. Finite auxiliaries are explicitly truncated.
+`examples/composite_quantum_trajectories.jl` additionally compares
+density-valued cross-factor jump paths with the independently propagated
+unconditional generator and demonstrates state-free statistics plus
+trajectory-index reproducibility. See
+[Composite PI systems](composite_systems.md).
 
 ## Sector-resolved spin phase space
 
@@ -123,6 +148,27 @@ The script verifies multiplicity weighting, normalization, the coherent-state
 peak, and Wigner negativity without constructing a full Hilbert-space state.
 See [Sector-resolved spin phase space](spin_phase_space.md) for the precise
 normalization and multipole convention.
+
+`examples/qudit_husimi.jl` extends the coherent-state Q check to qutrit Schur
+sectors. It reuses one `QuditHusimiPlan`, verifies normalized-Haar population
+weighting and the maximally mixed density, and checks the `d=2` factor against
+the spin-sphere convention. See [Qudit Husimi phase
+space](qudit_phase_space.md); this is not a generalized qudit Wigner
+transform.
+
+## Prepared continuation and non-Markovian hierarchy examples
+
+`examples/parameter_scan.jl` follows an exactly soluble emission/pumping
+steady-state curve while retaining no state history. It stops, stores one
+ownership-safe continuation seed, resumes in a fresh workspace, and exports
+compact columns. Threaded and optional Distributed execution apply only after
+continuation is disabled. See [Prepared parameter scans](parameter_scans.md).
+
+`examples/pi_heom.jl` stores every ADO of a collectively dephased qubit
+ensemble in PI coordinates and compares three hierarchy depths with an exact
+exponential-bath coherence. It separately demonstrates that convergence of
+one observable is weaker than convergence of the complete reduced state. See
+[PI--HEOM](heom.md) and [Numerical convergence reports](convergence.md).
 
 ## Visualizing Liouvillian and Floquet spectra
 

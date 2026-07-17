@@ -1,3 +1,19 @@
+struct _CountingCompositeDenseMatrix{T} <: DenseArray{T,2}
+    data::Matrix{T}
+    pointer_calls::Base.RefValue{Int}
+end
+Base.size(A::_CountingCompositeDenseMatrix)=size(A.data)
+Base.getindex(A::_CountingCompositeDenseMatrix,i::Int,j::Int)=A.data[i,j]
+Base.setindex!(A::_CountingCompositeDenseMatrix,value,i::Int,j::Int)=
+    (A.data[i,j]=value)
+Base.strides(A::_CountingCompositeDenseMatrix)=strides(A.data)
+Base.copy(A::_CountingCompositeDenseMatrix)=
+    _CountingCompositeDenseMatrix(copy(A.data),A.pointer_calls)
+function Base.pointer(A::_CountingCompositeDenseMatrix)
+    A.pointer_calls[]+=1
+    pointer(A.data)
+end
+
 @testset "Composite PI operator spaces" begin
     bpi=PIBasis(1,2)
     baux=FiniteOperatorBasis(2;label=:cavity)
@@ -28,6 +44,53 @@
     @test_throws ArgumentError CompositePIBasis()
     @test_throws DimensionMismatch composite_tensor_state(basis,rho_pi)
     @test_throws DimensionMismatch composite_tensor_state(basis,rho_pi,zeros(3,3))
+
+    @testset "owned fresh coordinates and dense first-factor batch" begin
+        # Public vector constructors retain their copy-on-input contract even
+        # though package-owned freshly allocated coordinates can now transfer
+        # ownership internally.
+        input=fill(1.0+2.0im,length(basis))
+        copied_state=CompositePIState(basis,input)
+        copied_operator=CompositePIOperator(basis,input)
+        input[1]=9.0-3.0im
+        @test copied_state.data[1]==1.0+2.0im
+        @test copied_operator.data[1]==1.0+2.0im
+
+        allocation_pi=PIBasis(7,2)
+        allocation_finite=FiniteOperatorBasis(10)
+        allocation_basis=CompositePIBasis(allocation_pi,allocation_finite)
+        allocation_rho=maximally_mixed_state(allocation_pi)
+        allocation_aux=Matrix{ComplexF64}(I,10,10)/10
+        CompositePIState(allocation_basis)
+        CompositePIOperator(allocation_basis)
+        composite_tensor_state(allocation_basis,allocation_rho,allocation_aux)
+        payload=sizeof(ComplexF64)*length(allocation_basis)
+        @test @allocated(CompositePIState(allocation_basis))<3payload÷2
+        @test @allocated(CompositePIOperator(allocation_basis))<3payload÷2
+        @test @allocated(composite_tensor_state(
+            allocation_basis,allocation_rho,allocation_aux))<3payload÷2
+
+        # A dense action on the contiguous first factor is one matrix-matrix
+        # call over all tensor fibers, not one matrix-vector call per fiber.
+        pointer_calls=Ref(0)
+        dense_data=ComplexF64[0.2 0.3im 0 0;
+                             -0.1im -0.4 0 0;
+                             0 0 0.5 0.2;
+                             0 0 -0.3 0.1]
+        counted=_CountingCompositeDenseMatrix(dense_data,pointer_calls)
+        batched=CompositeSuperoperator(
+            basis,local_superoperator_term(basis,1,counted))
+        batched_workspace=CompositeSuperoperatorWorkspace(batched)
+        x=ComplexF64.(1:length(basis))./(length(basis)+1)
+        y=similar(x)
+        apply!(y,batched,x,0.0,nothing,batched_workspace)
+        @test pointer_calls[]==1
+        @test y≈kron(Matrix{ComplexF64}(I,4,4),dense_data)*x atol=2e-14
+        pointer_calls[]=0
+        @test @allocated(apply!(y,batched,x,0.0,nothing,
+                                batched_workspace))==0
+        @test pointer_calls[]==1
+    end
 
     @testset "preallocated sum of Kronecker maps" begin
         A=ComplexF64[0.2 0.3im 0 0;
@@ -64,12 +127,14 @@
 
         # A callable coefficient uses the explicit-time path and the same
         # preallocated tensor-mode storage.
+        coefficient_calls=Ref(0)
         driven=factorized_superoperator_term(basis,2=>C;
-                                             coefficient=(t,p)->p*t)
+            coefficient=(t,p)->(coefficient_calls[]+=1;p*t))
         Sd=CompositeSuperoperator(basis,driven)
         wd=CompositeSuperoperatorWorkspace(Sd,x)
         apply!(y,Sd,x,0.4,2.0,wd)
         @test y≈0.8*kron(C,Matrix{ComplexF64}(I,4,4))*x
+        @test coefficient_calls[]==1
         @test !isautonomous(Sd)
     end
 

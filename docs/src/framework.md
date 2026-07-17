@@ -16,6 +16,11 @@ This chapter introduces the physical assumptions, the Schur--Weyl blocks
 stored by the package, and the recommended path from a model to research
 observables.
 
+If you prefer to construct and solve a model before studying the
+representation, start with [Getting started: from a model to a
+solution](getting_started.md), then return here for the mathematical
+conventions behind each object.
+
 ## When the PI framework applies
 
 Let
@@ -494,6 +499,13 @@ The main data flow is
 PIBasis -> PIModel -> compile -> CompiledPIModel -> solver or analysis
 
 (PI and finite factors) -> CompositePIBasis -> CompositeSuperoperator
+
+(composite background, monitored jumps) -> CompositeTrajectoryPlan
+                                         -> quantum_trajectories
+
+(parameter grid, builder) -> ParameterScanPlan -> parameter_scan
+
+(PI system, exponential baths) -> HEOMPlan -> HEOM state or solver
 ```
 
 | Object | Role | Ownership rule |
@@ -504,10 +516,17 @@ PIBasis -> PIModel -> compile -> CompiledPIModel -> solver or analysis
 | `PIModel` | Declarative immutable tuple of physical terms | Share read-only |
 | `CompiledPIModel` | Prepared term lowering and sparse or matrix-free backend | Compile once and share read-only |
 | `LiouvillianWorkspace` and solver workspaces | Mutable multiplication and Krylov scratch | One per concurrent task or thread |
+| Advanced Krylov workspaces | Dominant bases/residual arrays for block, multi-shift, recycled, or exponential actions | One per concurrent solve; recycled state belongs to one ordered chain |
+| `ParameterScanPlan`, `ParameterScanWorkspace` | Immutable scan recipe and mutable continuation/solver scratch | Plan shared read-only; one workspace per serial caller or threaded worker |
+| `HEOMPlan`, HEOM workspaces | Immutable ADO topology/couplings and application/RK4 scratch | Plan shared read-only; one workspace per concurrent application/evolution |
+| `QuditHusimiPlan` | Dense coherent vectors for one exact basis, point set, and sector selection | Share read-only across states; setup can dominate |
+| `DiffusiveBatchPlan`, batch workspaces | Prepared trajectory request and worker-local path/RNG buffers | Plan shared read-only; workspace reused sequentially only |
+| `ConvergenceStudyResult` | All raw refinement results, estimates, diagnostics, and decisions | Immutable record; memory includes every retained evaluator result |
 | `CollectiveObservablePlan`, `ReductionPlan` | Prepared observable or bipartition geometry | Share read-only; tied to the exact basis object |
 | `ReductionWorkspace` | Mutable partial-trace and partial-transpose scratch | One per concurrent task |
 | `CorrelationPlan`, `CorrelationWorkspace` | Prepared quantum-regression insertions and their evolution/GMRES scratch | Plan shared read-only; one workspace per task |
 | `CompositeSuperoperator`, `CompositeSuperoperatorWorkspace` | Sum of factorized maps and its tensor-fibre scratch | Generator shared read-only; one workspace per task |
+| `CompositeTrajectoryPlan`, composite trajectory workspaces | Explicit monitored tensor-product channels and density-valued conditional evolution | Plan shared read-only; one workspace and RNG per concurrent path worker |
 
 `compile(model; backend=:auto)` performs the expensive representation setup
 once and chooses a conservative backend. Sparse storage is convenient for
@@ -537,18 +556,16 @@ using PermutationalInvariantDynamics
 N = 12
 basis = PIBasis(N, 2)  # all Schur sectors
 
-sx = ComplexF64[0 1; 1 0]
-sz = ComplexF64[1 0; 0 -1]
-sm = ComplexF64[0 1; 0 0]
+spin = spin_matrices()  # local order: (|g>, |e>)
 
 model = PIModel(basis, [
-    LocalHamiltonian(sx / 2; rate=0.8),
-    LocalJump(sm; rate=0.10),
-    CollectiveJump(sm; rate=0.02 / N),
+    LocalHamiltonian(spin.jx; rate=0.8),
+    LocalJump(spin.jm; rate=0.10),
+    CollectiveJump(spin.jm; rate=0.02 / N),
 ])
 
-# |1><1| tensor N in the local basis used by the matrices above.
-rho0 = iid_pure_state(basis, ComplexF64[0, 1])
+# Local level 2 is |e>; the constructor uses Julia's one-based index.
+rho0 = computational_product_state(basis, 2)
 
 # Representation geometry and Liouvillian kernels are prepared once.
 prepared = compile(model; backend=:auto)
@@ -558,7 +575,7 @@ solution = solve_dynamics(
     prepared, rho0, (first(times), last(times));
     saveat=times,
     steps_per_interval=16,
-    observables=(magnetization=sz / 2,),
+    observables=(magnetization=spin.jz,),
     save_states=false,
 )
 
@@ -591,11 +608,17 @@ show literature models and their numerical checks.
 | Slow modes or Liouvillian gap | `liouvillian_spectrum`, `pi_liouvillian_gap` | A selected Krylov window is not a complete spectrum |
 | Periodic dynamics | `floquet_propagator`, `floquet_steady_state` | Converge the one-period integration |
 | Quantum-jump ensembles | `quantum_trajectories` | Rates nonnegative; converge tolerances and ensemble size |
+| Confidence-controlled ensembles | `adaptive_quantum_trajectories`, `adaptive_diffusive_trajectories` | Sampling certificate only; separately converge the path integrator |
 | Pure Schur pseudo-ket ensembles | `WeakPITrajectoryPlan`, `weak_pi_quantum_trajectories` | Auxiliary weak-PI states, not labeled-particle wavefunctions; fixed operators and fixed-step integration |
 | Observable-only output | `solve_dynamics(...; observables=..., save_states=false)` | The state history is deliberately unavailable |
 | State-free trajectory statistics | `quantum_trajectories(...; observables=..., save_states=false)` | Waiting-time output still scales with recorded jumps unless disabled |
 | Two-time correlations and spectra | `CorrelationPlan`, `two_time_correlation`, `stationary_correlation_spectrum` | Autonomous QRT; converge RK4 or GMRES controls |
-| Several PI ensembles or a finite ancilla | `CompositePIBasis`, `CompositeSuperoperator` | Cross maps are factorized; no composite trajectory compiler yet |
+| Several PI ensembles or a finite ancilla | `CompositePIBasis`, `CompositeSuperoperator`, `CompositeTrajectoryPlan` | Cross maps and monitored gains are factorized; composite paths are density-valued |
+| Related steady states or spectra | `ParameterScanPlan`, `parameter_scan` | Serial continuation is path dependent; independent points may be threaded/distributed |
+| Structured matrix-free linear families | `block_gmres`, `multishift_gmres`, `recycled_gmres`, `krylov_expv` | Inspect raw residuals/error estimates and reuse task-owned workspaces |
+| Finite-memory bosonic bath | `HEOMBath`, `HEOMPlan`, `heom_evolve` | Converge bath poles, hierarchy depth, and time/Krylov discretization separately |
+| Generalized qudit coherent-state Q | `QuditHusimiPlan`, `qudit_husimi_q` | Normalized Haar data on supplied points; no qudit Wigner convention inferred |
+| Numerical refinement evidence | `convergence_study` and specialized wrappers | Final refinement agreement is distinct from inner solver convergence |
 | Large-\(N\) product prediction | `MeanFieldPlan`, `solve_meanfield` | Approximate after correlations develop |
 | Repeated collective observable | `CollectiveObservablePlan` | Reuse one plan for many states |
 | Repeated marginal or negativity | `ReductionPlan`, `ReductionWorkspace` | Setup can be large for qudits |

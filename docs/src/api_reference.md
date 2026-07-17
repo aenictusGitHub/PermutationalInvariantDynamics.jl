@@ -27,13 +27,19 @@ PermutationalInvariantDynamics
 | [Quantum regression and spectra](correlations.md) | Prepared two-time correlations, delayed intensity correlations, shifted-GMRES spectra, and finite-window FFTs |
 | [Higher-order cumulant bridge](cumulant_bridge.md) | Exact distinct-site PI moments, neutral microscopic metadata, closure comparisons, and the optional QuantumCumulants adapter |
 | [Research utilities and control](research_utilities.md) | Compressed spectral/population inspection, PI channels, tomography, checkpoints, joint symmetries, and gradients |
-| [Diffusive monitoring](diffusive_monitoring.md) | Preallocated homodyne/heterodyne conditional PI dynamics and reproducible ensembles |
-| [Composite systems](composite_systems.md) | Multiple PI ensembles, finite auxiliary factors, and preallocated tensor-product superoperators |
+| [Diffusive monitoring](diffusive_monitoring.md) | Preallocated homodyne/heterodyne conditional PI dynamics, reproducible ensembles, and confidence-controlled stochastic stopping |
+| [Qudit Husimi phase space](qudit_phase_space.md) | Sector-wise generalized coherent-state Q data for arbitrary local dimension |
+| [Composite systems](composite_systems.md) | Multiple PI ensembles, finite auxiliary factors, preallocated tensor-product superoperators, and density-valued quantum jumps |
+| [Prepared parameter scans](parameter_scans.md) | Continuation, resumable point records, deterministic threaded scans, and tabular exports |
+| [Block, multi-shift, and recycled Krylov](krylov_extensions.md) | Multiple-right-hand-side solves, shifted families, recycled subspaces, and exponential actions |
+| [PI--HEOM non-Markovian dynamics](heom.md) | PI auxiliary-density hierarchies, matrix-free propagation, and stationary states |
+| [Numerical convergence reports](convergence.md) | Time-step, Krylov, HEOM-depth, and sector-cutoff refinement evidence |
+| [Optional ecosystem integrations](interoperability.md) | Tables and Makie data adapters, process-parallel scans/ensembles, symbolic cumulants, and checkpoint backends |
 
 ## Alphabetical index
 
 ```@index
 Modules = [PermutationalInvariantDynamics]
-Pages = ["api/representation.md", "api/dynamics.md", "api/analysis.md", "api/solvers.md", "api/visualization.md", "streaming_output.md", "diffusive_monitoring.md", "weak_pi_trajectories.md", "correlations.md", "cumulant_bridge.md", "research_utilities.md", "composite_systems.md"]
+Pages = ["api/representation.md", "api/dynamics.md", "api/analysis.md", "api/solvers.md", "api/visualization.md", "streaming_output.md", "diffusive_monitoring.md", "weak_pi_trajectories.md", "correlations.md", "cumulant_bridge.md", "research_utilities.md", "composite_systems.md", "parameter_scans.md", "krylov_extensions.md", "heom.md", "convergence.md", "qudit_phase_space.md", "interoperability.md"]
 Order = [:type, :function, :constant, :macro]
 ```

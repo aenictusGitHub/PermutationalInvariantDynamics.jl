@@ -119,6 +119,29 @@ end
         @test all(worker->worker.plan===plan,batch.workers)
         @test batch.workers[1].current!==batch.workers[2].current
 
+        # The allocation-free inner accumulation must remain identical to the
+        # public equation-(7) scaling route, including its sector weights.
+        reference=[PIState(b;T=Float64) for _ in eachindex(serial[1].times)]
+        offsets=PermutationalInvariantDynamics._weak_pi_offsets(b)
+        for path in serial,time_index in eachindex(path.times)
+            for (sector,partition) in pairs(b.sectors)
+                psi=view(path.states[time_index].data,
+                    PermutationalInvariantDynamics._weak_sector_range(
+                        offsets,sector))
+                coefficient_block(reference[time_index],partition).+=
+                    PermutationalInvariantDynamics.
+                        _divide_by_schur_multiplicity_scale(
+                            psi*psi',Float64,partition)
+            end
+        end
+        for state in reference
+            state.data./=length(serial)
+        end
+        optimized=weak_pi_trajectory_average(serial)
+        @test all(isapprox(optimized[index].data,reference[index].data;
+                           atol=2e-15)
+                  for index in eachindex(reference))
+
         # Both unravelings converge to the same matrix-free master equation.
         # The tolerance is stochastic and intentionally much larger than the
         # deterministic integration tolerance.

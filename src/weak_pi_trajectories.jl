@@ -56,6 +56,59 @@ end
 
 @inline _weak_sector_range(offsets,sector)=offsets[sector]:offsets[sector+1]-1
 
+# Preparing the exact sector scale once is important for ensemble
+# postprocessing: a trajectory average visits every sector once per saved
+# state.  The ordinary path deliberately retains the division used by
+# `_divide_by_schur_multiplicity_scale`; the prepared inverse-square-root path
+# is only used when the standalone divisor or the divided component is not
+# representable in the working precision.
+struct _WeakPIDensityScale{T<:AbstractFloat}
+    divisor::T
+    inverse::_PreparedExactScale{T,true}
+    context::String
+end
+
+function _weak_pi_density_scales(b::PIBasis,::Type{T}) where T<:AbstractFloat
+    map(b.sectors) do partition
+        multiplicity=symmetric_group_dimension(partition)
+        context="physical Schur-block scaling for $partition"
+        divisor=try
+            _checked_sqrt_exact_integer(T,multiplicity;
+                context="square root of the sector multiplicity for $partition")
+        catch error
+            error isa ArgumentError||rethrow()
+            zero(T)
+        end
+        inverse=_prepare_exact_scale(T,one(BigInt),multiplicity,Val(true);
+                                     context)
+        _WeakPIDensityScale(divisor,inverse,context)
+    end
+end
+
+@inline function _weak_density_outer_value(left::Complex{T},right::Complex{T},
+        scale::_WeakPIDensityScale{T}) where T<:AbstractFloat
+    value=left*conj(right)
+    if !iszero(scale.divisor)
+        result=value/scale.divisor
+        _ordinary_scaled_value_safe(result,value)&&return result
+    end
+    _apply_prepared_exact_scale(value,scale.inverse;context=scale.context)
+end
+
+function _weak_density_outer!(destination,psi,scale;accumulate::Bool)
+    axes(destination,1)==axes(destination,2)==axes(psi,1)||
+        throw(DimensionMismatch("weak-PI density block dimensions are incompatible"))
+    @inbounds for column in axes(destination,2),row in axes(destination,1)
+        value=_weak_density_outer_value(psi[row],psi[column],scale)
+        if accumulate
+            destination[row,column]+=value
+        else
+            destination[row,column]=value
+        end
+    end
+    destination
+end
+
 """
     weak_pi_density(state)
 
@@ -65,11 +118,11 @@ no full-Hilbert-space object is constructed.
 """
 function weak_pi_density(state::WeakPIPseudoKet{T}) where T
     b=state.basis;offsets=_weak_pi_offsets(b);rho=PIState(b;T=T)
+    scales=_weak_pi_density_scales(b,T)
     for (sector,partition) in pairs(b.sectors)
         psi=view(state.data,_weak_sector_range(offsets,sector))
-        outer=psi*psi'
-        coefficient_block(rho,partition).=_divide_by_schur_multiplicity_scale(
-            outer,T,partition)
+        _weak_density_outer!(coefficient_block(rho,partition),psi,
+                             scales[sector];accumulate=false)
     end
     rho
 end
@@ -622,11 +675,15 @@ function _weak_pi_trajectory_prepared(plan,state0,ts,w,rng,options)
     for output_index in 2:length(ts)
         target_time=ts[output_index]
         while t<target_time
-            h=min(options.dt,target_time-t)
+            h,lands_on_target=_trajectory_step_to_target(
+                t,target_time,options.dt)
             total=_weak_channel_intensities!(w,x,t,options.parameters)
-            total*h>options.max_jump_probability&&
-                (h=options.max_jump_probability/total)
-            _weak_conditional_rk4!(x,w,t,h,options.parameters);t+=h
+            if total*h>options.max_jump_probability
+                h=options.max_jump_probability/total
+                lands_on_target=false
+            end
+            _weak_conditional_rk4!(x,w,t,h,options.parameters)
+            t=lands_on_target ? target_time : t+h
             total=_weak_channel_intensities!(w,x,t,options.parameters)
             probability=-expm1(-total*h)
             if total>zero(total)&&rand(rng,typeof(probability))<probability
@@ -771,13 +828,13 @@ function weak_pi_trajectory_average(
         eltype(trajectories[1].states[1].data))
     result=[PIState(b;T=T) for _ in eachindex(times)]
     offsets=_weak_pi_offsets(b)
+    scales=_weak_pi_density_scales(b,T)
     for trajectory in trajectories,time_index in eachindex(times)
         state=trajectory.states[time_index]
         for (sector,partition) in pairs(b.sectors)
             psi=view(state.data,_weak_sector_range(offsets,sector))
-            contribution=_divide_by_schur_multiplicity_scale(
-                psi*psi',T,partition)
-            coefficient_block(result[time_index],partition).+=contribution
+            _weak_density_outer!(coefficient_block(result[time_index],partition),
+                                 psi,scales[sector];accumulate=true)
         end
     end
     for state in result

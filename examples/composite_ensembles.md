@@ -85,6 +85,7 @@ No plotting package is required.
 Finite factors retain `m^2` coordinates and therefore require an explicit
 finite truncation for a bosonic mode. Cross generators currently need a sum
 of factorized left/right/sandwich maps; there is no separate composite
-microscopic-term compiler. Composite quantum trajectories are also not yet
-implemented. Deterministic matrix-free application and fixed-step evolution
-are supported with reusable task-owned workspaces.
+microscopic-term compiler. Deterministic matrix-free application and
+fixed-step evolution use reusable task-owned workspaces. Density-valued
+cross-factor quantum jumps are demonstrated separately in
+[`composite_quantum_trajectories.jl`](composite_quantum_trajectories.jl).

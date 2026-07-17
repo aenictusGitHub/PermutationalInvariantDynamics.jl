@@ -7,7 +7,7 @@ function von_neumann_entropy(rho::PIState;base::Real=2,
     Rtype=_real_float_type(eltype(rho.data))
     s=zero(Rtype)
     for p in rho.basis.sectors
-        E=_weighted_sector_eigen(rho,p;atol=atol,rtol=rtol,
+        E=_weighted_sector_eigvals(rho,p;atol=atol,rtol=rtol,
             operation="von Neumann entropy")
         probability=zero(Rtype)
         for q in E.values
@@ -33,7 +33,7 @@ function renyi_entropy(rho::PIState,alpha::Real;base::Real=2,
     if isinf(alpha)
         maximum_log_eigenvalue=Rtype(-Inf)
         for p in rho.basis.sectors
-            E=_weighted_sector_eigen(rho,p;atol=atol,rtol=rtol,
+            E=_weighted_sector_eigvals(rho,p;atol=atol,rtol=rtol,
                 operation="infinite-order Rényi entropy")
             logf=_log_schur_multiplicity(Rtype,p)
             for q in E.values
@@ -54,7 +54,7 @@ function renyi_entropy(rho::PIState,alpha::Real;base::Real=2,
     maximum_term=Rtype(-Inf)
     scaled_sum=zero(Rtype)
     for p in rho.basis.sectors
-        E=_weighted_sector_eigen(rho,p;atol=atol,rtol=rtol,
+        E=_weighted_sector_eigvals(rho,p;atol=atol,rtol=rtol,
             operation="Rényi entropy")
         logf=_log_schur_multiplicity(Rtype,p)
         for q in E.values

@@ -110,11 +110,38 @@ end
 
 """Return PI states after `0:nperiods` applications of a Floquet propagator."""
 function stroboscopic_evolution(rho::PIState,F::AbstractMatrix,nperiods::Integer;include_initial::Bool=true)
-    nperiods>=0||throw(ArgumentError("nperiods must be nonnegative"));size(F)==(length(rho.data),length(rho.data))||throw(DimensionMismatch())
-    out=typeof(rho)[];x=copy(rho.data);y=similar(x);include_initial&&push!(out,PIState(rho.basis,copy(x)))
-    for n in 1:nperiods;mul!(y,F,x);x,y=y,x;push!(out,PIState(rho.basis,copy(x)));end
+    nperiods>=0||throw(ArgumentError("nperiods must be nonnegative"))
+    n=length(rho.data);size(F)==(n,n)||throw(DimensionMismatch())
+    x=_product_destination(F,rho.data,n);copyto!(x,rho.data);y=similar(x)
+    R=_real_float_type(eltype(x));out=PIState{R,typeof(rho.basis)}[]
+    # `PIState` already makes one defensive copy, so passing `x` directly
+    # keeps every saved state detached without an immediately discarded copy.
+    include_initial&&push!(out,PIState(rho.basis,x))
+    for _ in 1:nperiods
+        mul!(y,F,x);x,y=y,x;push!(out,PIState(rho.basis,x))
+    end
     out
 end
 
 """State after an integer number of periods."""
-floquet_evolve(rho::PIState,F::AbstractMatrix,nperiods::Integer)=PIState(rho.basis,F^nperiods*rho.data)
+function floquet_evolve(rho::PIState,F::AbstractMatrix,nperiods::Integer)
+    n=length(rho.data);size(F)==(n,n)||throw(DimensionMismatch())
+    # Preserve the established inverse-map semantics for negative periods.
+    # The allocation-saving repeated `mul!` path applies to forward periods;
+    # an inverse power may fail exactly as ordinary matrix powering did when
+    # the supplied map is singular.
+    nperiods<0&&return PIState(rho.basis,F^nperiods*rho.data)
+    x=_product_destination(F,rho.data,n)
+    if iszero(nperiods)
+        copyto!(x,rho.data)
+        return PIState(rho.basis,x)
+    end
+    mul!(x,F,rho.data)
+    if nperiods>1
+        y=similar(x)
+        for _ in 2:nperiods
+            mul!(y,F,x);x,y=y,x
+        end
+    end
+    PIState(rho.basis,x)
+end

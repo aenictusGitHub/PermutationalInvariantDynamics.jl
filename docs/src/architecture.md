@@ -1,5 +1,9 @@
 # Architecture and efficient workflows
 
+This chapter explains performance and ownership after the physical model has
+been defined. New users should first follow [Getting started: from a model to
+a solution](getting_started.md).
+
 ## Data flow
 
 The package separates declarative physics, immutable prepared data, and
@@ -20,6 +24,17 @@ invariant PIModel → PopulationPlan → reduced sparse action
 (PIBasis..., finite factors...) → CompositePIBasis
                                → CompositeSuperoperator
                                  └─ CompositeSuperoperatorWorkspace per task
+
+(composite background, monitored channels) → CompositeTrajectoryPlan
+                                            ├─ unconditional generator
+                                            └─ CompositeTrajectoryWorkspace per path
+
+(parameter grid, builder) → ParameterScanPlan
+                           → ParameterScanWorkspace per serial caller/worker
+
+(PI system, HEOMBath...) → HEOMPlan
+                         ├─ HEOMWorkspace per application task
+                         └─ HEOMEvolutionWorkspace per RK4 task
 ```
 
 `PIBasis` stores only polynomial-size Schur data. `PIModel` is an immutable
@@ -35,6 +50,11 @@ normalization and each finite factor in column-major matrix-unit coordinates.
 The first factor varies fastest. Tensor-mode kernels apply a sum of factorized
 maps with two reusable composite buffers and one small fibre buffer per active
 factor; they do not construct the corresponding global Kronecker matrix.
+Density-valued composite quantum jumps reuse the same tensor-mode kernel.
+Their plan assembles the unconditional master generator from a
+trace-preserving background plus explicit `CompositeJumpChannel`s. A path
+workspace owns one shared pair of full channel buffers, so full-coordinate
+storage does not scale with the channel count.
 
 ## Recommended commands
 
@@ -83,6 +103,12 @@ through `liouvillian`, `apply!`, `steady_state`,
 `implicitly_restarted_arnoldi_spectrum`, and
 `jacobi_davidson_spectrum`. The latter combines hard invariant-subspace
 locking with optionally preconditioned matrix-free correction solves.
+Structured repeated systems additionally use `block_gmres`,
+`multishift_gmres`, `recycled_gmres`, and `krylov_expv`; their workspaces reuse
+dominant full-coordinate arrays but still form small dense projected problems.
+Prepared scans, HEOM, and explicit refinement reports have dedicated guides:
+[Parameter scans](parameter_scans.md), [PI--HEOM](heom.md), and
+[Numerical convergence](convergence.md).
 See [API tiers and prepared analysis](api_tiers.md) for the supported
 high-level, advanced, and experimental surfaces.
 
@@ -133,9 +159,11 @@ The compatibility `mul!` and `MatrixFreeLiouvillian.action!` routes are
 synchronized and safe, but concurrent calls serialize. Explicit workspaces
 avoid that lock.
 
-The same ownership rule applies to `SymmetryProjectorWorkspace` and
-`ArnoldiWorkspace`, and to `MeanFieldWorkspace`: workspaces are mutable and
-must not be shared by concurrent calls.
+The same ownership rule applies to `SymmetryProjectorWorkspace`, all ordinary
+and advanced Krylov workspaces, `MeanFieldWorkspace`, scan workspaces, HEOM
+workspaces, and stochastic batch workspaces: workspaces are mutable and must
+not be shared by concurrent calls. `RecycledGMRESWorkspace` additionally owns
+the ordered continuation chain itself.
 
 ## Mean-field prediction beside exact PI dynamics
 

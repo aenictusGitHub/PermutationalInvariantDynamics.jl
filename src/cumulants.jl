@@ -422,6 +422,7 @@ _val_symbol(::Val{value}) where value=value
 
 function _detached_payload_operator(operator)
     operator===nothing&&return nothing
+    operator isa Tuple&&return map(_detached_payload_operator,operator)
     applicable(copy,operator)||throw(ArgumentError(
         "a cumulant payload operator of type $(typeof(operator)) must support copy"))
     copy(operator)
@@ -627,4 +628,41 @@ function quantumcumulants_initial_values(moments::OrderedLocalMoments,
     extension===nothing&&throw(ArgumentError(
         "QuantumCumulants is not loaded; run `import QuantumCumulants` before requesting symbolic initial values"))
     extension.quantumcumulants_initial_values(moments,symbolic_map)
+end
+
+"""
+    quantumcumulants_model(model; order=2, time=nothing, parameters=nothing,
+                           complete=false, scale=false, kwargs...)
+
+Automatically lower the microscopic terms of a [`PIModel`](@ref) to indexed
+SecondQuantizedAlgebra operators and construct QuantumCumulants equations.
+This optional method becomes available after `import QuantumCumulants`; the
+core package retains no symbolic-algebra dependency.
+
+One-body Hamiltonians and local or collective jumps are lowered directly.
+Permutation-symmetric `p`-body terms use pairwise-distinct symbolic indices
+and the exact `1/factorial(p)` conversion from ordered tuples to the package's
+unordered-subset convention. Fixed correlated one-body baths are factorized
+into independent symbolic jump channels. Direct PI terms are rejected because
+Schur blocks do not specify a unique microscopic realization. Time-dependent
+operators, rates, or Kossakowski matrices require an explicit `time` (and
+optional `parameters`) at which they can be evaluated.
+
+The returned named tuple retains the symbolic Hilbert space, summation and
+probe indices, Hamiltonian, jumps, rates, seed operators, equations, and
+lowering metadata. By default the equations contain the requested seed
+moments but are not recursively completed or permutation-scaled; set
+`complete=true` and/or `scale=true` explicitly. Extra keywords are forwarded
+to the optional adapter, including `seed_operators`, `space_name`,
+`transition_name`, and `ground_state`.
+
+This is a cumulant closure, not exact finite-`N` PI dynamics. Validate its
+selected order against [`ordered_local_moments`](@ref) or exact PI evolution.
+"""
+function quantumcumulants_model(model::PIModel;kwargs...)
+    extension=Base.get_extension(@__MODULE__,
+        :PermutationalInvariantDynamicsQuantumCumulantsExt)
+    extension===nothing&&throw(ArgumentError(
+        "QuantumCumulants is not loaded; run `import QuantumCumulants` before requesting automatic symbolic lowering"))
+    extension.quantumcumulants_model(model;kwargs...)
 end

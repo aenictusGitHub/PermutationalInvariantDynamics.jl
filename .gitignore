@@ -2,6 +2,8 @@
 /Manifest.toml
 /quality/Manifest.toml
 /examples/Manifest.toml
+/test/optional/Manifest.toml
+/notebooks/Manifest.toml
 
 # Built documentation and coverage output
 /docs/build/

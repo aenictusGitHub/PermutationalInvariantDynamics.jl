@@ -4,6 +4,10 @@ The package exposes three API tiers. The tiers describe the recommended level
 of abstraction and the expected rate of interface evolution; they do not
 replace numerical convergence checks or the mathematical caveats of a method.
 
+For a first model, read [Getting started: from a model to a
+solution](getting_started.md) before using this page to decide how far below
+the high-level API your calculation needs to go.
+
 ## Stable high-level API
 
 These entry points are intended for ordinary research scripts and examples.
@@ -17,7 +21,7 @@ They validate basis ownership and return package-level state or result objects.
 | Mean-field predictions | `MeanFieldPlan`, `solve_meanfield`, `meanfield_problem`, `meanfield_stationary_state`, `meanfield_stability` |
 | Stationary and spectral analysis | `stationary_state`, `liouvillian_spectrum`, `pi_liouvillian_gap`, `diagnostics`, `recommend_solver` |
 | Observables and information | `collective_expectation`, `collective_variance`, `qfi`, `qfim`, `two_time_correlation`, `delayed_second_order_correlation`, `stationary_correlation_spectrum`, entropy and distance functions |
-| Visualization | `schur_block_structure`, `visualize_schur_blocks`, `spin_husimi_q`, `spin_wigner`, `visualize_spin_phase_space`, and the density/Liouvillian/Floquet spectrum data and renderers |
+| Visualization | `schur_block_structure`, `visualize_schur_blocks`, `spin_husimi_q`, `spin_wigner`, `qudit_husimi_q`, `visualize_spin_phase_space`, and the density/Liouvillian/Floquet spectrum data and renderers |
 | Reductions and entanglement | `one_body_rdm`, `reduced_state`, `reduced_state!`, `reduced_purity`, `negativity`, `partial_transpose_spectrum` |
 | Validation | `state_diagnostics`, `positivity_diagnostics`, `validate_state` |
 
@@ -38,6 +42,24 @@ threading contracts.
   `LiouvillianWorkspace`, `EvolutionWorkspace`, `KrylovWorkspace`,
   `ArnoldiWorkspace`, `SymmetryProjectorWorkspace`, and `ReductionWorkspace`
   hold mutable scratch.
+- `BlockGMRESWorkspace`, `MultiShiftGMRESWorkspace`,
+  `RecycledGMRESWorkspace`, and `KrylovExpvWorkspace` reuse dominant
+  full-coordinate storage for structured linear solves and exponential
+  actions. Projected dense factorizations may still allocate, and every
+  workspace is task-owned.
+- `ParameterScanPlan` holds a copied parameter grid and callable model recipe;
+  `ParameterScanWorkspace` holds continuation and solver scratch. Serial
+  continuation, independent threaded scans, and optional process-distributed
+  scans have deliberately different ownership contracts described in the
+  [scan guide](parameter_scans.md).
+- `HEOMPlan` stores the finite hierarchy topology and physical coupling data.
+  `HEOMWorkspace` and `HEOMEvolutionWorkspace` separate application scratch
+  from hierarchy-sized RK4 stages. Hard hierarchy truncation and bath-pole
+  convergence remain explicit research choices.
+- `QuditHusimiPlan` retains dense coherent vectors for a fixed point/sector
+  set and exact basis. Reuse it across states; setup can dominate for many
+  large irreps. `ConvergenceStudyResult` retains every requested refinement
+  result, so extract compact estimates when histories are large.
 - `TrajectoryPlan` holds one immutable fixed-operator jump lowering.
   `TrajectoryWorkspace` owns one path's integration buffers, while
   `TrajectoryBatchWorkspace` owns task-local workspaces and RNGs for repeated
@@ -52,6 +74,11 @@ threading contracts.
   factor fibres, and nested PI application workspaces. Use explicit
   task-owned workspaces in hot or parallel loops; the convenience matrix-free
   wrapper serializes access to one compatibility workspace.
+- `CompositeTrajectoryPlan` owns explicit fixed monitored channels, their
+  assembled unconditional generator, and multiplicity-aware trace metadata.
+  `CompositeTrajectoryWorkspace` shares two full channel buffers across all
+  gains and losses; batch workspaces add one complete path workspace and RNG
+  per active task. The supplied background excludes monitored dissipators.
 - `PopulationPlan` stores the certified sparse action on multiplicity-weighted
   Schur-diagonal probabilities. `PopulationWorkspace` owns its application and
   RK4 scratch. Certification is exact by default, compile-only coordinate
@@ -171,12 +198,16 @@ algorithms may evolve as the remaining numerical bottlenecks are addressed.
   realization requires a task-owned `DiffusiveWorkspace`. The normalized
   Euler--Maruyama step must be converged in `dt` and is not a finite-step
   positivity certificate.
+- Confidence-controlled quantum-jump and diffusive ensembles use bounded
+  Hermitian observables and simultaneous empirical-Bernstein checks at fixed
+  batch boundaries. Their `converged` flag covers Monte Carlo sampling only,
+  not integration-step, hierarchy, model, or finite-size convergence.
 - `ordered_local_moments`, the versioned neutral cumulant payloads, and the
   optional QuantumCumulants adapter provide exact finite-`N` reference data
-  for higher-order closures.  The schema and exact moment convention are
-  fixed, while future adapters may automate additional package-specific
-  symbolic lowering.  The selected order still carries `d^(2k)` local-tensor
-  storage.
+  for higher-order closures. The extension can also lower supported
+  microscopic `PIModel` terms to QuantumCumulants 0.5 indexed equations;
+  direct PI terms and ambiguous schedules are rejected. The selected order
+  remains an approximation and still carries `d^(2k)` local-tensor storage.
 - `WeakPIPseudoKet`, `WeakPITrajectoryPlan`, and the `weak_pi_*` trajectory
   functions provide an opt-in direct-sum Schur-irrep unraveling. Fixed local
   gains are decomposed into checked one-box Kraus branches for qubits and
@@ -185,12 +216,13 @@ algorithms may evolve as the remaining numerical bottlenecks are addressed.
   local-p-body jumps, adaptive event timing, and composite pseudo-ket paths
   are not yet part of this surface.
 - `CompositePIBasis`, `FiniteOperatorBasis`, factorized composite states and
-  operators, and `CompositeSuperoperator` provide deterministic dynamics of
-  several PI ensembles and small finite auxiliaries without a global
-  Kronecker superoperator. The tensor-coordinate convention is fixed, but the
-  higher-level model-construction surface may evolve. There is currently no
-  composite trajectory compiler or implicit extension of single-ensemble
-  reduction routines.
+  operators, `CompositeSuperoperator`, and `CompositeTrajectoryPlan` provide
+  deterministic and density-valued quantum-jump dynamics of several PI
+  ensembles and small finite auxiliaries without a global Kronecker
+  superoperator. Monitored tensor-product channels are explicit and use
+  task-owned fixed-step workspaces. Composite pseudo-kets, diffusive/event-
+  driven paths, arbitrary gain maps, and implicit extensions of
+  single-ensemble reduction routines remain outside this surface.
 
 Experimental does not mean “unchecked”: these paths have regression tests.
 It means that algorithm selection, diagnostic fields, or preallocation

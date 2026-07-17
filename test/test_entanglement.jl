@@ -87,6 +87,39 @@ end
     @test_throws ArgumentError partial_transpose_spectrum(state,1;plan=plan)
 end
 
+@testset "plan-local SU(2) factorial cache" begin
+    PID=PermutationalInvariantDynamics
+    cache=PID._SU2FactorialCache(401)
+
+    # Cached factorial lookup changes setup work only: both the ordinary
+    # Float64 Racah route and the exact-cancellation route remain bit-identical
+    # to standalone coefficient evaluation.
+    samples=((32,0,32,0,32,0),
+             (34,0,34,0,34,0),
+             (120,-44,120,44,120,0),
+             (200,200,200,-200,0,0))
+    for labels in samples
+        @test PID._su2_cgc(cache,labels...)===PID._su2_cgc(labels...)
+    end
+
+    # Check complete retained plan data, including zero entries and every
+    # coupled parent sector, against the uncached construction oracle.
+    basis=PIBasis(12,2)
+    cached=PID._qubit_reduction_couplings(basis,6)
+    uncached=PID._qubit_reduction_couplings(basis,6,nothing)
+    @test [(c.alpha,c.beta,c.da,c.db,c.alpha_multiplicity,
+            c.beta_multiplicity,c.product_multiplicity) for c in cached]==
+          [(c.alpha,c.beta,c.da,c.db,c.alpha_multiplicity,
+            c.beta_multiplicity,c.product_multiplicity) for c in uncached]
+    cached_connections=[(sector,U) for c in cached
+                        for (sector,intertwiners) in c.intertwiners
+                        for U in intertwiners]
+    uncached_connections=[(sector,U) for c in uncached
+                          for (sector,intertwiners) in c.intertwiners
+                          for U in intertwiners]
+    @test cached_connections==uncached_connections
+end
+
 @testset "reduced density-matrix purity" begin
     for N in 2:6
         b=PIBasis(N,2);sym=Partition((N,0));gs=b.patterns[b.index[sym]]

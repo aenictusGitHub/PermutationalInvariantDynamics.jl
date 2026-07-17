@@ -1,3 +1,28 @@
+function _floquet_evolve_allocation_comparison(rho,F,nperiods)
+    floquet_evolve(rho,F,nperiods)
+    PIState(rho.basis,F^nperiods*rho.data)
+    efficient=@allocated floquet_evolve(rho,F,nperiods)
+    matrix_power=@allocated PIState(rho.basis,F^nperiods*rho.data)
+    efficient,matrix_power
+end
+
+function _legacy_stroboscopic_evolution(rho,F,nperiods)
+    out=typeof(rho)[];x=copy(rho.data);y=similar(x)
+    push!(out,PIState(rho.basis,copy(x)))
+    for _ in 1:nperiods
+        mul!(y,F,x);x,y=y,x;push!(out,PIState(rho.basis,copy(x)))
+    end
+    out
+end
+
+function _stroboscopic_allocation_comparison(rho,F,nperiods)
+    stroboscopic_evolution(rho,F,nperiods)
+    _legacy_stroboscopic_evolution(rho,F,nperiods)
+    efficient=@allocated stroboscopic_evolution(rho,F,nperiods)
+    double_copy=@allocated _legacy_stroboscopic_evolution(rho,F,nperiods)
+    efficient,double_copy
+end
+
 @testset "Floquet dynamics and preallocated time dependence" begin
     sx=ComplexF64[0 1;1 0];sm=ComplexF64[0 1;0 0];T=1.3
     b=PIBasis(2,2);rate=(t,p)->1+0.3cos(2pi*t/T)
@@ -73,6 +98,42 @@
     trajectory=stroboscopic_evolution(rho,F,3)
     @test length(trajectory)==4
     @test trajectory[end].data≈floquet_evolve(rho,F,3).data atol=2e-11
+    @test all(trajectory[i].data!==trajectory[j].data
+              for i in eachindex(trajectory),j in eachindex(trajectory) if i!=j)
+    @test isempty(stroboscopic_evolution(rho,F,0;include_initial=false))
+    @test floquet_evolve(rho,F,0).data==rho.data
+    @test floquet_evolve(rho,F,-1).data≈F^-1*rho.data atol=2e-12
+    @test_throws DimensionMismatch floquet_evolve(rho,zeros(2,2),1)
+
+    # Allocating products follow ordinary matrix promotion, including the
+    # zero-period identity map, without narrowing a Float64 map into a Float32
+    # state buffer.
+    rho32=iid_pure_state(b,ComplexF32[0,1])
+    promoted=floquet_evolve(rho32,F,0)
+    @test eltype(promoted.data)===ComplexF64
+    @test promoted.data==ComplexF64.(rho32.data)
+    promoted_path=stroboscopic_evolution(rho32,F,1)
+    @test eltype(first(promoted_path).data)===ComplexF64
+    @test last(promoted_path).data≈F*ComplexF64.(rho32.data) atol=2e-12
+
+    # A dense matrix power constructs PI-dimensional matrix temporaries even
+    # when only its action on one state is needed. Repeated two-vector `mul!`
+    # applications retain the same value with substantially less allocation.
+    allocation_basis=PIBasis(9,2)
+    allocation_state=iid_pure_state(allocation_basis,ComplexF64[0,1])
+    allocation_dimension=length(allocation_basis)
+    allocation_map=Matrix{ComplexF64}(I,allocation_dimension,
+                                      allocation_dimension)
+    allocation_map[1,2]=0.01
+    periods=8
+    @test floquet_evolve(allocation_state,allocation_map,periods).data≈
+          allocation_map^periods*allocation_state.data atol=2e-13
+    evolve_alloc,power_alloc=_floquet_evolve_allocation_comparison(
+        allocation_state,allocation_map,periods)
+    @test evolve_alloc<power_alloc
+    saved_alloc,double_copy_alloc=_stroboscopic_allocation_comparison(
+        allocation_state,allocation_map,periods)
+    @test saved_alloc<double_copy_alloc
 
     # Constant Hamiltonian is a second, non-dissipative reference.
     unitary=PIModel(b,[LocalHamiltonian(sx;rate=(t,p)->0.4)])

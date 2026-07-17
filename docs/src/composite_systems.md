@@ -140,6 +140,88 @@ a synchronized compatibility `MatrixFreeLiouvillian` for APIs that require
 that wrapper; parallel hot loops should retain explicit task-owned composite
 workspaces instead.
 
+## Density-valued composite quantum jumps
+
+Monitored tensor-product channels are declared explicitly. The background
+contains trace-preserving coherent and unmonitored physics and must exclude
+the monitored dissipators:
+
+```julia
+background = composite_hamiltonian_superoperator(
+    basis, 1 => Jx_a, 3 => X_c; rate=0.05)
+
+channel = CompositeJumpChannel(
+    basis, 2 => Jm_b, 3 => sm;
+    rate=0.02,
+    label=:joint_emission,
+)
+plan = CompositeTrajectoryPlan(background, channel)
+```
+
+The plan adds one complete dissipator per channel and exposes the resulting
+unconditional generator through `composite_master_superoperator(plan)`. This
+split is intentional: an arbitrary sum of superoperator terms does not retain
+enough information to infer a unique physical unraveling, and accepting an
+already complete generator plus the same channels would double-count their
+gains.
+
+For channel ``k`` with ``G_k[\rho]=J_k\rho J_k^\dagger`` and
+``Q_k=J_k^\dagger J_k``, the normalized conditional equation is
+
+```math
+\dot\rho_c=\mathcal L_0(\rho_c)
+-\frac12\sum_k\gamma_k\{Q_k,\rho_c\}
++\left(\sum_k\lambda_k\right)\rho_c,
+\qquad
+\lambda_k=\gamma_k\,\mathrm{tr}(Q_k\rho_c).
+```
+
+A selected jump maps ``\rho_c`` to
+``G_k[\rho_c]/\mathrm{tr}(G_k[\rho_c])``. The fixed operator maps remain
+factorized. Scalar rates may be driven, but every evaluated trajectory rate
+must be finite, real, nonnegative, and representable in the prepared
+precision. Rate schedules used by threaded batches must be pure and thread
+safe; mutable external callback state is not synchronized by the plan.
+
+The fixed-step backend integrates each channel hazard with the same RK4
+stages as the conditional state. A trial is shortened and recomputed whenever
+the jump probability corresponding to its integrated total hazard would
+exceed `max_jump_probability`; a rapidly changing rate therefore cannot
+bypass the configured probability cap merely because it was small at the
+beginning of the step.
+
+```julia
+workspace = CompositeTrajectoryWorkspace(plan, rho)
+path = quantum_trajectory(
+    plan, rho, 0.0:0.05:2.0;
+    dt=0.005,
+    workspace=workspace,
+)
+
+batch = CompositeTrajectoryBatchWorkspace(plan, rho)
+paths = quantum_trajectories(
+    plan, rho, 0.0:0.05:2.0, 1_000;
+    dt=0.005,
+    seed=11,
+    threaded=true,
+    workspace=batch,
+)
+mean_states = trajectory_average(paths)
+```
+
+Plans are immutable and shareable. A single-path workspace owns the RK4
+stages, one background workspace, one shared pair of full tensor buffers, and
+small channel-specific factor-fibre scratch. The number of full composite
+buffers is therefore independent of the number of monitored channels. Batch
+workers own distinct workspaces and RNGs; global trajectory-index seeds make
+serial and threaded scheduling sample the same ordered paths.
+
+With named Hermitian `CompositePIOperator` observables and
+`save_states=false`, `quantum_trajectories` returns online means, variances,
+confidence intervals, and optional jump statistics without storing sampled
+states. Individual paths are density-valued and can be mixed when the
+background contains unresolved local PI channels.
+
 ## Current scope
 
 - Finite auxiliary factors retain all `m^2` operator coordinates, so a bosonic
@@ -150,8 +232,14 @@ workspaces instead.
 - The current high-level `PIModel` compiler acts on one PI ensemble. Composite
   generators are assembled from compiled local actions and explicit cross
   maps as above.
-- There is not yet a composite quantum-trajectory compiler. The existing PI
-  trajectory API applies to a single PI model, not to `CompositeSuperoperator`.
+- Composite trajectories currently support fixed tensor-product jump
+  operators and fixed-step conditional integration. Callable jump operators,
+  arbitrary CP gain maps, event-driven integration, diffusive monitoring,
+  adaptive-confidence stopping, Distributed batches, and composite weak-PI
+  pseudo-kets are not implemented.
+- A finite bosonic mode needs an explicit truncation. Converge that truncation,
+  the fixed time step, maximum jump probability, and trajectory count
+  independently.
 - Single-ensemble analysis routines such as Schur-sector negativity or the
   population backend are not implicitly generalized to composite states.
   Reduce or contract the intended factors explicitly when an analysis needs
@@ -179,8 +267,16 @@ factor_sandwich_superoperator
 composite_hamiltonian_superoperator
 composite_dissipator_superoperator
 composite_matrixfree
+CompositeJumpChannel
+CompositeTrajectoryPlan
+CompositeTrajectoryWorkspace
+CompositeTrajectoryBatchWorkspace
+CompositeQuantumTrajectory
+composite_master_superoperator
 ```
 
 See [`examples/composite_ensembles.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/composite_ensembles.jl)
 for a complete small calculation with two PI ensembles and one finite
-ancilla.
+ancilla. [`examples/composite_quantum_trajectories.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/composite_quantum_trajectories.jl)
+compares a cross-factor jump ensemble with the independently propagated
+master equation.

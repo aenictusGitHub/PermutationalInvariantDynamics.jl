@@ -141,8 +141,9 @@ silently narrow. Hamiltonian rates must likewise be finite and real.
 
 Fixed operator-valued collective/direct jumps and fixed one-body local jumps
 are supported. Operator-valued schedules and `LocalPBodyJump` are rejected.
-The deterministic composite basis can represent a finite cavity, but a
-composite pseudo-ket trajectory compiler is still separate future work.
+The composite backend can represent a finite cavity and density-valued
+tensor-product quantum jumps, but a composite pseudo-ket trajectory compiler
+is still separate future work.
 
 The runnable
 [`weak_pi_trajectories.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/weak_pi_trajectories.jl) example
