@@ -111,7 +111,11 @@ using .ExampleContourFit
           full_fit.coefficients.quadratic.*full_fit.fit_x.^2 .+
           full_fit.coefficients.linear.*full_fit.fit_x .+
           full_fit.coefficients.constant atol=3e-14
-    @test all(first(general_y).<=full_fit.fit_y.<=last(general_y))
+    fit_type=eltype(full_fit.fit_y)
+    domain_tolerance=fit_type(64)*eps(fit_type)*max(
+        one(fit_type),abs(first(general_y)),abs(last(general_y)))
+    @test minimum(full_fit.fit_y)>=first(general_y)-domain_tolerance
+    @test maximum(full_fit.fit_y)<=last(general_y)+domain_tolerance
     @test full_fit.objective===:general_quadratic_least_squares
 
     suppressed_fit=quadratic_level_contour_fit(

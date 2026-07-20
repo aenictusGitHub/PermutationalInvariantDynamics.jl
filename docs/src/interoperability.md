@@ -4,6 +4,29 @@ The core package remains lightweight. Optional Julia packages activate
 extensions only after they are loaded; none changes the PI representation or
 causes a full-Hilbert reconstruction.
 
+## Clarabel
+
+[Clarabel.jl](https://github.com/oxfordcontrol/Clarabel.jl) supplies the
+semidefinite optimizer for the PI qubit PPT-mixture test. Load it explicitly
+before the first solve:
+
+```julia
+using PermutationalInvariantDynamics
+import Clarabel
+
+basis = PIBasis(3, 2)
+result = ppt_mixture_test(ghz_state(basis))
+```
+
+The core `PPTMixturePlan` prepares the sparse Schur-block conic map without
+loading Clarabel. The extension creates solver state for each call, maps the
+complex Hermitian constraints to real PSD cones, and returns its primal and
+dual vectors to core code for independent certificate validation. A solver
+termination status alone is never promoted to an entanglement claim. See
+[Genuine multipartite entanglement](genuine_entanglement.md) for the
+three-valued result semantics, restricted-sector behavior, scaling, and
+memory controls.
+
 ## Tables.jl
 
 After `using Tables`, `ParameterScanResult` is a lazy row table. Large states,
@@ -90,6 +113,7 @@ JLD2 and HDF5 activate portable checkpoint writers described in the
 [research utilities](research_utilities.md). All optional methods validate
 their schema and reject ambiguous or narrowing conversions.
 
-The repository's isolated optional-extension CI environment smoke-tests Makie
-conversions, QuantumCumulants lowering, and JLD2/HDF5 checkpoint round trips
-without adding any of these packages to the core dependency set.
+The repository's isolated optional-extension CI environment smoke-tests the
+Clarabel PPT-mixture solve, Makie conversions, QuantumCumulants lowering, and
+JLD2/HDF5 checkpoint round trips without adding any of these packages to the
+core dependency set.

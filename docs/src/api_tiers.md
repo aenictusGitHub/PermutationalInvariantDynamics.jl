@@ -20,9 +20,9 @@ They validate basis ownership and return package-level state or result objects.
 | Dynamics | `solve_dynamics` (including observable-only streaming), `solve_populations`, `dynamics_problem`, `floquet_steady_state`, `quantum_trajectories` (including online ensemble statistics), `trajectory_steady_state` |
 | Mean-field predictions | `MeanFieldPlan`, `solve_meanfield`, `meanfield_problem`, `meanfield_stationary_state`, `meanfield_stability` |
 | Stationary and spectral analysis | `stationary_state`, `liouvillian_spectrum`, `pi_liouvillian_gap`, `diagnostics`, `recommend_solver` |
-| Observables and information | `collective_expectation`, `collective_variance`, `qfi`, `qfim`, `two_time_correlation`, `delayed_second_order_correlation`, `stationary_correlation_spectrum`, entropy and distance functions |
+| Observables and information | `collective_expectation`, `collective_variance`, `qfi`, `qfim`, `stabilizer_renyi_entropy`, `two_time_correlation`, `delayed_second_order_correlation`, `stationary_correlation_spectrum`, entropy and distance functions |
 | Visualization | `schur_block_structure`, `visualize_schur_blocks`, `spin_husimi_q`, `spin_wigner`, `qudit_husimi_q`, `visualize_spin_phase_space`, and the density/Liouvillian/Floquet spectrum data and renderers |
-| Reductions and entanglement | `one_body_rdm`, `reduced_state`, `reduced_state!`, `reduced_purity`, `negativity`, `partial_transpose_spectrum` |
+| Reductions and entanglement | `one_body_rdm`, `reduced_state`, `reduced_state!`, `reduced_purity`, `negativity`, `partial_transpose_spectrum`, `ppt_mixture_test` |
 | Validation | `state_diagnostics`, `positivity_diagnostics`, `validate_state` |
 
 Prefer these commands in new code. In particular, `stationary_state` returns a
@@ -38,6 +38,18 @@ threading contracts.
 - `OneBodyGeometry`, `PBodyGeometry`, `CollectiveObservablePlan`, and
   `ReductionPlan` own prepared representation data. They can only be used with
   the exact `PIBasis` object from which they were constructed.
+- `PPTMixturePlan` owns the sparse real conic map for the PI qubit
+  PPT-mixture test. It is tied to one exact basis and is safe to share across
+  state scans; Clarabel solver state is call-local. Even for a
+  sector-restricted input basis, the plan enforces equality in every Schur
+  sector of the complete basis.
+- `StabilizerRenyiPlan` owns normalized Krawtchouk transforms and stable
+  binomial metadata for one exact qubit basis and precision.
+  `StabilizerRenyiWorkspace` owns the `O(N^2)` mutable transform scratch.
+  Reuse both across pure symmetric states, share only the plan between tasks,
+  and read the [nonstabilizerness guide](nonstabilizerness.md) before
+  interpreting the result. Mixed or multi-sector states are rejected rather
+  than assigned the paper's pure-state measure.
 - `LiouvillianPlan`, `CompiledPIModel`, and `CompiledPIModelFamily` hold lowered model data;
   `LiouvillianWorkspace`, `ThreadedLiouvillianWorkspace`,
   `EvolutionWorkspace`, `KrylovWorkspace`,

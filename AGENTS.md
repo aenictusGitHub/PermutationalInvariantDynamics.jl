@@ -83,9 +83,10 @@ Published validation also uses maintainer-local copies of
 - Supported Julia: 1.10 and later.
 - Core dependencies: `LinearAlgebra`, `SparseArrays`, `Random`, and
   `SciMLBase`.
-- Weak dependencies: `Distributed`, `Tables`, `Makie`, `QuantumCumulants`,
-  `JLD2`, and `HDF5`. Their methods belong in matching `ext/` modules.
-- Current extension compatibility is Tables 1, Makie 0.21--0.24,
+- Weak dependencies: `Clarabel`, `Distributed`, `Tables`, `Makie`,
+  `QuantumCumulants`, `JLD2`, and `HDF5`. Their methods belong in matching
+  `ext/` modules.
+- Current extension compatibility is Clarabel 0.11, Tables 1, Makie 0.21--0.24,
   QuantumCumulants 0.5, JLD2 0.4--0.5, HDF5 0.16--0.17, and the supported
   Julia 1.10+ `Distributed` stdlib. Update compat and optional smoke tests
   together.
@@ -224,8 +225,10 @@ pattern.
 - Krylov, spectra, and symmetries: `krylov.jl`, `krylov_extensions.jl`,
   `spectra.jl`, `evans.jl`, `symmetries.jl`, and
   `restricted_symmetries.jl`.
-- State analysis: `observables.jl`, `entanglement.jl`, `information.jl`,
-  `symmetry_information.jl`, `populations.jl`, and `research_utilities.jl`.
+- State analysis: `observables.jl`, `entanglement.jl`,
+  `genuine_entanglement.jl`, `information.jl`, `nonstabilizerness.jl`,
+  `symmetry_information.jl`, `populations.jl`, and
+  `research_utilities.jl`.
 - Deterministic dynamics and studies: `sciml.jl`, `evolution.jl`,
   `meanfield.jl`, `floquet.jl`, `response.jl`, `correlations.jl`,
   `highlevel.jl`, `scans.jl`, and `convergence.jl`.
@@ -396,6 +399,30 @@ the Kossakowski matrix.
 - General negativity has three exact routes: occupation branching for fully
   symmetric states, SU(2) recoupling for general qubits, and LR intertwiners for
   general qudits.
+- `PPTMixturePlan` implements only the Novo--Moroder--Gühne PI qubit
+  PPT-mixture SDP. It owns a sparse read-only conic map; Clarabel solver state
+  is call-local. A restricted input basis still requires complete internal
+  Schur-sector equality constraints with exact zeros in absent source sectors.
+  Only a validated numerical non-PPT-mixture dual certificate detects GME for
+  arbitrary `N`, within its reported tolerances; it is not an exact-arithmetic
+  proof. PPT-mixture membership is also a biseparability certificate only for
+  PI `N=3` (and the bipartite `N=2` consistency case). Never infer a conclusion
+  from the raw scaled slack or solver status alone.
+- `stabilizer_renyi_entropy` implements the second stabilizer Rényi entropy
+  ``M_2`` of Passarelli--Fazio--Lucignano only in its paper-defined domain:
+  a validated pure qubit state with exact support in the fully symmetric
+  `(N,0)` sector.  Do not apply its fourth Pauli moment to mixed or
+  multi-sector PI states and call the result magic; the function must reject
+  those inputs rather than project them.  A complete qubit basis is accepted
+  when all other stored blocks are exactly zero.
+- `StabilizerRenyiPlan` retains bounded normalized Krawtchouk transforms,
+  hypergeometric modes, and logarithmic binomial data for one exact basis;
+  `StabilizerRenyiWorkspace` owns its mutable transform arrays and is
+  task-owned.  Evaluation is ``O(N^4)`` with ``O(N^3)`` retained plan data and
+  ``O(N^2)`` workspace.  It must never construct a ``2^N`` state, a ``4^N``
+  Pauli list, or a table of representative Pauli matrices.  Keep the final
+  multinomial contraction in log-sum-exp form and retain the independent
+  Pauli second-moment/purity check.
 - Product-Schur trace norms and reduced states use the exact weight
   `f^alpha * f^beta`. Qudit LR multiplicities are counted exactly; forbidden
   weights are removed before sparse generator constraints and SPQR nullspace

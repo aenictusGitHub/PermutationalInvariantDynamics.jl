@@ -721,6 +721,39 @@ recouplers, and a parent-block buffer; warmed in-place marginal allocation is
 below the prior small-system baseline instead of rebuilding BigInts or
 allocating mixed-real/complex multiplication scratch on every call.
 
+## Symmetric stabilizer Rényi entropy
+
+`stabilizer_renyi_entropy` implements the pure-state second stabilizer Rényi
+entropy of Passarelli--Fazio--Lucignano, not a mixed-state fourth-Pauli-moment
+functional.  It consequently accepts only validated qubit density operators
+with unit purity and exact stored support in the `(N,0)` Schur sector.  This is
+intentional: applying the formula to the maximally mixed state would produce a
+large number with no nonstabilizerness interpretation.  A complete basis is
+still valid if every nonsymmetric block is structurally zero.
+
+For each split `L=n_I+n_Z`, the implementation forms a bounded
+hypergeometric-weighted rectangular block and transforms it as
+
+`E_L = K_L H_L K_(N-L)^T`,
+
+where `K_s[k,d]` is the normalized Krawtchouk polynomial coefficient.  The
+recurrence is evaluated only to its midpoint and reflected with
+`K_s[s-k,d]=(-1)^d*K_s[k,d]`; the middle odd-parity value is structural zero.
+The `L` slices stream Pauli representatives directly into log-sum-exp fourth
+and second moments.  Exact binomials are used only during plan setup to seed
+hypergeometric mode probabilities; all retained setup factors are bounded.
+
+This removes the paper's need to store `O(N^3)` representative Pauli matrices
+and reduces a subsequent scalar `M_2` evaluation to `O(N^4)` time.  The
+immutable plan retains the `O(N^3)` Krawtchouk tables, while a task-owned
+workspace holds one `O(N^2)` probability table and five complex transform
+buffers.  Do not replace its complex Krawtchouk workspace copies with mixed
+real/complex `mul!` calls: Julia 1.10 can allocate conversion scratch there.
+The Pauli second-moment identity is a non-negotiable transform diagnostic;
+slightly negative `M_2` is corrected only when its fourth-moment violation is
+already within that numerical bound, otherwise evaluation raises with
+wider-precision guidance.
+
 Static collective p-body blocks and local-gain sector-pair groups detect
 ill-conditioned path cancellation and recompute only the affected data with
 guarded wider precision. The gain check includes large direct path-pair

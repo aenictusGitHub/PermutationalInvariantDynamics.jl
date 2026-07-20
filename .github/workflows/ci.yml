@@ -98,7 +98,7 @@ jobs:
         run: >-
           julia --project=test/optional -e 'using Pkg;
           Pkg.develop(path=pwd()); Pkg.instantiate()'
-      - name: Makie, QuantumCumulants, JLD2, and HDF5 smoke tests
+      - name: Clarabel, Makie, QuantumCumulants, JLD2, and HDF5 smoke tests
         run: julia --project=test/optional test/optional/runtests.jl
 
   threaded:

@@ -47,6 +47,8 @@ makedocs(sitename="PermutationalInvariantDynamics.jl", modules=[PermutationalInv
                     "Numerical convergence reports"=>"convergence.md",
                 ],
                 "Analysis and visualization"=>[
+                    "Nonstabilizerness"=>"nonstabilizerness.md",
+                    "Genuine multipartite entanglement"=>"genuine_entanglement.md",
                     "Research utilities and control"=>"research_utilities.md",
                     "Schur-block visualization"=>"schur_visualization.md",
                     "Spectral visualization"=>"spectral_visualization.md",

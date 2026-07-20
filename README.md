@@ -62,9 +62,19 @@ convergence reports, and PI--HEOM non-Markovian dynamics are documented in
 confidence-controlled stochastic stopping are covered by
 [qudit phase space](docs/src/qudit_phase_space.md) and
 [diffusive/trajectory monitoring](docs/src/diffusive_monitoring.md).
-Optional Tables, Makie, Distributed, QuantumCumulants, JLD2, and HDF5 adapters
-are summarized in the
+Optional Clarabel, Tables, Makie, Distributed, QuantumCumulants, JLD2, and
+HDF5 adapters are summarized in the
 [interoperability guide](docs/src/interoperability.md).
+The Clarabel extension implements the polynomial-size PI qubit PPT-mixture
+test described in the [genuine-multipartite-entanglement
+guide](docs/src/genuine_entanglement.md), with the paper's necessary-and-
+sufficient criterion for PI three-qubit states and a one-sided, validated
+numerical GME certificate for larger systems.
+Pure permutation-symmetric qubit states also support an `O(N^4)` second
+stabilizer Rényi entropy calculation, with reusable `O(N^3)` transform data and
+no enumeration of `4^N` Pauli strings. See the
+[nonstabilizerness guide](docs/src/nonstabilizerness.md) for the prepared
+workflow and its pure-state scope.
 An executable prepared-workflow notebook and its isolated Pluto environment
 are available under [notebooks](notebooks/README.md).
 For reproducible internal scaling measurements and carefully scoped Julia

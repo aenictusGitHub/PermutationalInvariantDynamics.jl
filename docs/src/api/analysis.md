@@ -55,6 +55,18 @@ quantum_relative_entropy
 hilbert_schmidt_distance
 ```
 
+## Nonstabilizerness
+
+```@docs
+StabilizerRenyiPlan
+StabilizerRenyiWorkspace
+stabilizer_renyi_entropy
+```
+
+The paper definition, pure symmetric-state scope, prepared workflow, and
+scaling are explained in [Nonstabilizerness of symmetric qubit
+states](../nonstabilizerness.md).
+
 ## Symmetry-resolved information
 
 ```@docs
@@ -98,3 +110,8 @@ number_resolved_negativity
 subduction_intertwiners
 littlewood_richardson_coefficient
 ```
+
+The solver-backed PI PPT-mixture criterion for genuine multipartite
+entanglement, including its one-sided interpretation for four or more qubits,
+is documented separately in [Genuine multipartite
+entanglement](../genuine_entanglement.md).

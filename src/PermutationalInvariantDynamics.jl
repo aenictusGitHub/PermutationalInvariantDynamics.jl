@@ -49,9 +49,11 @@ include("symmetries.jl")
 include("spectra.jl")
 include("evans.jl")
 include("entanglement.jl")
+include("genuine_entanglement.jl")
 include("observables.jl")
 include("cumulants.jl")
 include("information.jl")
+include("nonstabilizerness.jl")
 include("symmetry_information.jl")
 include("phase_space.jl")
 include("qudit_phase_space.jl")
@@ -191,6 +193,8 @@ export Partition, partitions, weight, length_nonzero, removable_corners,
        von_neumann_entropy, renyi_entropy, reduced_entropy,
        mutual_information, conditional_entropy, trace_distance, fidelity,
        bures_distance, quantum_relative_entropy, hilbert_schmidt_distance,
+       StabilizerRenyiPlan, StabilizerRenyiWorkspace,
+       stabilizer_renyi_entropy,
        sector_resolved_entropy, entropy_decomposition,
        sector_resolved_coherence, relative_entropy_of_coherence,
        symmetry_twirl, relative_entropy_of_asymmetry,
@@ -201,6 +205,7 @@ export Partition, partitions, weight, length_nonzero, removable_corners,
        QuditHusimiPlan, QuditHusimiData, qudit_husimi_q,
        hermiticity_error, minimum_sector_eigenvalue, check_generator,
        negativity, logarithmic_negativity, ReductionPlan, ReductionWorkspace,
+       PPTMixturePlan, PPTMixtureResult, ppt_mixture_test,
        reduced_state, reduced_state!, reduced_purity,
        reduced_purities,
        partial_transpose_spectrum, minimum_partial_transpose_eigenvalue,

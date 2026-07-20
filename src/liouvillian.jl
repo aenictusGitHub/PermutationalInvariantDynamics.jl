@@ -3315,14 +3315,6 @@ function _performance_matrix_nonzeros(matrix)
     end
     count
 end
-function _performance_matrix_nonzeros(matrix::SparseMatrixCSC)
-    count=big(0)
-    @inbounds for value in nonzeros(matrix)
-        iszero(value)||(count+=1)
-    end
-    count
-end
-
 # Iterating an `AbstractArray` visits every logical entry.  Avoid turning this
 # setup estimate into an O(m^2) scan when the symmetric collective fast path
 # has already retained an exact sparse Schur block.
