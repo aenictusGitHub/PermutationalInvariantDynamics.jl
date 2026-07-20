@@ -88,15 +88,16 @@ function _family_estimates(plan::LiouvillianPlan,indices,bigfloat_precision)
     scalar_bytes=_scalar_retained_bytes(T;bigfloat_precision)
     plan_bytes=Base.summarysize(plan)
     # A synchronized matrix-free specialization owns the complete prepared
-    # kernel workspace plus one copied trace vector. Sparse lowering builds a
-    # kernel matrix beside the accumulated matrix and their sum, so three
-    # dense-nnz CSC bounds are a conservative live-materialization peak.
+    # kernel workspace plus one copied trace vector. Sparse specialization can
+    # use the exact-support contribution bound of the already prepared standard
+    # kernels; unknown kernels retain that helper's dense-coordinate fallback.
     workspace_bytes=_performance_liouvillian_workspace_bytes(
         plan;bigfloat_precision)
     matrixfree_bytes=workspace_bytes+BigInt(n)*scalar_bytes
-    sparse_operator_bytes=BigInt(n)^2*(scalar_bytes+2sizeof(Int))+
-                          (BigInt(n)+1)*sizeof(Int)
-    sparse_peak_bytes=3sparse_operator_bytes
+    sparse_bounds=_performance_sparse_materialization_bounds(
+        plan;bigfloat_precision)
+    sparse_operator_bytes=sparse_bounds.operator_bytes
+    sparse_peak_bytes=sparse_bounds.peak_bytes
     (;scalar_type=T,dimension=n,plan_bytes,
       shared_plan_bytes=plan_bytes,rate_indices=indices,
       scalar_retained_bytes=scalar_bytes,
@@ -109,6 +110,13 @@ function _family_estimates(plan::LiouvillianPlan,indices,bigfloat_precision)
       matrixfree_specialization_upper_bound=matrixfree_bytes,
       sparse_operator_upper_bound=Int(min(sparse_operator_bytes,
           BigInt(typemax(Int)))),
+      sparse_structure_supported=sparse_bounds.structured,
+      sparse_contribution_upper_bound=Int(min(
+          sparse_bounds.contribution_upper_bound,BigInt(typemax(Int)))),
+      sparse_retained_nnz_upper_bound=Int(min(
+          sparse_bounds.retained_nnz_upper_bound,BigInt(typemax(Int)))),
+      sparse_assembly_upper_bound=Int(min(
+          sparse_bounds.assembly_bytes,BigInt(typemax(Int)))),
       sparse_specialization_peak_upper_bound=sparse_peak_bytes,
       geometry_reused=true)
 end

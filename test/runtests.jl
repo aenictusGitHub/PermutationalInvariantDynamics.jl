@@ -9,6 +9,7 @@ const TEST_FILES=(
     (:representation,"test_cgc.jl"),
     (:representation,"test_dense_schur_reference.jl"),
     (:lowering,"test_algebra_liouvillian.jl"),
+    (:lowering,"test_collective_fastpaths.jl"),
     (:lowering,"test_fixed_gain_fusion.jl"),
     (:lowering,"test_threaded_apply.jl"),
     (:representation,"test_schur_construction.jl"),

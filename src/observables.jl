@@ -268,7 +268,7 @@ function _check_local_observable(rho::PIState,X::AbstractMatrix)
 end
 
 """
-    CollectiveObservablePlan(basis, X; cache=OneBodyGeometry(basis))
+    CollectiveObservablePlan(basis, X; cache=nothing)
 
 Prepare the physical Schur blocks of the collective observable
 `sum_n X^(n)`. Treat the prepared blocks as read-only and reuse the plan for
@@ -276,10 +276,12 @@ many states on the exact same `PIBasis`, avoiding both representation-geometry
 construction and block assembly on every expectation, variance, covariance,
 or QFI call.
 
-When preparing several observables, construct one `OneBodyGeometry` and pass
-it through `cache`.  The plan retains only one matrix per Schur sector, not the
-larger CG geometry.  A one-off contraction can instead receive the geometry
-directly through `cache=` without retaining prepared observable blocks.
+For a sole fully symmetric sector, preparation uses the lightweight
+occupation-number lift. When preparing several observables on general Schur
+sectors, construct one `OneBodyGeometry` and pass it through `cache`. The plan
+retains only one matrix per Schur sector, not the larger geometry. A one-off
+contraction can instead receive the geometry directly through `cache=` without
+retaining prepared observable blocks.
 """
 struct CollectiveObservablePlan{T,B<:PIBasis}
     basis::B
@@ -290,8 +292,7 @@ show(io::IO,p::CollectiveObservablePlan)=print(io,"CollectiveObservablePlan(N=$(
 
 function CollectiveObservablePlan(b::PIBasis,X::AbstractMatrix;cache=nothing)
     size(X)==(b.d,b.d)||throw(DimensionMismatch("local observable must be $(b.d)×$(b.d)"))
-    cache===nothing&&(cache=OneBodyGeometry(b;T=_real_float_type(eltype(X))))
-    _check_geometry_basis(cache,b)
+    cache=_collective_geometry(b,_real_float_type(eltype(X)),cache)
     T=promote_type(Complex{geometry_scalar_type(cache)},eltype(X));local_operator=Matrix{T}(X)
     blocks=Matrix{T}[collective_block(b,local_operator,p;cache=cache) for p in b.sectors]
     CollectiveObservablePlan{T,typeof(b)}(b,local_operator,blocks)
@@ -317,8 +318,9 @@ end
 function _resolve_collective_plan(rho::PIState,X,cache,plan)
     _check_local_observable(rho,X)
     if plan===nothing
-        cache===nothing&&(cache=OneBodyGeometry(rho.basis;T=promote_type(
-            _real_float_type(eltype(rho.data)),_real_float_type(eltype(X)))))
+        T=promote_type(_real_float_type(eltype(rho.data)),
+                       _real_float_type(eltype(X)))
+        cache=_collective_geometry(rho.basis,T,cache)
         return CollectiveObservablePlan(rho.basis,X;cache=cache)
     end
     plan isa CollectiveObservablePlan||throw(ArgumentError("plan must be a CollectiveObservablePlan"))
@@ -337,7 +339,7 @@ function _resolve_collective_plans(rho::PIState,generators,cache,plans)
         if cache===nothing
             types=(_real_float_type(eltype(g)) for g in gs)
             T=foldl(promote_type,types;init=_real_float_type(eltype(rho.data)))
-            cache=OneBodyGeometry(rho.basis;T=T)
+            cache=_collective_geometry(rho.basis,T,nothing)
         end
         return gs,[CollectiveObservablePlan(rho.basis,g;cache=cache) for g in gs]
     end
@@ -514,9 +516,9 @@ two_body_rdm(rho::PIState;kwargs...)=rho.basis.N>=2 ? reduced_state(rho,2;kwargs
 """Expectation of `X ⊗ Y` on an ordered pair of distinct particles."""
 function two_body_expectation(rho::PIState,X::AbstractMatrix,Y::AbstractMatrix;cache=nothing)
     N=rho.basis.N;N>=2||throw(ArgumentError("two particles are required"));_check_local_observable(rho,X);_check_local_observable(rho,Y)
-    cache===nothing&&(cache=OneBodyGeometry(rho.basis;T=promote_type(
-        _real_float_type(eltype(rho.data)),_real_float_type(eltype(X)),
-        _real_float_type(eltype(Y)))))
+    Tgeometry=promote_type(_real_float_type(eltype(rho.data)),
+        _real_float_type(eltype(X)),_real_float_type(eltype(Y)))
+    cache=_collective_geometry(rho.basis,Tgeometry,cache)
     T=promote_type(eltype(rho.data),eltype(X),eltype(Y),Complex{geometry_scalar_type(cache)})
     cross=zero(T);Rtype=_real_float_type(T)
     for p in rho.basis.sectors
@@ -536,9 +538,9 @@ Return the connected correlation of `X` and `Y` on two distinct particles,
 one-particle marginals implied by permutation invariance.
 """
 function connected_two_body_correlation(rho::PIState,X::AbstractMatrix,Y::AbstractMatrix;cache=nothing)
-    cache===nothing&&(cache=OneBodyGeometry(rho.basis;T=promote_type(
-        _real_float_type(eltype(rho.data)),_real_float_type(eltype(X)),
-        _real_float_type(eltype(Y)))))
+    Tgeometry=promote_type(_real_float_type(eltype(rho.data)),
+        _real_float_type(eltype(X)),_real_float_type(eltype(Y)))
+    cache=_collective_geometry(rho.basis,Tgeometry,cache)
     product=collective_expectation(rho,X;cache=cache)*
         collective_expectation(rho,Y;cache=cache)
     disconnected=_divide_by_particle_pair_factor(product,rho.basis.N;
@@ -549,8 +551,9 @@ end
 
 """Normalized identical-particle `g^(2)` for a local lowering operator `L`."""
 function normalized_second_order_correlation(rho::PIState,L::AbstractMatrix;cache=nothing)
-    cache===nothing&&(cache=OneBodyGeometry(rho.basis;T=promote_type(
-        _real_float_type(eltype(rho.data)),_real_float_type(eltype(L)))))
+    Tgeometry=promote_type(_real_float_type(eltype(rho.data)),
+                           _real_float_type(eltype(L)))
+    cache=_collective_geometry(rho.basis,Tgeometry,cache)
     n=L'*L
     mean=_divide_by_particle_count(collective_expectation(rho,n;cache=cache),
         rho.basis.N;context="normalization of the one-particle intensity")

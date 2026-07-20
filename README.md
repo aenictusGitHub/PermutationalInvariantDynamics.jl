@@ -67,6 +67,8 @@ are summarized in the
 [interoperability guide](docs/src/interoperability.md).
 An executable prepared-workflow notebook and its isolated Pluto environment
 are available under [notebooks](notebooks/README.md).
+For reproducible internal scaling measurements and carefully scoped Julia
+ecosystem comparisons, see the [benchmark guide](docs/src/benchmarks.md).
 
 ```julia
 using PermutationalInvariantDynamics

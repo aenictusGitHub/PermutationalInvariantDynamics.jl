@@ -111,7 +111,8 @@ function _prepare_diffusive_operator(b::PIBasis,operator,::Type{R}) where R
     op=if operator isa AbstractMatrix
         size(operator)==(b.d,b.d)||throw(DimensionMismatch(
             "a monitored one-particle operator must be $(b.d)x$(b.d)"))
-        collective_operator(b,operator;cache=OneBodyGeometry(b;T=R))
+        collective_operator(b,operator;
+            cache=_collective_geometry(b,R,nothing))
     else
         operator.basis===b||throw(ArgumentError(
             "monitored PIOperator belongs to a different basis"))

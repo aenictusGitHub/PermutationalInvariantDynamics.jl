@@ -20,8 +20,9 @@ Canonical detail lives elsewhere:
 - Planned research-scale work: `IMPLEMENTATION_PLAN.md`.
 - Runnable-example inventory: `examples/README.md` and the paired example
   guides.
-- Current performance gates and audit: `benchmark/performance_regression.jl`
-  and `benchmark/performance_audit.jl`.
+- Current performance gates, scaling harness, and comparison protocol:
+  `benchmark/performance_regression.jl`, `benchmark/performance_audit.jl`,
+  `benchmark/README.md`, and `docs/src/benchmarks.md`.
 
 Before editing:
 
@@ -90,8 +91,9 @@ Published validation also uses maintainer-local copies of
   together.
 - `Distributed` can load transitively through SciMLBase. Extension activation
   is not proof that the user requested remote workers.
-- Do not commit generated root, `quality/`, `examples/`, `test/optional/`, or
-  `notebooks/` manifests. Preserve the tracked `docs/Manifest.toml`.
+- Do not commit generated root, `quality/`, `examples/`, `benchmark/`,
+  `benchmark/comparison/*/`, `test/optional/`, or `notebooks/` manifests.
+  Preserve the tracked `docs/Manifest.toml`.
 - Public repository:
   `https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl`.
 - License: `GPL-3.0-only`; the root `LICENSE` file is canonical.
@@ -241,6 +243,20 @@ pattern.
 
 ### Fixed kernels and matrix-free application
 
+- A basis containing only `(N,0,...)` lowers collective one-body operators in
+  the symmetric occupation basis, using
+  `X_ab*sqrt(n_b*(n_a+1))`. The read-only geometry owns preconverted diagonal
+  factors and packed transitions, so an `InPlaceTimeOperator` fill remains
+  allocation-free for ordinary IEEE precision. Keep the `_needs_wide_collective`
+  gate: mixed sectors, local gains, custom terms, and cancellation-risk sizes
+  retain the general `OneBodyGeometry` route.
+- Fixed collective one-body Schur blocks retain exact sparse support in every
+  sector; driven blocks remain dense because their support may change at an
+  evaluation. This representation choice must remain term-type-stable so
+  `LiouvillianPlan` inference does not depend on the runtime sector list.
+- Sparse materialization must form sparse Kronecker pieces from exact block
+  support and reuse prepared `K'K` blocks. Never construct a dense
+  `m^2`-by-`m^2` sector superoperator and sparsify it afterwards.
 - Fixed `LocalJump` and safely scaled fixed `LocalPBodyJump` gains retain
   rectangular Schur contractions. Do not restore quartic PI-coordinate gain
   maps to matrix-free plans. Cancellation-risk p-body cases retain the guarded
@@ -293,6 +309,11 @@ BLAS threading. The workspace is guarded against concurrent reuse.
 - `recommend_solver` separates setup, retained, solve, output, and peak
   estimates. Unknown builder, callback, or diagnostic allocations imply
   `safe_to_run=missing`, never `true`.
+- Fixed standard kernels use exact-support contribution bounds for sparse
+  materialization (`2m*nnz(H)`, `nnz(K)^2`, and `2m*nnz(K'K)` per sector).
+  Dynamic, custom, or unknown kernels keep the dense-coordinate fallback.
+  Include packed symmetric-occupation geometry in setup accounting and keep
+  `compile`, compiled families, and `recommend_solver` estimates synchronized.
 - Mode-specific workspaces omit dominant unused arrays and must reject an
   incompatible operation instead of allocating the missing storage lazily.
 
@@ -829,6 +850,20 @@ The regression script is the CI allocation/equivalence/thread-safety gate. The
 global performance audit is a broader manual check; it deliberately avoids
 brittle wall-clock thresholds. Run the CI-parity threaded gate with Julia 1.10.
 
+For reproducible internal scaling and cross-package comparisons, follow
+`benchmark/README.md` and `benchmark/comparison/README.md`. Keep external
+packages in isolated projects and processes. Compare collective dynamics only
+after restricting the PID basis to the same spin irrep; independent local
+jumps require the complete PI basis and full-Hilbert small-`N` references.
+Record setup, hot application, retained memory, representation, provenance,
+and numerical validation separately. Wall-clock results are never CI gates.
+Internal-scaling schema 2 additionally isolates sparse-first and driven
+collective phases for symmetric qubit and qutrit sectors, records structured
+support estimates and a fixed-budget `:auto` probe, and uses `NA` for those
+fields on all-sector rows. Cross-package adapters must reuse an existing CSC
+matrix without copying it, identify the backend/action explicitly, and keep
+the matched collective size grid synchronized across every adapter and guide.
+
 ### Documentation and quality
 
 ```sh
@@ -876,8 +911,9 @@ Use `--project=examples` when validating CairoMakie rendering. Refer to
 - Run ordinary `Pkg.test()` for Tables or Distributed changes; run
   `test/optional` for Makie, QuantumCumulants, JLD2, or HDF5 changes.
 - Run `git diff --check` and inspect `git status --short`.
-- Remove generated root, `quality/`, `examples/`, `test/optional/`, and
-  `notebooks/` manifests; preserve `docs/Manifest.toml`.
+- Remove generated root, `quality/`, `examples/`, `benchmark/`,
+  `benchmark/comparison/*/`, `test/optional/`, and `notebooks/` manifests;
+  preserve `docs/Manifest.toml`.
 - Remove generated figures, checkpoints, and scan outputs unless they are
   intentional tracked fixtures.
 - Confirm no unrelated user changes were overwritten.

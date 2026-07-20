@@ -1,6 +1,7 @@
 using PermutationalInvariantDynamics
 using LinearAlgebra
 using Random
+using SparseArrays
 
 # Stable regression gates deliberately avoid wall-clock thresholds. They guard
 # allocation behavior, backend equivalence, and shared-operator correctness;
@@ -32,6 +33,70 @@ apply_adjoint!(Y,matrixfree.plan,X,0.0,nothing,work)
 batch_adjoint_alloc=@allocated apply_adjoint!(Y,matrixfree.plan,X,0.0,nothing,work)
 @assert isapprox(Y,adjoint(sparse_model.operator)*X;atol=1e-11,rtol=1e-11)
 @assert batch_adjoint_alloc<=2048 "explicit-workspace batched adjoint apply allocated $batch_adjoint_alloc bytes"
+
+# The fully symmetric collective route must retain occupation-number geometry
+# and exact sparse support at sizes where a dense PI-coordinate temporary is
+# already expensive.  These are structural, allocation, and equivalence gates;
+# timings remain the responsibility of performance_audit.jl.
+collective_basis=PIBasis(64,2;sectors=[(64,0)])
+collective_spin=spin_matrices()
+collective_model=PIModel(collective_basis,(
+    CollectiveHamiltonian(collective_spin.jx;rate=0.11),
+    CollectiveJump(collective_spin.jm;rate=0.29)))
+collective_context=PermutationalInvariantDynamics.TermCompileContext(
+    collective_model)
+@assert collective_context.onebody isa
+    PermutationalInvariantDynamics._SymmetricCollectiveGeometry
+collective_plan=LiouvillianPlan(collective_model)
+collective_bounds=
+    PermutationalInvariantDynamics._performance_sparse_materialization_bounds(
+        collective_plan)
+@assert collective_bounds.structured
+@assert collective_bounds.contribution_upper_bound<
+    big(length(collective_basis))^2
+
+# This budget is intentionally below the corresponding dense coordinate
+# matrix but comfortably above the support-aware sparse estimate.  :auto must
+# therefore use the structured estimate instead of rejecting the model or
+# selecting a needlessly matrix-free solve.
+collective_auto=compile(
+    collective_model;backend=:auto,memory_budget=128*1024^2)
+@assert collective_auto.backend===:sparse
+@assert collective_auto.estimates.sparse_structure_supported
+@assert nnz(collective_auto.operator)<=
+    collective_bounds.retained_nnz_upper_bound
+
+collective_matrixfree=compile(
+    collective_model;backend=:matrixfree,memory_budget=Inf)
+collective_work=LiouvillianWorkspace(collective_matrixfree)
+collective_input=randn(MersenneTwister(72),ComplexF64,
+    length(collective_basis))
+collective_output=similar(collective_input)
+collective_reference=collective_auto.operator*collective_input
+apply!(collective_output,collective_matrixfree,collective_input,
+       0.0,nothing,collective_work)
+@assert isapprox(collective_output,collective_reference;
+                 atol=2e-11,rtol=2e-11)
+collective_apply_alloc=@allocated apply!(
+    collective_output,collective_matrixfree,collective_input,
+    0.0,nothing,collective_work)
+@assert collective_apply_alloc<=2048 "symmetric collective apply allocated $collective_apply_alloc bytes"
+apply_adjoint!(collective_output,collective_matrixfree.plan,
+               collective_input,0.0,nothing,collective_work)
+@assert isapprox(collective_output,
+                 adjoint(collective_auto.operator)*collective_input;
+                 atol=2e-11,rtol=2e-11)
+
+# Repeated materialization includes the returned sparse matrix but must not
+# allocate even one dense PI-coordinate matrix.  The relative gate remains
+# stable across Julia versions and integer index widths.
+PermutationalInvariantDynamics._matrix_from_plan(collective_plan)
+GC.gc()
+collective_materialization_alloc=@allocated(
+    PermutationalInvariantDynamics._matrix_from_plan(collective_plan))
+collective_dense_temporary_bytes=
+    big(length(collective_basis))^2*sizeof(ComplexF64)
+@assert collective_materialization_alloc<collective_dense_temporary_bytes "symmetric sparse materialization allocated $collective_materialization_alloc bytes, consistent with a dense PI-coordinate temporary"
 
 z=ComplexF64[1 0;0 -1]
 restricted_model=PIModel(b,(
@@ -298,4 +363,4 @@ meanfield_alloc=@allocated meanfield_rhs!(meanfield_out,meanfield,sigma,0.0,noth
 @assert meanfield_alloc<=256 "explicit-workspace mean-field RHS allocated $meanfield_alloc bytes"
 @assert abs(tr(meanfield_out))<=1e-12 "mean-field RHS did not preserve trace"
 
-println("Performance regression gates passed (threads=$(Threads.nthreads()), apply_alloc=$allocated, batch_alloc=$batch_alloc, batch_adjoint_alloc=$batch_adjoint_alloc, threaded_alloc=$threaded_alloc, restricted_alloc=$restricted_alloc, trajectory_batch_alloc=$trajectory_batch_alloc, composite_trajectory_apply_alloc=$composite_trajectory_apply_alloc, composite_trajectory_step_alloc=$composite_trajectory_step_alloc, composite_trajectory_batch_alloc=$composite_trajectory_batch_alloc, weak_average_alloc=$weak_average_alloc, population_apply_alloc=$population_apply_alloc, population_evolve_alloc=$population_evolve_alloc, observable_alloc=$planned, reduction_alloc=$reduction_alloc, reduction_setup_alloc=$reduction_setup_alloc, reduction_uncached_alloc=$reduction_uncached_alloc, reduction_inplace_alloc=$reduction_inplace_alloc, meanfield_alloc=$meanfield_alloc)")
+println("Performance regression gates passed (threads=$(Threads.nthreads()), apply_alloc=$allocated, batch_alloc=$batch_alloc, batch_adjoint_alloc=$batch_adjoint_alloc, collective_apply_alloc=$collective_apply_alloc, collective_materialization_alloc=$collective_materialization_alloc, threaded_alloc=$threaded_alloc, restricted_alloc=$restricted_alloc, trajectory_batch_alloc=$trajectory_batch_alloc, composite_trajectory_apply_alloc=$composite_trajectory_apply_alloc, composite_trajectory_step_alloc=$composite_trajectory_step_alloc, composite_trajectory_batch_alloc=$composite_trajectory_batch_alloc, weak_average_alloc=$weak_average_alloc, population_apply_alloc=$population_apply_alloc, population_evolve_alloc=$population_evolve_alloc, observable_alloc=$planned, reduction_alloc=$reduction_alloc, reduction_setup_alloc=$reduction_setup_alloc, reduction_uncached_alloc=$reduction_uncached_alloc, reduction_inplace_alloc=$reduction_inplace_alloc, meanfield_alloc=$meanfield_alloc)")

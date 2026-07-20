@@ -363,11 +363,12 @@ efficient reuse.
 ## Backend selection and memory
 
 `compile(...; backend=:auto, memory_budget=...)` keeps driven models
-matrix-free and uses a conservative sparse-storage bound for autonomous
-models. Explicit sparse compilation and `liouvillian(...;
-representation=:sparse)` use the same 512 MiB default guard and reject a
-conservative live-assembly peak before allocating the matrix. Scalar-rate
-families additionally support `specialize(...; backend=:auto,
+matrix-free. For standard fixed kernels, it bounds sparse storage from the
+prepared exact block support; dynamic, custom, or unknown kernels retain a
+conservative dense-coordinate fallback. Explicit sparse compilation and
+`liouvillian(...; representation=:sparse)` use the same 512 MiB default guard
+and reject a conservative live-assembly peak before allocating the matrix.
+Scalar-rate families additionally support `specialize(...; backend=:auto,
 memory_budget=...)`; their precomputed metadata lets repeated specializations
 make this decision without rebuilding or re-estimating Schur geometry. Pass
 `memory_budget=Inf` only to opt out explicitly. Inspect `prepared.estimates`;

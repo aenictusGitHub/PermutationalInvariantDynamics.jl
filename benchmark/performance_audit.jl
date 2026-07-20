@@ -2,6 +2,7 @@ using PermutationalInvariantDynamics
 using LinearAlgebra
 using Printf
 using Random
+using SparseArrays
 
 function measure(label,f; samples=3)
     f() # compile and warm caches owned by the object
@@ -38,6 +39,51 @@ measure("explicit-workspace application",()->apply!(y,prepared,rho.data,0.0,noth
 batch=hcat(rho.data,0.5rho.data,rho.data);batch_out=similar(batch)
 measure("batched matrix-free application",()->apply!(batch_out,prepared.plan,batch,0.0,nothing,liouvillian_work))
 measure("batched adjoint application",()->apply_adjoint!(batch_out,prepared.plan,batch,0.0,nothing,liouvillian_work))
+
+# Dedicated audit of the occupation-number collective fast path.  At N=64 a
+# dense PI-coordinate Liouvillian would already obscure the intended scaling,
+# while the Dicke-ladder support remains sparse.
+collective_basis=measure("symmetric basis (N=64)",()->
+    PIBasis(64,2;sectors=[(64,0)]);samples=1)
+collective_spin=spin_matrices()
+collective_model=PIModel(collective_basis,(
+    CollectiveHamiltonian(collective_spin.jx;rate=0.11),
+    CollectiveJump(collective_spin.jm;rate=0.29)))
+collective_prepared=measure("symmetric collective plan",()->
+    compile(collective_model;backend=:matrixfree,memory_budget=Inf);samples=1)
+collective_bounds=
+    PermutationalInvariantDynamics._performance_sparse_materialization_bounds(
+        collective_prepared.plan)
+collective_sparse=measure("symmetric sparse assembly",()->
+    liouvillian(collective_model;representation=:sparse,
+                memory_budget=Inf);samples=1)
+collective_auto=compile(
+    collective_model;backend=:auto,memory_budget=128*1024^2)
+collective_auto.backend===:sparse||error(
+    "resource guard failed: structured N=64 collective model did not select sparse")
+@printf("  Symmetric collective support: %d actual / %s upper-bound nonzeros; retained %.3f MiB\n",
+        nnz(collective_sparse),
+        string(collective_bounds.retained_nnz_upper_bound),
+        Base.summarysize(collective_sparse)/2.0^20)
+@printf("  Structured sparse estimate: retained %.3f MiB, peak %.3f MiB; dense coordinate matrix %.3f MiB\n",
+        Float64(collective_bounds.operator_bytes)/2.0^20,
+        Float64(collective_bounds.peak_bytes)/2.0^20,
+        length(collective_basis)^2*sizeof(ComplexF64)/2.0^20)
+collective_input=randn(MersenneTwister(106),ComplexF64,
+    length(collective_basis))
+collective_output=similar(collective_input)
+collective_work=LiouvillianWorkspace(collective_prepared)
+measure("symmetric collective apply",()->apply!(
+    collective_output,collective_prepared,collective_input,
+    0.0,nothing,collective_work))
+collective_apply_alloc=@allocated apply!(
+    collective_output,collective_prepared,collective_input,
+    0.0,nothing,collective_work)
+@printf("  Symmetric collective hot allocation: %.3f KiB\n",
+        collective_apply_alloc/2.0^10)
+isapprox(collective_output,collective_sparse*collective_input;
+    atol=2e-11,rtol=2e-11)||error(
+    "precision guard failed: symmetric collective actions differ")
 
 # Driven local gain maps use common-child rectangular contractions rather
 # than a quartic PI-coordinate I/J/value table.  Report retained storage next

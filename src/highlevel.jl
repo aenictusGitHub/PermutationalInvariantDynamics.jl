@@ -750,6 +750,16 @@ function _resource_source_has_sparse_operator(x)
     false
 end
 
+_resource_sparse_operator_actual_bytes(::Any)=nothing
+_resource_sparse_operator_actual_bytes(matrix::SparseMatrixCSC)=
+    big(Base.summarysize(matrix))
+function _resource_sparse_operator_actual_bytes(model::CompiledPIModel)
+    model.backend===:sparse ? big(Base.summarysize(model.operator)) : nothing
+end
+function _resource_sparse_operator_actual_bytes(model::SpecializedPIModel)
+    model.backend===:sparse ? big(Base.summarysize(model.operator)) : nothing
+end
+
 function _resource_base_scalar_type(x)
     if x isa PIModel
         T=Complex{_model_geometry_type(x)}
@@ -788,22 +798,37 @@ end
 
 function _recommended_geometry_policy(x,basis)
     basis===nothing&&return (include=false,requirement=:unavailable,
-                             source=:no_basis_metadata)
+                             source=:no_basis_metadata,kind=:none)
     model=x isa PIModel ? x :
           x isa Union{CompiledPIModel,SpecializedPIModel} ? x.model : nothing
     if model!==nothing
-        required=any(_term_requires_onebody_geometry,model.terms)
-        return (include=required,
-                requirement=required ? :required : :not_required,
-                source=:model_terms)
+        requirements=_model_onebox_requirements(
+            model,_model_geometry_type(model))
+        if requirements.needs_onebody
+            return (include=true,requirement=:required,source=:model_terms,
+                    kind=:onebody)
+        elseif requirements.uses_symmetric_collective
+            return (include=true,requirement=:required,source=:model_terms,
+                    kind=:symmetric_collective)
+        end
+        return (include=false,requirement=:not_required,source=:model_terms,
+                kind=:none)
     end
     # A bare basis, state, operator, or lowered plan no longer carries enough
     # term provenance to distinguish local one-body lowering from direct/p-body
     # blocks. Retain the conservative historical geometry allowance and make
     # that assumption explicit in the returned metadata.
     (include=true,requirement=:conservative_unknown,
-     source=x isa PIBasis ? :basis_only : :source_without_term_provenance)
+     source=x isa PIBasis ? :basis_only : :source_without_term_provenance,
+     kind=:onebody)
 end
+
+_resource_prepared_sparse_plan(::Any)=nothing
+_resource_prepared_sparse_plan(plan::LiouvillianPlan)=plan
+_resource_prepared_sparse_plan(model::CompiledPIModel)=model.plan
+_resource_prepared_sparse_plan(model::SpecializedPIModel)=model.plan
+_resource_prepared_sparse_plan(operator::MatrixFreeLiouvillian)=
+    operator.plan isa LiouvillianPlan ? operator.plan : nothing
 
 """
     recommend_solver(x; task=:steady_state, algorithm=:auto,
@@ -889,7 +914,26 @@ function recommend_solver(x;task=:steady_state,algorithm=:auto,
         observableT;bigfloat_precision)
     time_scalar_bytes=_scalar_retained_bytes(timeT;bigfloat_precision)
     dense_bytes=_dense_matrix_structural_bytes(n,T;bigfloat_precision)
-    sparse_bytes=_sparse_csc_structural_upper_bytes(n,T;bigfloat_precision)
+    dense_sparse_bytes=_sparse_csc_structural_upper_bytes(
+        n,T;bigfloat_precision)
+    prepared_sparse_plan=_resource_prepared_sparse_plan(x)
+    prepared_sparse_bounds=prepared_sparse_plan===nothing ? nothing :
+        _performance_sparse_materialization_bounds(
+            prepared_sparse_plan;bigfloat_precision)
+    actual_sparse_bytes=_resource_sparse_operator_actual_bytes(x)
+    sparse_bytes=actual_sparse_bytes!==nothing ? actual_sparse_bytes :
+        prepared_sparse_bounds!==nothing ? prepared_sparse_bounds.operator_bytes :
+        dense_sparse_bytes
+    dense_sparse_entries=BigInt(n)^2
+    dense_sparse_assembly=dense_sparse_entries*(scalar_bytes+2sizeof(Int))+
+        (BigInt(n)+1)*sizeof(Int)
+    sparse_materialization_peak=actual_sparse_bytes!==nothing ? big(0) :
+        prepared_sparse_bounds!==nothing ? prepared_sparse_bounds.peak_bytes :
+        8dense_sparse_assembly
+    sparse_materialization_temporary=max(
+        sparse_materialization_peak-sparse_bytes,big(0))
+    sparse_structure_supported=actual_sparse_bytes!==nothing||
+        (prepared_sparse_bounds!==nothing&&prepared_sparse_bounds.structured)
     gmres_bytes=estimate_solver_bytes(x;algorithm=:gmres,
         krylovdim=krylovdim,recycle_dim,T=T,bigfloat_precision)
     arnoldi_bytes=estimate_solver_bytes(x;algorithm=:arnoldi,
@@ -899,8 +943,14 @@ function recommend_solver(x;task=:steady_state,algorithm=:auto,
     dynamics_bytes=estimate_solver_bytes(x;algorithm=:rk4,T=T,bigfloat_precision)
     basis=_basis_metadata(x,nothing)
     geometry_policy=_recommended_geometry_policy(x,basis)
-    geometry=geometry_policy.include ? estimate_geometry_bytes(basis;
-        T=_real_float_type(T),bigfloat_precision) : nothing
+    geometry = if !geometry_policy.include
+        nothing
+    elseif geometry_policy.kind===:symmetric_collective
+        _estimate_symmetric_collective_geometry(
+            basis,_real_float_type(T);bigfloat_precision)
+    else
+        estimate_geometry_bytes(basis;T=_real_float_type(T),bigfloat_precision)
+    end
     geometry_retained=basis===nothing ? nothing :
         geometry===nothing ? big(0) : geometry.retained_bytes
     geometry_setup=basis===nothing ? nothing :
@@ -942,13 +992,20 @@ function recommend_solver(x;task=:steady_state,algorithm=:auto,
 
     function resources_for(chosen_backend,chosen_algorithm)
         setup = if prepared_source
-            _resource_component(0,:actual;includes=(:already_prepared_source,))
+            extra=chosen_backend===:sparse&&
+                !_resource_source_has_sparse_operator(x) ?
+                sparse_materialization_temporary : big(0)
+            _resource_component(extra,iszero(extra) ? :actual : :upper_bound;
+                includes=(:already_prepared_source,
+                          :operator_assembly_temporary))
         elseif geometry_setup===nothing
-            _resource_component(chosen_backend===:sparse ? sparse_bytes : nothing,
+            _resource_component(chosen_backend===:sparse ?
+                sparse_materialization_temporary : nothing,
                 :unknown;includes=(:known_operator_assembly_storage,),
                 excludes=(:unavailable_geometry_setup,:custom_term_lowering))
         else
-            assembly=chosen_backend===:sparse ? sparse_bytes : big(0)
+            assembly=chosen_backend===:sparse ?
+                sparse_materialization_temporary : big(0)
             geometry_temporary=max(big(geometry_setup)-big(geometry_retained),
                                    big(0))
             _resource_component(geometry_temporary+assembly,:estimate;
@@ -1097,6 +1154,8 @@ function recommend_solver(x;task=:steady_state,algorithm=:auto,
       requested_algorithm,reason,memory_budget,
       state_bytes,dense_upper_bytes=dense_bytes,
       sparse_operator_upper_bytes=sparse_bytes,
+      sparse_materialization_peak_upper_bytes=sparse_materialization_peak,
+      sparse_structure_supported,
       scalar_retained_bytes=scalar_bytes,
       observable_scalar_type=observableT,time_scalar_type=timeT,
       observable_scalar_retained_bytes=observable_scalar_bytes,

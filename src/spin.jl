@@ -36,7 +36,7 @@ function spin_matrices(d::Integer=2;T::Type{<:AbstractFloat}=Float64)
 end
 
 """
-    collective_spin(basis, component; cache=OneBodyGeometry(basis))
+    collective_spin(basis, component; cache=nothing)
 
 Construct one collective spin operator ``J_alpha=sum_i j_alpha^(i)`` without
 forming the full computational-space matrix. `component` may be `:x`, `:y`,
@@ -44,12 +44,13 @@ forming the full computational-space matrix. `component` may be `:x`, `:y`,
 ``|-j>,...,|j>`` convention of [`spin_matrices`](@ref), with
 `j=(basis.d-1)/2`.
 
-Pass a shared `OneBodyGeometry` when constructing several components on the
-same exact basis.
+The sole fully symmetric sector uses a lightweight occupation-number lift.
+Pass a shared `OneBodyGeometry` when constructing several components on a
+general Schur basis.
 """
 function collective_spin(b::PIBasis,component::Symbol;
-                         cache=OneBodyGeometry(b))
-    _check_geometry_basis(cache,b)
+                         cache=nothing)
+    cache=_collective_geometry(b,Float64,cache)
     matrices=spin_matrices(b.d;T=geometry_scalar_type(cache))
     local_operator=if component===:x
         matrices.jx

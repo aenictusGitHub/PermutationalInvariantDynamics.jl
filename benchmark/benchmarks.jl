@@ -14,6 +14,72 @@ w = EvolutionWorkspace(rho)
 sx = ComplexF64[0 1;1 0]
 SUITE["matrix-free apply N=20 d=2"] = @benchmarkable mul!($y,$L,$rho.data)
 
+# The sole `(N,0)` sector has a dedicated occupation-number collective lift.
+# Keep its reusable plan setup, sparse-first assembly, fixed sparse/matrix-free
+# actions, driven preallocated action, and observable preparation visible as
+# separate measurements.  N=64 is large enough to expose setup asymptotics
+# while remaining a short local benchmark.
+collective_fast_basis=PIBasis(64,2;sectors=[(64,0)])
+collective_fast_model=PIModel(collective_fast_basis,(
+    CollectiveHamiltonian(sx;rate=0.13),
+    CollectiveJump(sm;rate=0.27)))
+SUITE["symmetric collective plan setup N=64 d=2"] = @benchmarkable LiouvillianPlan(
+    $collective_fast_model)
+collective_fast_plan=LiouvillianPlan(collective_fast_model)
+SUITE["symmetric sparse-first assembly N=64 d=2"] = @benchmarkable PermutationalInvariantDynamics._matrix_from_plan(
+    $collective_fast_plan)
+SUITE["symmetric auto compilation N=64 d=2"] = @benchmarkable compile(
+    $collective_fast_model;backend=:auto,memory_budget=512*1024^2)
+collective_fast_sparse=PermutationalInvariantDynamics._matrix_from_plan(
+    collective_fast_plan)
+collective_fast_compiled=compile(
+    collective_fast_model;backend=:matrixfree,memory_budget=Inf)
+collective_fast_work=LiouvillianWorkspace(collective_fast_compiled)
+collective_fast_input=randn(
+    MersenneTwister(0xc011ec71),ComplexF64,length(collective_fast_basis))
+collective_fast_input./=norm(collective_fast_input)
+collective_fast_output=similar(collective_fast_input)
+SUITE["symmetric matrix-free apply N=64 d=2"] = @benchmarkable apply!(
+    $collective_fast_output,$collective_fast_compiled,$collective_fast_input,
+    0.0,nothing,$collective_fast_work)
+SUITE["symmetric sparse apply N=64 d=2"] = @benchmarkable mul!(
+    $collective_fast_output,$collective_fast_sparse,$collective_fast_input)
+
+collective_fast_h_schedule=let h0=copy(sx),h1=ComplexF64[1 0;0 -1]
+    InPlaceTimeOperator(h0,(destination,time,parameters)->begin
+        @. destination=cos(time)*h0+parameters.mix*sin(time)*h1
+        nothing
+    end)
+end
+collective_fast_l_schedule=let l0=copy(sm),l1=copy(adjoint(sm))
+    InPlaceTimeOperator(l0,(destination,time,parameters)->begin
+        @. destination=l0+parameters.mix*time*l1
+        nothing
+    end)
+end
+collective_fast_driven_model=PIModel(collective_fast_basis,(
+    CollectiveHamiltonian(collective_fast_h_schedule;rate=0.13),
+    CollectiveJump(collective_fast_l_schedule;rate=0.27)))
+SUITE["driven symmetric collective plan N=64 d=2"] = @benchmarkable LiouvillianPlan(
+    $collective_fast_driven_model)
+collective_fast_driven_plan=LiouvillianPlan(collective_fast_driven_model)
+collective_fast_driven_work=LiouvillianWorkspace(
+    collective_fast_driven_plan)
+collective_fast_parameters=(mix=0.31,)
+SUITE["driven symmetric collective apply N=64 d=2"] = @benchmarkable apply!(
+    $collective_fast_output,$collective_fast_driven_plan,
+    $collective_fast_input,0.23,$collective_fast_parameters,
+    $collective_fast_driven_work)
+
+SUITE["symmetric collective observable setup N=64 d=2"] = @benchmarkable CollectiveObservablePlan(
+    $collective_fast_basis,$sx)
+collective_fast_state=iid_pure_state(
+    collective_fast_basis,ComplexF64[0,1])
+collective_fast_observable=CollectiveObservablePlan(
+    collective_fast_basis,sx)
+SUITE["symmetric collective moments prepared N=64 d=2"] = @benchmarkable collective_moments(
+    $collective_fast_state,$collective_fast_observable)
+
 # Fixed local gains now retain rectangular Schur contractions.  The explicit
 # four-index triplet plan below is the former implementation and remains a
 # useful setup/storage/application oracle for performance audits.
@@ -53,10 +119,10 @@ SUITE["termwise fixed kernels oracle N=8 d=2"] = @benchmarkable apply!(
     $factor_output,$fusion_reference_plan,$factor_input,$fusion_reference_work)
 threaded_liouvillian_work=ThreadedLiouvillianWorkspace(
     L.plan;tasks=Threads.nthreads())
-SUITE["target-sector threaded apply N=20 d=2"] = @benchmarkable
-    threaded_apply!($y,$L.plan,$rho.data,$threaded_liouvillian_work)
-SUITE["target-sector threaded adjoint N=20 d=2"] = @benchmarkable
-    threaded_apply_adjoint!($y,$L.plan,$rho.data,$threaded_liouvillian_work)
+SUITE["target-sector threaded apply N=20 d=2"] = @benchmarkable threaded_apply!(
+    $y,$L.plan,$rho.data,$threaded_liouvillian_work)
+SUITE["target-sector threaded adjoint N=20 d=2"] = @benchmarkable threaded_apply_adjoint!(
+    $y,$L.plan,$rho.data,$threaded_liouvillian_work)
 krylov_work=KrylovWorkspace(L,40)
 arnoldi_work=ArnoldiWorkspace(L,40;mode=:ordinary)
 harmonic_arnoldi_work=ArnoldiWorkspace(L,40)
@@ -85,10 +151,10 @@ SUITE["QFI N=20 d=2"] = @benchmarkable qfi($rho,$sx)
 SUITE["entropy N=20 d=2"] = @benchmarkable von_neumann_entropy($rho)
 negativity_basis=PIBasis(10,2)
 negativity_state=maximally_mixed_state(negativity_basis)
-SUITE["cached direct qubit negativity N=10 k=5"] = @benchmarkable
-    PermutationalInvariantDynamics._qubit_negativity($negativity_state,5)
-SUITE["uncached direct qubit negativity oracle N=10 k=5"] = @benchmarkable
-    PermutationalInvariantDynamics._qubit_negativity($negativity_state,5,nothing)
+SUITE["cached direct qubit negativity N=10 k=5"] = @benchmarkable PermutationalInvariantDynamics._qubit_negativity(
+    $negativity_state,5)
+SUITE["uncached direct qubit negativity oracle N=10 k=5"] = @benchmarkable PermutationalInvariantDynamics._qubit_negativity(
+    $negativity_state,5,nothing)
 bt = PIBasis(6,2); rt = iid_pure_state(bt,ComplexF64[0,1]); mt = PIModel(bt,[LocalJump(sm)])
 SUITE["100 PI trajectories N=6 d=2"] = @benchmarkable quantum_trajectories($mt,$rt,[0.0,0.2],100;dt=0.01,seed=1)
 trajectory_plan=TrajectoryPlan(mt)

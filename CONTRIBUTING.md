@@ -32,9 +32,13 @@ JULIA_NUM_THREADS=4 julia --project=. benchmark/performance_regression.jl
 ```
 
 Documentation and optional dependencies have isolated environments. See
-`docs/Project.toml`, `quality/Project.toml`, and `test/optional/Project.toml`.
-Do not commit generated root, quality, example, or optional-test manifests;
-the tracked `docs/Manifest.toml` is the exception.
+`docs/Project.toml`, `quality/Project.toml`, `benchmark/Project.toml`, the
+projects under `benchmark/comparison/`, and `test/optional/Project.toml`.
+Do not commit generated root, quality, example, benchmark, comparison, or
+optional-test manifests; the tracked `docs/Manifest.toml` is the exception.
+The reproducible scaling and ecosystem-comparison commands, validation rules,
+and interpretation limits are documented in `benchmark/README.md` and
+`docs/src/benchmarks.md`.
 
 ## Architectural expectations
 

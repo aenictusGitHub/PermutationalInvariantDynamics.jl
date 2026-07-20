@@ -336,6 +336,22 @@ g_{(N)}={N+d-1\choose N}
 
 states and \(g_{(N)}^2\) PI operator coordinates.
 
+In this one-sector case, collective one-body operators are lifted directly in
+the occupation basis through
+
+\[
+a_a^\dagger a_b\lvert\boldsymbol n\rangle
+=\sqrt{n_b(n_a+1)}\,
+ \lvert\boldsymbol n+\boldsymbol e_a-\boldsymbol e_b\rangle
+\quad (a\ne b).
+\]
+
+This avoids constructing the general one-box recoupling geometry. Fixed
+collective terms retain their exact sparse block support, while driven terms
+fill preallocated dense block scratch because their support may change with
+time. Models spanning several Schur sectors, and models with local jumps,
+continue to use the general one-box geometry.
+
 Polynomial scaling does not make every operation inexpensive. A dense PI
 Liouvillian contains \(n_{\mathrm{PI}}^2\) entries, and a complete dense
 eigendecomposition has cubic cost in \(n_{\mathrm{PI}}\). The matrix-free
@@ -536,12 +552,15 @@ PIBasis -> PIModel -> compile -> CompiledPIModel -> solver or analysis
 | `CompositeTrajectoryPlan`, composite trajectory workspaces | Explicit monitored tensor-product channels and density-valued conditional evolution | Plan shared read-only; one workspace and RNG per concurrent path worker |
 
 `compile(model; backend=:auto)` performs the expensive representation setup
-once and chooses a conservative backend. Sparse storage is convenient for
-moderate autonomous problems. Matrix-free application is preferable when a
-global sparse matrix would dominate memory, for driven models, or for Krylov
-methods. Explicit `apply!` and `apply_adjoint!` calls should reuse a caller-
-owned workspace in hot or parallel loops. The convenient compatibility calls
-are synchronized and safe, but concurrent calls serialize.
+once and chooses a conservative backend. For standard fixed kernels, the
+sparse-memory bound uses their prepared exact block support; driven or custom
+kernels with unknown support retain a safe dense-coordinate fallback. This
+lets structured collective generators select sparse storage without charging
+them for a fictitious dense PI matrix. Matrix-free application is preferable
+when the resulting sparse matrix would still dominate memory, for driven
+models, or for Krylov methods. Explicit `apply!` and `apply_adjoint!` calls
+should reuse a caller-owned workspace in hot or parallel loops. The convenient
+compatibility calls are synchronized and safe, but concurrent calls serialize.
 
 When a small model needs several one-body/Appendix-D geometry families,
 compilation automatically shares one bounded, transient `OneBoxCGCache`

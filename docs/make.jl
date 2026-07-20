@@ -56,6 +56,7 @@ makedocs(sitename="PermutationalInvariantDynamics.jl", modules=[PermutationalInv
                 "Examples and validation"=>[
                     "Published validation"=>"published_validation.md",
                     "Research examples"=>"research_examples.md",
+                    "Performance benchmarks"=>"benchmarks.md",
                 ],
                 "Optional ecosystem integrations"=>"interoperability.md",
                 "Mathematical reference"=>"mathematics.md",

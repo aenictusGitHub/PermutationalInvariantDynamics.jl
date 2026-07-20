@@ -153,11 +153,20 @@
         T=Complex{BigFloat},bigfloat_precision=128)
     big_model_recommendation512=recommend_solver(big_model;
         T=Complex{BigFloat},bigfloat_precision=512)
+    symmetric_geometry128=
+        PermutationalInvariantDynamics._estimate_symmetric_collective_geometry(
+            big_basis,BigFloat;bigfloat_precision=128)
+    symmetric_geometry512=
+        PermutationalInvariantDynamics._estimate_symmetric_collective_geometry(
+            big_basis,BigFloat;bigfloat_precision=512)
     @test big_model_recommendation128.geometry_requirement===:required
     @test big_model_recommendation128.geometry_setup_upper_bytes==
-          geometry128.setup_bytes
+          symmetric_geometry128.setup_bytes
     @test big_model_recommendation512.geometry_setup_upper_bytes==
-          geometry512.setup_bytes
+          symmetric_geometry512.setup_bytes
+    @test symmetric_geometry512.setup_bytes>
+          symmetric_geometry128.setup_bytes
+    @test symmetric_geometry128.setup_bytes<geometry128.setup_bytes
     @test big_model_recommendation512.estimated_peak_bytes>
           big_model_recommendation128.estimated_peak_bytes
     restricted=PIBasis(100,2;sectors=[(100,0)])

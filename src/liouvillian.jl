@@ -135,15 +135,54 @@ end
 _liouvillian_action!(y,L::AbstractMatrix,x,t,p)=mul!(y,L,x)
 _liouvillian_action!(y,L::MatrixFreeLiouvillian,x,t,p)=L.action!(y,x,t,p)
 
-function _block_superop(b::PIBasis,blocks,kind)
-    T=isempty(blocks) ? ComplexF64 : eltype(first(blocks))
-    rows=Int[];cols=Int[];V=T[]
-    for (s,p) in pairs(b.sectors)
-        K=blocks[s]; n=size(K,1); off=b.offsets[s]-1
-        M = kind===:commutator ? commutator_superoperator(K) : dissipator_superoperator(K)
-        ii,jj,vv=findnz(sparse(M));append!(rows,ii.+off);append!(cols,jj.+off);append!(V,vv)
+function _append_sparse_block!(rows,columns,values,M,offset,scale)
+    ii,jj,vv=findnz(M)
+    @inbounds for index in eachindex(vv)
+        value=convert(eltype(values),scale*vv[index])
+        iszero(value)&&continue
+        push!(rows,ii[index]+offset)
+        push!(columns,jj[index]+offset)
+        push!(values,value)
     end
-    sparse(rows,cols,V,length(b),length(b))
+    nothing
+end
+
+# Sparse Liouvillian construction must start from exact Schur-block support.
+# Building a dense m^2-by-m^2 Kronecker product and sparsifying afterwards
+# makes a simple Dicke ladder allocate O(m^4) temporary storage.  These
+# helpers preserve the same column-major vec identities and exact `iszero`
+# semantics while never materializing that dense intermediate.
+_exact_sparse_block(matrix::SparseMatrixCSC)=matrix
+_exact_sparse_block(matrix)=sparse(matrix)
+
+function _sparse_commutator_block(K)
+    S=_exact_sparse_block(K)
+    result=-im*(left_superoperator(S)-right_superoperator(S))
+    dropzeros!(result)
+end
+
+function _sparse_dissipator_block(K,Q)
+    S=_exact_sparse_block(K);QS=_exact_sparse_block(Q)
+    result=sandwich_superoperator(S)-
+        (left_superoperator(QS)+right_superoperator(QS))/2
+    dropzeros!(result)
+end
+
+
+function _block_superop(b::PIBasis,blocks,kind;qblocks=nothing)
+    kind in (:commutator,:dissipator)||throw(ArgumentError(
+        "block superoperator kind must be :commutator or :dissipator"))
+    kind===:dissipator&&qblocks===nothing&&throw(ArgumentError(
+        "dissipator block assembly requires prepared K'K blocks"))
+    T=isempty(blocks) ? ComplexF64 : eltype(first(blocks))
+    rows=Int[];columns=Int[];values=T[]
+    for s in eachindex(b.sectors)
+        K=blocks[s];offset=b.offsets[s]-1
+        M=kind===:commutator ? _sparse_commutator_block(K) :
+            _sparse_dissipator_block(K,qblocks[s])
+        _append_sparse_block!(rows,columns,values,M,offset,one(T))
+    end
+    sparse(rows,columns,values,length(b),length(b))
 end
 
 function _direct_blocks(b,o::PIOperator)
@@ -400,9 +439,16 @@ end
 # In-place schedules keep all mutable evaluated data outside the plan. The
 # builders below are read-only handles to prepared representation geometry.
 abstract type AbstractDynamicPIKernel end
-struct CollectiveOneBodyBlockBuilder{G}
-    geometry::G
+struct CollectiveOneBodyBlockBuilder{T,D,L,B<:PIBasis{D,L}}
+    geometry::Union{OneBodyGeometry{T,D,L,B},
+                    _SymmetricCollectiveGeometry{T,D,L,B}}
 end
+CollectiveOneBodyBlockBuilder(
+    geometry::OneBodyGeometry{T,D,L,B}) where {T,D,L,B}=
+    CollectiveOneBodyBlockBuilder{T,D,L,B}(geometry)
+CollectiveOneBodyBlockBuilder(
+    geometry::_SymmetricCollectiveGeometry{T,D,L,B}) where {T,D,L,B}=
+    CollectiveOneBodyBlockBuilder{T,D,L,B}(geometry)
 struct CollectivePBodyBlockBuilder{G,P,E}
     geometry::G
     permutations::P
@@ -604,13 +650,25 @@ function _model_geometry_type(model::PIModel)
     isempty(types) ? Float64 : foldl(promote_type,types)
 end
 
-function _model_onebox_requirements(model::PIModel)
-    needs_onebody=any(_term_requires_onebody_geometry,model.terms)
+function _model_onebox_requirements(model::PIModel,
+        ::Type{T}=_model_geometry_type(model)) where T<:AbstractFloat
+    symmetric_collective_available=
+        _has_single_fully_symmetric_sector(model.basis)&&
+        !_needs_wide_collective(model.basis,T)
+    needs_onebody=any(model.terms) do term
+        _term_requires_onebody_geometry(term)&&
+            !(symmetric_collective_available&&
+              _term_supports_symmetric_collective_geometry(term))
+    end
+    uses_symmetric_collective=symmetric_collective_available&&
+        !needs_onebody&&any(_term_supports_symmetric_collective_geometry,
+                           model.terms)
     pbody_orders=unique(Int[body_order(term) for term in model.terms
                             if term isa _PBodyPITerm])
     required_depth=max(needs_onebody ? 1 : 0,maximum(pbody_orders;init=0))
     geometry_families=(needs_onebody ? 1 : 0)+length(pbody_orders)
-    (;needs_onebody,pbody_orders,required_depth,geometry_families)
+    (;needs_onebody,uses_symmetric_collective,pbody_orders,required_depth,
+      geometry_families)
 end
 
 function _small_onebox_autocache(b::PIBasis)
@@ -639,11 +697,16 @@ end
 function TermCompileContext(model::PIModel{B};coefficient_cache=nothing) where
         {D,L,B<:PIBasis{D,L}}
     b=model.basis;T=_model_geometry_type(model)
-    requirements=_model_onebox_requirements(model)
+    requirements=_model_onebox_requirements(model,T)
     coefficients=_compile_coefficient_cache(
         model,T,requirements,coefficient_cache)
-    onebody=requirements.needs_onebody ?
-        OneBodyGeometry(b,T;coefficient_cache=coefficients) : nothing
+    onebody=if requirements.needs_onebody
+        OneBodyGeometry(b,T;coefficient_cache=coefficients)
+    elseif requirements.uses_symmetric_collective
+        _SymmetricCollectiveGeometry(b,T)
+    else
+        nothing
+    end
     pbody=Dict{Int,PBodyGeometry{T,D,L,B}}()
     TermCompileContext(b,onebody,pbody,coefficients,T)
 end
@@ -654,6 +717,14 @@ end
 _term_requires_onebody_geometry(::AbstractPITerm)=true
 _term_requires_onebody_geometry(::Union{DirectPIHamiltonian,DirectPIJump,
     PBodyHamiltonian,LocalPBodyJump,CollectivePBodyJump})=false
+
+# These built-ins only need diagonal Schur blocks of a collective one-body
+# lift.  On the sole fully symmetric irrep they can use occupation-number
+# geometry.  A custom term remains conservative because its delegated
+# `compile_term` implementation may also require local sector-changing gains.
+_term_supports_symmetric_collective_geometry(::AbstractPITerm)=false
+_term_supports_symmetric_collective_geometry(::Union{LocalHamiltonian,
+    CollectiveHamiltonian,CollectiveJump,CorrelatedCollectiveJumps})=true
 
 function _pbody_geometry!(context::TermCompileContext,order::Integer)
     get!(()->PBodyGeometry(context.basis,order,context.geometry_type;
@@ -820,7 +891,27 @@ function _pbody_gain_factorization(builder::CollectivePBodyBlockBuilder)
 end
 
 function _fill_dynamic_blocks!(blocks,builder::CollectiveOneBodyBlockBuilder,X)
-    cache=builder.geometry;b=cache.basis
+    # Keep the builder's type independent of the runtime sector selection so
+    # plan construction remains inferable, then cross a function barrier that
+    # specializes on the concrete geometry.  Accessing the Union-valued field
+    # throughout this loop otherwise boxes it once per driven application.
+    _fill_dynamic_collective_blocks!(blocks,builder.geometry,X)
+end
+
+@noinline _symmetric_collective_block_count_error()=throw(DimensionMismatch(
+    "symmetric collective geometry requires exactly one Schur block"))
+
+function _fill_dynamic_collective_blocks!(blocks,
+        cache::_SymmetricCollectiveGeometry,X)
+    length(blocks)==1||_symmetric_collective_block_count_error()
+    # `only(blocks)` still materializes a tiny iterator state on Julia 1.10;
+    # the validated direct index is allocation-free on every supported line.
+    _fill_symmetric_collective_block!(@inbounds(blocks[1]),cache,X)
+    blocks
+end
+
+function _fill_dynamic_collective_blocks!(blocks,cache::OneBodyGeometry,X)
+    b=cache.basis
     for s in eachindex(b.sectors)
         K=blocks[s];fill!(K,zero(eltype(K)))
         n=length(b.patterns[s])
@@ -855,13 +946,18 @@ function _fill_dynamic_blocks!(blocks,builder::DirectPIBlockBuilder,
     blocks
 end
 
-function _dynamic_onebody_builder(context::TermCompileContext)
-    cache=context.onebody;T=geometry_scalar_type(cache)
-    _needs_wide_collective(cache.basis,T)&&throw(ArgumentError(
-        "preallocated collective one-body blocks at N=$(cache.basis.N) cannot " *
-        "certify large-N cancellation in fixed $T scratch; use a wider " *
-        "InPlaceTimeOperator prototype scalar type"))
-    CollectiveOneBodyBlockBuilder(cache)
+function _dynamic_onebody_builder(
+        context::TermCompileContext{B,G,P,C,T}) where
+        {D,L,B<:PIBasis{D,L},G,P,C,T}
+    cache=context.onebody
+    cache===nothing&&error(
+        "internal error: collective one-body geometry was not prepared")
+    cache isa OneBodyGeometry&&_needs_wide_collective(cache.basis,T)&&
+        throw(ArgumentError(
+            "preallocated collective one-body blocks at N=$(cache.basis.N) cannot " *
+            "certify large-N cancellation in fixed $T scratch; use a wider " *
+            "InPlaceTimeOperator prototype scalar type"))
+    CollectiveOneBodyBlockBuilder{T,D,L,B}(cache)
 end
 
 function _direct_pi_block_builder(context::TermCompileContext,::Type{R}) where
@@ -910,23 +1006,41 @@ function _collective_blocks(operator::AbstractMatrix{O},
     S=promote_type(Complex{R},O)
     blocks=Vector{Matrix{S}}(undef,length(context.basis.sectors))
     for index in eachindex(context.basis.sectors)
-        blocks[index]=collective_block(context.basis,operator,
-            context.basis.sectors[index];cache=context.onebody)
+        blocks[index]=if context.onebody isa _SymmetricCollectiveGeometry
+            _symmetric_collective_block(context.basis,operator,
+                context.basis.sectors[index],context.onebody)
+        else
+            collective_block(context.basis,operator,
+                context.basis.sectors[index];cache=context.onebody)
+        end
     end
     blocks
 end
 _direct_term_blocks(operator,context)=_direct_blocks(context.basis,operator)
 
+# Fixed collective one-body lifts have the exact sparse support of the U(d)
+# generators in every Schur irrep. Retaining it lets the existing preallocated
+# matrix-multiplication kernels use sparse-dense `mul!` without changing
+# arithmetic or allocating in hot loops. Applying this representation to all
+# fixed collective one-body terms also keeps plan types independent of the
+# runtime sector selection. Dynamic schedules remain dense because their
+# support may change at every evaluation.
+_prepare_collective_action(blocks)=[sparse(block) for block in blocks]
+
 function _compile_hamiltonian(term,context,blocks)
     R=_real_float_type(eltype(first(blocks)))
     HamiltonianPIKernel(blocks,_scaled_rate(term_rate(term),term_hbar(term),R))
+end
+function _compile_collective_hamiltonian(term,context,blocks)
+    _compile_hamiltonian(term,context,_prepare_collective_action(blocks))
 end
 function compile_term(t::Union{LocalHamiltonian,CollectiveHamiltonian},
                       context::TermCompileContext)
     operator=term_operator(t);R=context.geometry_type
     operator isa InPlaceTimeOperator && return InPlaceHamiltonianPIKernel(
         operator,_dynamic_builder(context,t),_scaled_rate(term_rate(t),term_hbar(t),R))
-    _compile_hamiltonian(t,context,_collective_blocks(operator,context))
+    _compile_collective_hamiltonian(
+        t,context,_collective_blocks(operator,context))
 end
 function compile_term(t::DirectPIHamiltonian,context::TermCompileContext)
     operator=term_operator(t);R=context.geometry_type
@@ -942,11 +1056,21 @@ end
 function _compile_dissipator(term,blocks)
     DissipatorPIKernel(blocks,[K'*K for K in blocks],term_rate(term))
 end
+function _compile_collective_dissipator(term,blocks,context)
+    # Form Q with the established dense multiplication order before retaining
+    # exact sparse support, so this optimization does not change the prepared
+    # floating values.
+    qblocks=[K'*K for K in blocks]
+    blocks=_prepare_collective_action(blocks)
+    qblocks=_prepare_collective_action(qblocks)
+    DissipatorPIKernel(blocks,qblocks,term_rate(term))
+end
 function compile_term(t::CollectiveJump,context::TermCompileContext)
     operator=term_operator(t)
     operator isa InPlaceTimeOperator && return InPlaceDissipatorPIKernel(
         operator,_dynamic_builder(context,t),term_rate(t))
-    _compile_dissipator(t,_collective_blocks(operator,context))
+    _compile_collective_dissipator(
+        t,_collective_blocks(operator,context),context)
 end
 function compile_term(t::DirectPIJump,context::TermCompileContext)
     operator=term_operator(t)
@@ -1123,6 +1247,9 @@ function _fused_zero_blocks(b,::Type{T}) where T
 end
 
 _fused_owned_matrix(matrix::Matrix{T},::Type{T}) where T=matrix
+_fused_owned_matrix(matrix::SparseMatrixCSC{T,Int},::Type{T}) where T=matrix
+_fused_owned_matrix(matrix::SparseMatrixCSC,::Type{T}) where T=
+    SparseMatrixCSC{T,Int}(matrix)
 _fused_owned_matrix(matrix,::Type{T}) where T=Matrix{T}(matrix)
 _fused_owned_matrix(contraction::_StaticOneBodyContraction{T},
                     ::Type{T}) where T=contraction
@@ -1131,6 +1258,14 @@ function _fused_owned_matrix(contraction::_StaticOneBodyContraction,
     _static_onebody_contraction(Matrix{T}(contraction.matrix))
 end
 
+function _fused_owned_blocks(blocks::AbstractVector{<:SparseMatrixCSC},
+        ::Type{T}) where T
+    prepared=Vector{SparseMatrixCSC{T,Int}}(undef,length(blocks))
+    @inbounds for index in eachindex(blocks)
+        prepared[index]=_fused_owned_matrix(blocks[index],T)
+    end
+    prepared
+end
 function _fused_owned_blocks(blocks::AbstractVector,::Type{T}) where T
     prepared=Vector{Matrix{T}}(undef,length(blocks))
     @inbounds for index in eachindex(blocks)
@@ -1206,7 +1341,8 @@ function _fuse_selected_fixed_kernels(
                 blocks[sector][index]+=scale*kernel.blocks[sector][index]
             end
         end
-        blocks
+        all(kernel->all(issparse,kernel.blocks),hamiltonians) ?
+            [sparse(block) for block in blocks] : blocks
     end
 
     DissipativeKernel=Union{DissipatorPIKernel,FactorizedLocalJumpPIKernel,
@@ -1227,7 +1363,8 @@ function _fuse_selected_fixed_kernels(
                 blocks[sector][index]+=scale*kernel.qblocks[sector][index]
             end
         end
-        blocks
+        all(kernel->all(issparse,kernel.qblocks),dissipative) ?
+            [sparse(block) for block in blocks] : blocks
     end
 
     collective=_select_kernel_type(selected,DissipatorPIKernel)
@@ -2799,13 +2936,15 @@ function _local_jump_matrix(plan,ker,scale)
 end
 
 function _loss_matrix(plan,qblocks,scale)
-    n=length(plan.basis);anti=spzeros(plan.Ttype,n,n)
-    for s in eachindex(plan.basis.sectors)
-        off=plan.basis.offsets[s]-1;Q=qblocks[s]
+    b=plan.basis;n=length(b)
+    rows=Int[];columns=Int[];values=plan.Ttype[]
+    for s in eachindex(b.sectors)
+        offset=b.offsets[s]-1;Q=_exact_sparse_block(qblocks[s])
         M=(left_superoperator(Q)+right_superoperator(Q))/2
-        ii,jj,vv=findnz(sparse(M));anti+=sparse(ii.+off,jj.+off,scale.*vv,n,n)
+        dropzeros!(M)
+        _append_sparse_block!(rows,columns,values,M,offset,scale)
     end
-    anti
+    sparse(rows,columns,values,n,n)
 end
 
 function _factorized_onebody_gain_matrix(plan,branches,contractions,scale)
@@ -2849,20 +2988,22 @@ function _factorized_pbody_gain_matrix(plan,groups,contractions,pair_scales,scal
 end
 
 function _collective_gain_matrix(plan,blocks,scale)
-    b=plan.basis;n=length(b);M=spzeros(plan.Ttype,n,n)
+    b=plan.basis;n=length(b)
+    rows=Int[];columns=Int[];values=plan.Ttype[]
     for sector in eachindex(b.sectors)
-        off=b.offsets[sector]-1
-        sector_map=scale*sandwich_superoperator(blocks[sector])
-        ii,jj,vv=findnz(sparse(sector_map))
-        M+=sparse(ii.+off,jj.+off,vv,n,n)
+        offset=b.offsets[sector]-1
+        sector_map=sandwich_superoperator(
+            _exact_sparse_block(blocks[sector]))
+        _append_sparse_block!(rows,columns,values,sector_map,offset,scale)
     end
-    M
+    sparse(rows,columns,values,n,n)
 end
 
 _kernel_matrix(plan,kernel::HamiltonianPIKernel,scale)=
     scale*_block_superop(plan.basis,kernel.blocks,:commutator)
 _kernel_matrix(plan,kernel::DissipatorPIKernel,scale)=
-    scale*_block_superop(plan.basis,kernel.blocks,:dissipator)
+    scale*_block_superop(plan.basis,kernel.blocks,:dissipator;
+                         qblocks=kernel.qblocks)
 _kernel_matrix(plan,kernel::LocalJumpPIKernel,scale)=
     _local_jump_matrix(plan,kernel,scale)
 _kernel_matrix(plan,kernel::FactorizedLocalJumpPIKernel,scale)=
@@ -2937,10 +3078,8 @@ function liouvillian(model::PIModel;representation=:matrixfree,
         operation="PI Liouvillian preparation",coefficient_cache)
     plan=LiouvillianPlan(model;coefficient_cache)
     if representation===:sparse
-        n=length(plan.basis);scalar_bytes=_scalar_retained_bytes(plan.Ttype)
-        sparse_operator=BigInt(n)^2*(scalar_bytes+2sizeof(Int))+
-                        (BigInt(n)+1)*sizeof(Int)
-        estimate=BigInt(Base.summarysize(plan))+3sparse_operator
+        sparse_bounds=_performance_sparse_materialization_bounds(plan)
+        estimate=BigInt(Base.summarysize(plan))+sparse_bounds.peak_bytes
         _require_performance_budget("sparse Liouvillian materialization",
             estimate,memory_budget;guidance="Use representation=:matrixfree.")
         return _matrix_from_plan(plan)
@@ -3164,6 +3303,146 @@ function _performance_liouvillian_fallback_bytes(plan::LiouvillianPlan;
     _model_preparation_bytes(plan.fallback_model;bigfloat_precision)+3sparse
 end
 
+# Count exact stored mathematical support without allocating a sparse copy.
+# Prepared standard kernels already own all matrices inspected here, so this
+# setup-only pass is linear in their retained block payload.  Explicit stored
+# zeros are not charged as nonzeros because every sparse materializer below
+# applies the same exact `iszero` rule; no numerical tolerance is involved.
+function _performance_matrix_nonzeros(matrix)
+    count=big(0)
+    @inbounds for value in matrix
+        iszero(value)||(count+=1)
+    end
+    count
+end
+function _performance_matrix_nonzeros(matrix::SparseMatrixCSC)
+    count=big(0)
+    @inbounds for value in nonzeros(matrix)
+        iszero(value)||(count+=1)
+    end
+    count
+end
+
+# Iterating an `AbstractArray` visits every logical entry.  Avoid turning this
+# setup estimate into an O(m^2) scan when the symmetric collective fast path
+# has already retained an exact sparse Schur block.
+function _performance_matrix_nonzeros(matrix::SparseMatrixCSC)
+    BigInt(count(!iszero,nonzeros(matrix)))
+end
+
+function _performance_commutator_contributions(blocks)
+    sum(eachindex(blocks);init=big(0)) do sector
+        block=blocks[sector]
+        2BigInt(size(block,1))*_performance_matrix_nonzeros(block)
+    end
+end
+
+function _performance_loss_contributions(blocks)
+    sum(eachindex(blocks);init=big(0)) do sector
+        block=blocks[sector]
+        2BigInt(size(block,1))*_performance_matrix_nonzeros(block)
+    end
+end
+
+function _performance_collective_gain_contributions(blocks)
+    sum(blocks;init=big(0)) do block
+        support=_performance_matrix_nonzeros(block)
+        support^2
+    end
+end
+
+function _performance_factorized_gain_contributions(contractions)
+    sum(contractions;init=big(0)) do contraction
+        support=_performance_matrix_nonzeros(contraction)
+        support^2
+    end
+end
+
+_performance_sparse_kernel_contributions(kernel::HamiltonianPIKernel)=
+    _performance_commutator_contributions(kernel.blocks)
+function _performance_sparse_kernel_contributions(kernel::DissipatorPIKernel)
+    _performance_collective_gain_contributions(kernel.blocks)+
+        _performance_loss_contributions(kernel.qblocks)
+end
+function _performance_sparse_kernel_contributions(kernel::LocalJumpPIKernel)
+    gain=count(!iszero,kernel.gain.V)
+    BigInt(gain)+_performance_loss_contributions(kernel.qblocks)
+end
+function _performance_sparse_kernel_contributions(
+        kernel::FactorizedLocalJumpPIKernel)
+    _performance_factorized_gain_contributions(kernel.contractions)+
+        _performance_loss_contributions(kernel.qblocks)
+end
+function _performance_sparse_kernel_contributions(
+        kernel::FactorizedLocalPBodyJumpPIKernel)
+    _performance_factorized_gain_contributions(kernel.contractions)+
+        _performance_loss_contributions(kernel.qblocks)
+end
+function _performance_sparse_kernel_contributions(kernel::FusedStaticPIKernel)
+    contributions=big(0)
+    kernel.hamiltonian_blocks===nothing||
+        (contributions+=_performance_commutator_contributions(
+            kernel.hamiltonian_blocks))
+    kernel.loss_blocks===nothing||
+        (contributions+=_performance_loss_contributions(kernel.loss_blocks))
+    for gain in kernel.collective_gains
+        contributions+=_performance_collective_gain_contributions(gain.blocks)
+    end
+    for gain in kernel.onebody_gains
+        contributions+=_performance_factorized_gain_contributions(
+            gain.contractions)
+    end
+    for gain in kernel.pbody_gains
+        contributions+=_performance_factorized_gain_contributions(
+            gain.contractions)
+    end
+    contributions
+end
+_performance_sparse_kernel_contributions(::AbstractDynamicPIKernel)=nothing
+_performance_sparse_kernel_contributions(kernel)=nothing
+
+_performance_sparse_plan_contributions(::Tuple{})=big(0)
+function _performance_sparse_plan_contributions(
+        kernels::Tuple{K,Vararg{Any}}) where K
+    head=_performance_sparse_kernel_contributions(first(kernels))
+    head===nothing&&return nothing
+    tail=_performance_sparse_plan_contributions(Base.tail(kernels))
+    tail===nothing ? nothing : head+tail
+end
+
+"""
+Conservative storage bounds for sparse materialization of a prepared PI plan.
+
+For standard fixed kernels, `contribution_upper_bound` counts the exact-support
+triplets generated before duplicate coordinates are coalesced.  Unknown or
+dynamic kernels retain the dense-coordinate fallback.  `operator_bytes` bounds
+the retained CSC result, while `peak_bytes` includes a factor-sixteen allowance
+for simultaneous sparse Kronecker operands/results, global triplets, CSC
+conversion, kernel-by-kernel accumulation, and allocator/version variation.
+The prepared plan itself is not included in either quantity.
+"""
+function _performance_sparse_materialization_bounds(plan::LiouvillianPlan;
+        bigfloat_precision::Integer=precision(BigFloat))
+    n=BigInt(length(plan.basis));dense_entries=n^2
+    contributions=plan.kernels===nothing ? nothing :
+        _performance_sparse_plan_contributions(plan.kernels)
+    structured=contributions!==nothing
+    contribution_upper=structured ? contributions : dense_entries
+    retained_entries=min(contribution_upper,dense_entries)
+    scalar_bytes=_scalar_retained_bytes(plan.Ttype;bigfloat_precision)
+    int_bytes=BigInt(sizeof(Int));column_bytes=(n+1)*int_bytes
+    operator_bytes=retained_entries*(scalar_bytes+int_bytes)+column_bytes
+    assembly_bytes=contribution_upper*(scalar_bytes+2int_bytes)+column_bytes
+    # Sparse block expressions can transiently retain both Kronecker operands,
+    # a gain/loss result, exact triplets, the converted CSC block, and the
+    # accumulated result.  Sixteen complete largest-payload allowances remain a
+    # conservative live bound without returning to the old dense n_PI^2 guess.
+    peak_bytes=16max(operator_bytes,assembly_bytes)
+    (;structured,contribution_upper_bound=contribution_upper,
+      retained_nnz_upper_bound=retained_entries,operator_bytes,
+      assembly_bytes,peak_bytes)
+end
+
 function _performance_source_action_bytes(plan::LiouvillianPlan,
         ::Type{T}) where T
     _performance_liouvillian_fallback_bytes(plan)
@@ -3212,18 +3491,58 @@ function _require_performance_budget(operation::AbstractString,
         "to opt in explicitly after checking available RAM."))
 end
 
+function _estimate_symmetric_collective_geometry(b::PIBasis,
+        ::Type{T}=Float64;
+        bigfloat_precision::Integer=precision(BigFloat)) where
+        T<:AbstractFloat
+    _has_single_fully_symmetric_sector(b)||throw(ArgumentError(
+        "symmetric collective geometry requires one fully symmetric sector"))
+    occupation_count=BigInt(length(only(b.patterns)))
+    int_bytes=BigInt(sizeof(Int));header=8int_bytes
+    tuple_bytes=BigInt(b.d)*int_bytes
+    scalar_bytes=_scalar_retained_bytes(T;bigfloat_precision)
+    transition_count=sum(only(b.patterns);init=big(0)) do pattern
+        BigInt(count(!iszero,content(pattern)))*BigInt(b.d-1)
+    end
+    # The retained object owns one exactly sized occupation vector and a Dict
+    # from each occupation tuple to its block index, plus preconverted diagonal
+    # factors, packed off-diagonal transitions, and their column offsets.  A
+    # factor-two capacity allowance covers hash-table load-factor slack and the
+    # push!-grown transition vector; the setup allowance also covers tuple,
+    # index, and transition-vector staging.
+    # The caller-owned basis is referenced rather than counted a second time.
+    dictionary_entry=16int_bytes+tuple_bytes+int_bytes
+    occupation_bytes=occupation_count*tuple_bytes
+    diagonal_bytes=occupation_count*BigInt(b.d)*scalar_bytes
+    offset_bytes=(occupation_count+1)*int_bytes
+    transition_bytes=2transition_count*(3int_bytes+scalar_bytes)
+    retained_bytes=8header+occupation_bytes+2occupation_count*dictionary_entry+
+        diagonal_bytes+offset_bytes+transition_bytes
+    setup_bytes=retained_bytes+4header+2occupation_bytes+diagonal_bytes+
+        offset_bytes+2transition_bytes
+    (;retained_bytes,setup_bytes,occupation_count,
+      transition_count,scalar_type=T,scalar_retained_bytes=scalar_bytes,
+      scalar_storage_estimate=_scalar_storage_estimate(T),
+      bigfloat_precision_assumption=
+          _scalar_precision_assumption(T,bigfloat_precision),
+      estimate=:conservative_structural_upper_bound)
+end
+
 function _model_preparation_bytes(model::PIModel;
         linear_arrays::Integer=16,
         bigfloat_precision::Integer=precision(BigFloat),
         coefficient_cache=nothing)
     n=length(model.basis);R=_model_geometry_type(model)
     T=Complex{R}
-    geometry=if any(_term_requires_onebody_geometry,model.terms)
+    requirements=_model_onebox_requirements(model,R)
+    geometry=if requirements.needs_onebody
         _estimate_onebody_geometry(model.basis,R;bigfloat_precision).setup_bytes
+    elseif requirements.uses_symmetric_collective
+        _estimate_symmetric_collective_geometry(
+            model.basis,R;bigfloat_precision).setup_bytes
     else
         big(0)
     end
-    requirements=_model_onebox_requirements(model)
     automatic_coefficients=coefficient_cache===nothing&&
         requirements.geometry_families>1&&_small_onebox_autocache(model.basis) ?
         _estimate_onebox_cache_upper(model.basis,requirements.required_depth,R;
@@ -3247,9 +3566,11 @@ end
             bigfloat_precision=precision(BigFloat), coefficient_cache=nothing)
 
 Prepare all fixed Schur geometry once and choose a sparse or matrix-free
-backend. `backend=:auto` uses a conservative sparse-storage upper bound and
-always keeps driven models matrix-free. The returned `CompiledPIModel` can be
-passed directly to `apply!`, `evolve!`, and `dynamics_problem`.
+backend. For standard fixed kernels, `backend=:auto` bounds sparse storage
+from their prepared exact block support; dynamic, custom, or otherwise unknown
+kernels retain a conservative dense-coordinate fallback. Driven models always
+remain matrix-free. The returned `CompiledPIModel` can be passed directly to
+`apply!`, `evolve!`, and `dynamics_problem`.
 
 The sparse bound includes the prepared plan and simultaneous sparse assembly
 temporaries. Matrix-free preparation separately bounds its retained plan and
@@ -3282,13 +3603,14 @@ function compile(model::PIModel;backend=:auto,memory_budget=512*1024^2,
     n=length(model.basis)
     T=plan.Ttype
     scalar_bytes=_scalar_retained_bytes(T;bigfloat_precision)
-    dense_entries=BigInt(n)^2
-    sparse_upper_big=dense_entries*(scalar_bytes+2sizeof(Int))+
-                     (BigInt(n)+1)*sizeof(Int)
-    sparse_upper=Int(min(sparse_upper_big,BigInt(typemax(Int))))
+    sparse_bounds=_performance_sparse_materialization_bounds(
+        plan;bigfloat_precision)
+    sparse_operator_big=sparse_bounds.operator_bytes
+    sparse_upper=Int(min(sparse_operator_big,BigInt(typemax(Int))))
     plan_bytes=Base.summarysize(plan)
-    sparse_total=Int(min(BigInt(plan_bytes)+sparse_upper_big,BigInt(typemax(Int))))
-    sparse_peak_big=BigInt(plan_bytes)+3sparse_upper_big
+    sparse_total=Int(min(BigInt(plan_bytes)+sparse_operator_big,
+                         BigInt(typemax(Int))))
+    sparse_peak_big=BigInt(plan_bytes)+sparse_bounds.peak_bytes
     sparse_peak=Int(min(sparse_peak_big,BigInt(typemax(Int))))
     matrixfree_workspace_big=_performance_liouvillian_workspace_bytes(
         plan;bigfloat_precision)
@@ -3311,6 +3633,15 @@ function compile(model::PIModel;backend=:auto,memory_budget=512*1024^2,
                bigfloat_precision_assumption=
                    _scalar_precision_assumption(T,bigfloat_precision),
                sparse_upper_bound=sparse_upper,sparse_operator_upper_bound=sparse_upper,
+               sparse_structure_supported=sparse_bounds.structured,
+               sparse_contribution_upper_bound=Int(min(
+                   sparse_bounds.contribution_upper_bound,
+                   BigInt(typemax(Int)))),
+               sparse_retained_nnz_upper_bound=Int(min(
+                   sparse_bounds.retained_nnz_upper_bound,
+                   BigInt(typemax(Int)))),
+               sparse_assembly_upper_bound=Int(min(
+                   sparse_bounds.assembly_bytes,BigInt(typemax(Int)))),
                sparse_compiled_upper_bound=sparse_total,
                sparse_materialization_peak_upper_bound=sparse_peak,
                matrixfree_workspace_upper_bound=Int(min(
@@ -3325,7 +3656,12 @@ function liouvillian(compiled::CompiledPIModel;representation=compiled.backend,
     representation in (:sparse,:matrixfree)||throw(ArgumentError("representation must be :sparse or :matrixfree"))
     representation===compiled.backend&&return compiled.operator
     if representation===:sparse
-        estimate=3BigInt(compiled.estimates.sparse_operator_upper_bound)
+        precision_assumption=
+            compiled.estimates.bigfloat_precision_assumption
+        sparse_precision=precision_assumption===nothing ?
+            precision(BigFloat) : precision_assumption
+        estimate=_performance_sparse_materialization_bounds(
+            compiled.plan;bigfloat_precision=sparse_precision).peak_bytes
         _require_performance_budget("sparse Liouvillian materialization",
             estimate,memory_budget;guidance="Keep representation=:matrixfree.")
         return _matrix_from_plan(compiled.plan)

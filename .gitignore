@@ -2,6 +2,7 @@
 /Manifest.toml
 /quality/Manifest.toml
 /examples/Manifest.toml
+/benchmark/Manifest.toml
 /test/optional/Manifest.toml
 /notebooks/Manifest.toml
 
@@ -16,6 +17,7 @@
 /examples/*.png
 /examples/figures/
 /benchmark/*.csv
+/benchmark/results/
 
 # Editors and operating systems
 .DS_Store

@@ -18,6 +18,20 @@
     @test family.estimates.matrixfree_specialization_upper_bound==
           family_workspace_bytes+
           length(basis)*family.estimates.scalar_retained_bytes
+    family_sparse_bounds=
+        PermutationalInvariantDynamics._performance_sparse_materialization_bounds(
+            family.plan)
+    @test family.estimates.sparse_structure_supported
+    @test family.estimates.sparse_operator_upper_bound==
+          family_sparse_bounds.operator_bytes
+    @test family.estimates.sparse_contribution_upper_bound==
+          family_sparse_bounds.contribution_upper_bound
+    @test family.estimates.sparse_retained_nnz_upper_bound==
+          family_sparse_bounds.retained_nnz_upper_bound
+    @test family.estimates.sparse_assembly_upper_bound==
+          family_sparse_bounds.assembly_bytes
+    @test family.estimates.sparse_specialization_peak_upper_bound==
+          family_sparse_bounds.peak_bytes
     @test family.estimates.matrixfree_specialization_upper_bound<
           family.estimates.sparse_specialization_peak_upper_bound
 

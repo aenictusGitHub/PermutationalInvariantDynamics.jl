@@ -693,6 +693,107 @@ function _check_geometry_basis(cache::OneBodyGeometry,b::PIBasis)
     cache.basis===b||throw(ArgumentError("OneBodyGeometry was constructed for a different PIBasis; construct or reuse a cache owned by this exact basis"))
     cache
 end
+
+# The irrep carried by the one-row partition `(N,0,...)` is the symmetric
+# N-boson occupation space.  Collective one-body operators never leave a
+# Schur sector, so a basis containing only this irrep does not need the much
+# larger one-box removal/subduction geometry used by local gain terms.  Keep a
+# small, basis-owned occupation lookup instead.  This is deliberately an
+# internal compilation geometry: mixed-sector and local processes continue to
+# use `OneBodyGeometry` and its guarded recoupling path.
+_is_fully_symmetric_partition(b::PIBasis,p::Partition)=
+    p.parts[1]==b.N&&all(iszero,p.parts[2:end])
+_has_single_fully_symmetric_sector(b::PIBasis)=
+    length(b.sectors)==1&&_is_fully_symmetric_partition(b,only(b.sectors))
+
+struct _SymmetricCollectiveGeometry{T,D,L,B<:PIBasis{D,L},O,I,W,F}
+    basis::B
+    occupations::O
+    indices::I
+    diagonal_factors::W
+    transition_offsets::Vector{Int}
+    transitions::F
+end
+
+function _SymmetricCollectiveGeometry(b::B,::Type{T}) where
+        {D,L,B<:PIBasis{D,L},T<:AbstractFloat}
+    isconcretetype(T)||throw(ArgumentError(
+        "collective geometry requires a concrete floating-point type, got $T"))
+    _has_single_fully_symmetric_sector(b)||throw(ArgumentError(
+        "symmetric collective geometry requires the sole retained sector " *
+        "($(b.N),0,...)"))
+    _needs_wide_collective(b,T)&&throw(ArgumentError(
+        "symmetric collective geometry at N=$(b.N) cannot certify native $T " *
+        "occupation factors; use a wider geometry scalar type"))
+    occupations=NTuple{D,Int}[content(pattern) for pattern in only(b.patterns)]
+    indices=Dict{NTuple{D,Int},Int}(
+        occupation=>index for (index,occupation) in pairs(occupations))
+    length(indices)==length(occupations)||error(
+        "symmetric-sector GT contents are not unique")
+    diagonal_factors=NTuple{D,T}[ntuple(label->_symmetric_occupation_factor(
+        T,occupation[label]),D)
+        for occupation in occupations]
+    transition_offsets=Vector{Int}(undef,length(occupations)+1)
+    transition_offsets[1]=1
+    transitions=Tuple{Int,Int,Int,T}[]
+    for (column,occupation) in pairs(occupations)
+        for source_label in 1:D
+            source_count=occupation[source_label]
+            iszero(source_count)&&continue
+            for target_label in 1:D
+                target_label==source_label&&continue
+                raised=Base.checked_add(occupation[target_label],1)
+                factor_squared=_checked_occupation_product(
+                    raised,source_count)
+                target=ntuple(label->occupation[label]+
+                    (label==target_label ? 1 : 0)-
+                    (label==source_label ? 1 : 0),D)
+                push!(transitions,(indices[target],target_label,source_label,
+                    _symmetric_transition_factor(T,factor_squared)))
+            end
+        end
+        transition_offsets[column+1]=length(transitions)+1
+    end
+    _SymmetricCollectiveGeometry{T,D,L,B,typeof(occupations),typeof(indices),
+        typeof(diagonal_factors),typeof(transitions)}(
+        b,occupations,indices,diagonal_factors,transition_offsets,transitions)
+end
+
+
+function _symmetric_occupation_factor(::Type{T},count::Integer) where
+        T<:AbstractFloat
+    if T===Float16||T===Float32||T===Float64
+        # `_needs_wide_collective` bounds N below the exact-integer range of
+        # each IEEE type, so this conversion is both exact and allocation-free.
+        return T(count)
+    end
+    _checked_exact_ratio(T,count,1;
+        context="symmetric collective occupation factor")
+end
+
+function _symmetric_transition_factor(::Type{T},factor_squared::Integer) where
+        T<:AbstractFloat
+    if T===Float16||T===Float32||T===Float64
+        # Under the same gate, the product is at most N^2 and remains an exact
+        # IEEE integer before the correctly rounded square root.
+        result=sqrt(T(factor_squared))
+        isfinite(result)&&!iszero(result)||throw(ArgumentError(
+            "symmetric collective transition factor is outside the nonzero " *
+            "finite range of $T; use a wider geometry scalar type"))
+        return result
+    end
+    _checked_sqrt_exact_ratio(T,factor_squared,1;
+        context="symmetric collective transition factor")
+end
+
+geometry_scalar_type(::_SymmetricCollectiveGeometry{T}) where T=T
+function _check_geometry_basis(cache::_SymmetricCollectiveGeometry,b::PIBasis)
+    cache.basis===b||throw(ArgumentError(
+        "symmetric collective geometry was constructed for a different " *
+        "PIBasis; construct or reuse a cache owned by this exact basis"))
+    cache
+end
+
 function _contract(terms::AbstractVector{<:Tuple{Int,Int,T}},X) where T
     S=promote_type(T,eltype(X))
     sum(conj(z)*X[i,j] for (i,j,z) in terms;init=zero(S))
@@ -707,6 +808,99 @@ function _collective_block_fast(b::PIBasis,X,p::Partition,
         K[a,c]+=r*_contract(cache.contractions[(s,mu,s)][a,c],X)
     end
     K
+end
+
+function _checked_occupation_product(left::Int,right::Int)
+    try
+        Base.checked_mul(left,right)
+    catch error
+        error isa OverflowError||rethrow()
+        big(left)*right
+    end
+end
+
+function _symmetric_scaled_component(value::Real,factor::T,
+        numerator_value::Integer,::Val{Root},context) where
+        {T<:AbstractFloat,Root}
+    result=value*factor
+    R=_real_float_type(typeof(result))
+    invalid=!isfinite(result)||(!iszero(value)&&iszero(result))
+    endpoint=(R===Float16||R===Float32||R===Float64)&&
+        (abs(result)==floatmax(R)||abs(result)==nextfloat(zero(R)))
+    if invalid||endpoint
+        # The ordinary path above is allocation-free.  Only a true floating
+        # boundary pays for the exact rational certificate and its wider-type
+        # guidance; return the original precision-compatible product after a
+        # successful certificate.
+        if Root
+            _checked_mul_sqrt_exact_ratio(R,value,numerator_value,1;context)
+        else
+            _checked_mul_exact_ratio(R,value,numerator_value,1;context)
+        end
+    end
+    result
+end
+
+function _symmetric_scaled_component(value::Complex,factor::T,
+        numerator_value::Integer,root,context) where T<:AbstractFloat
+    complex(_symmetric_scaled_component(
+                real(value),factor,numerator_value,root,context),
+            _symmetric_scaled_component(
+                imag(value),factor,numerator_value,root,context))
+end
+
+# In the symmetric irrep, Gamma(X)=sum_ab X_ab a_a^dagger a_b.  The stored
+# GT order need not coincide with lexicographic occupation order (already for
+# N=1 it reverses the local matrix axes), hence the explicit content lookup.
+# Exact integer factors remain fused with matrix entries so large occupations
+# never create an avoidable `Inf*0` or a separately converted coefficient.
+function _fill_symmetric_collective_block!(K,
+        cache::_SymmetricCollectiveGeometry{T,D},X) where {T,D}
+    b=cache.basis
+    size(X)==(D,D)||throw(DimensionMismatch(
+        "local collective operator must be $D×$D"))
+    size(K)==(length(cache.occupations),length(cache.occupations))||
+        throw(DimensionMismatch("collective Schur block has the wrong dimensions"))
+    fill!(K,zero(eltype(K)))
+    for (column,occupation) in pairs(cache.occupations)
+        diagonal=zero(eltype(K))
+        @inbounds for local_label in 1:D
+            count=occupation[local_label]
+            (iszero(count)||iszero(X[local_label,local_label]))&&continue
+            diagonal+=_symmetric_scaled_component(
+                X[local_label,local_label],
+                cache.diagonal_factors[column][local_label],count,Val(false),
+                "symmetric collective diagonal contribution")
+        end
+        K[column,column]=diagonal
+        transition_range=cache.transition_offsets[column]:(cache.transition_offsets[column+1]-1)
+        @inbounds for transition_index in transition_range
+            row,target_label,source_label,factor=
+                cache.transitions[transition_index]
+            value=X[target_label,source_label]
+            iszero(value)&&continue
+            factor_squared=_checked_occupation_product(
+                Base.checked_add(occupation[target_label],1),
+                occupation[source_label])
+            K[row,column]+=_symmetric_scaled_component(
+                value,factor,factor_squared,Val(true),
+                "symmetric collective transition contribution")
+        end
+    end
+    all(isfinite,K)||throw(ArgumentError(
+        "collective Schur block is outside the finite range of $(eltype(K)); " *
+        "use a wider operator/geometry scalar type"))
+    K
+end
+
+function _symmetric_collective_block(b::PIBasis,X,p::Partition,
+        cache::_SymmetricCollectiveGeometry{T}) where T
+    _check_geometry_basis(cache,b)
+    p==only(b.sectors)||throw(ArgumentError(
+        "partition $p is not retained by the symmetric collective geometry"))
+    S=promote_type(Complex{T},eltype(X))
+    K=Matrix{S}(undef,length(cache.occupations),length(cache.occupations))
+    _fill_symmetric_collective_block!(K,cache,X)
 end
 
 function _collective_wider_type(::Type{T},N::Int) where T<:AbstractFloat
@@ -891,15 +1085,31 @@ function local_kernel_element(cache::OneBodyGeometry{T},X,Y,l::Partition,a,b,n::
         cache,X,Y,l,a,b,n,c,d,S) : z)::S
 end
 
+function _collective_geometry(b::PIBasis,::Type{T},cache) where
+        T<:AbstractFloat
+    if cache===nothing
+        if _has_single_fully_symmetric_sector(b)&&
+           !_needs_wide_collective(b,T)
+            return _SymmetricCollectiveGeometry(b,T)
+        end
+        return OneBodyGeometry(b,T)
+    end
+    _check_geometry_basis(cache,b)
+end
+
 """
-    collective_block(basis, X, partition; cache=OneBodyGeometry(basis))
+    collective_block(basis, X, partition; cache=nothing)
 
 Return the physical Schur block in `partition` of the collective one-body
-operator ``sum_i X_i``. Reuse `cache` when evaluating several blocks or
-operators on the same exact basis.
+operator ``sum_i X_i``. A sole fully symmetric sector uses a lightweight
+occupation-number lift. General Schur sectors use `OneBodyGeometry`; pass a
+shared cache when evaluating several blocks or operators on the same exact
+basis.
 """
-function collective_block(b::PIBasis,X,p::Partition;cache=OneBodyGeometry(b))
-    _check_geometry_basis(cache,b)
+function collective_block(b::PIBasis,X,p::Partition;cache=nothing)
+    cache=_collective_geometry(b,Float64,cache)
+    cache isa _SymmetricCollectiveGeometry&&
+        return _symmetric_collective_block(b,X,p,cache)
     T=geometry_scalar_type(cache)
     S=promote_type(Complex{T},eltype(X))
     if _needs_wide_collective(b,T)
@@ -914,13 +1124,15 @@ function collective_block(b::PIBasis,X,p::Partition;cache=OneBodyGeometry(b))
 end
 
 """
-    collective_operator(basis, X; cache=OneBodyGeometry(basis))
+    collective_operator(basis, X; cache=nothing)
 
 Construct the PI operator representing ``sum_i X_i`` without forming a
-``d^N`` computational-space matrix.
+``d^N`` computational-space matrix. A sole fully symmetric sector uses a
+lightweight occupation-number lift; otherwise pass a shared `OneBodyGeometry`
+to amortize general Schur recoupling setup.
 """
-function collective_operator(b::PIBasis,X;cache=OneBodyGeometry(b))
-    _check_geometry_basis(cache,b)
+function collective_operator(b::PIBasis,X;cache=nothing)
+    cache=_collective_geometry(b,Float64,cache)
     T=promote_type(geometry_scalar_type(cache),_real_float_type(eltype(X)))
     a=PIOperator(b;T=T)
     for p in b.sectors
@@ -975,16 +1187,17 @@ function _mean_local_coefficient_block_wide(b::PIBasis,X,p::Partition,
 end
 
 """
-    mean_local_operator(basis, X; cache=OneBodyGeometry(basis))
+    mean_local_operator(basis, X; cache=nothing)
 
 Construct the particle-averaged one-body observable
 ``(1/N) sum_i X_i``. Its equation-(7) coefficients are scaled directly by
 ``sqrt(f^nu)/N``; the extensive stored collective operator is never formed.
+The sole fully symmetric sector uses the occupation-number lift.
 """
-function mean_local_operator(b::PIBasis,X;cache=OneBodyGeometry(b))
+function mean_local_operator(b::PIBasis,X;cache=nothing)
     b.N>0||throw(ArgumentError(
         "the particle-averaged local operator requires N > 0"))
-    _check_geometry_basis(cache,b)
+    cache=_collective_geometry(b,Float64,cache)
     T=promote_type(geometry_scalar_type(cache),_real_float_type(eltype(X)))
     S=Complex{T}
     result=PIOperator(b;T=T)
@@ -996,7 +1209,9 @@ function mean_local_operator(b::PIBasis,X;cache=OneBodyGeometry(b))
         if needs_wide
             destination.=_mean_local_coefficient_block_wide(b,X,p,W,S)
         else
-            extensive=_collective_block_fast(b,X,p,cache)
+            extensive=cache isa _SymmetricCollectiveGeometry ?
+                _symmetric_collective_block(b,X,p,cache) :
+                _collective_block_fast(b,X,p,cache)
             multiplicity=symmetric_group_dimension(p)
             multiplicity_scale=try
                 _checked_sqrt_exact_integer(T,multiplicity;
