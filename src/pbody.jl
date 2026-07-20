@@ -1,4 +1,13 @@
-"""Cached Appendix-D paths and successive one-box CG isometries."""
+"""
+    PBodyGeometry(basis, p; T=Float64, coefficient_cache=nothing)
+
+Cache Appendix-D removal paths, exact path weights, and successive one-box CG
+isometries for symmetric `p`-body processes.  Pass a basis-owned
+[`OneBoxCGCache`](@ref) whose `max_depth >= p` through `coefficient_cache` to
+reuse precomputed sparse coefficients.  Without it, construction still uses
+content-indexed compatible candidates and shares each one-box edge within the
+geometry; it never evaluates the dense Cartesian set of structural zeros.
+"""
 struct PBodyGeometry{T,D,L,B<:PIBasis{D,L}}
     basis::B
     p::Int
@@ -17,33 +26,145 @@ function _removal_paths(endpoint::Partition{D},p::Int) where D
     out
 end
 
-_path_isometry(path::AbstractVector{<:Partition};T=Float64)=_path_isometry(path,T)
-function _path_isometry(path::AbstractVector{Partition{D}},::Type{R}) where {D,R<:AbstractFloat}
-    p=length(path)-1;d=length(path[1]);gc=gt_patterns(path[1]);ge=gt_patterns(path[end]);dp=d^p
-    L=D*(D+1)÷2;U=zeros(R,length(ge),length(gc),dp)
-    for (ci,wc) in pairs(gc),q in 0:dp-1
-        digits=ntuple(k->(q÷d^(k-1))%d,p)
-        amps=Dict{GTPattern{D,L},R}(wc=>one(R))
-        for k in 1:p
-            next=Dict{GTPattern{D,L},R}()
-            for wt in gt_patterns(path[k+1]),(w,a) in amps
-                z=cgc(w,digits[k],wt;T=R)
-                iszero(z)||(next[wt]=get(next,wt,zero(R))+a*z)
-            end
-            amps=next
+_path_isometry(path::AbstractVector{<:Partition};T=Float64)=
+    _path_isometry(path,T)
+
+function _pbody_word_count(local_dimension::Int,p::Int)
+    local_dimension>0||throw(ArgumentError(
+        "the p-body local dimension must be positive"))
+    p>=0||throw(ArgumentError("the p-body order must be nonnegative"))
+    words=1
+    for _ in 1:p
+        words=try
+            Base.checked_mul(words,local_dimension)
+        catch error
+            error isa OverflowError||rethrow()
+            throw(ArgumentError(
+                "the local p-body tensor dimension exceeds Int indexing"))
         end
-        for (ei,we) in pairs(ge);U[ei,ci,q+1]=get(amps,we,zero(R));end
+    end
+    words
+end
+
+# One path is the product of p one-box CG maps.  The older implementation
+# rebuilt dictionaries of GT-pattern amplitudes separately for every centre
+# pattern and every local word.  Besides hashing immutable patterns in the
+# innermost loop, that allocated hundreds of times more memory than the final
+# isometry.  Cache every edge map once and propagate all centre columns at
+# once through two reusable dense buffers instead.
+function _pbody_pattern_table!(cache,partition)
+    get!(()->gt_patterns(partition),cache,partition)
+end
+
+function _pbody_edge_transitions!(transition_cache,pattern_cache,
+        lower::Partition{D},upper::Partition{D},::Type{R},
+        coefficient_cache=nothing) where
+        {D,R<:AbstractFloat}
+    key=(lower,upper)
+    get!(transition_cache,key) do
+        lower_patterns=_pbody_pattern_table!(pattern_cache,lower)
+        upper_patterns=_pbody_pattern_table!(pattern_cache,upper)
+        maps=[zeros(R,length(upper_patterns),length(lower_patterns))
+              for _ in 1:D]
+        table=if coefficient_cache===nothing
+            _build_onebox_transitions(lower_patterns,upper_patterns,R)
+        else
+            cached=get(coefficient_cache.transitions,(lower,upper),nothing)
+            cached===nothing&&throw(ArgumentError(
+                "OneBoxCGCache does not contain required transition "*
+                "$lower -> $upper"))
+            cached
+        end
+        @inbounds for lower_index in eachindex(lower_patterns)
+            for term_index in
+                    table.offsets[lower_index]:(table.offsets[lower_index+1]-1)
+                upper_index,local_label,value=table.terms[term_index]
+                maps[local_label][upper_index,lower_index]=value
+            end
+        end
+        maps
+    end
+end
+
+
+function _path_isometry(path::AbstractVector{Partition{D}},::Type{R},
+        pattern_cache,transition_cache,coefficient_cache=nothing) where
+        {D,R<:AbstractFloat}
+    p=length(path)-1
+    p>=0||throw(ArgumentError("a p-body path must contain at least one partition"))
+    patterns=[_pbody_pattern_table!(pattern_cache,partition) for partition in path]
+    dimensions=map(length,patterns)
+    local_dimension=D
+    words=_pbody_word_count(local_dimension,p)
+    centre_dimension=first(dimensions)
+    endpoint_dimension=last(dimensions)
+    U=zeros(R,endpoint_dimension,centre_dimension,words)
+    p==0&&begin
+        @inbounds for index in 1:centre_dimension
+            U[index,index,1]=one(R)
+        end
+        return U
+    end
+    transitions=[_pbody_edge_transitions!(transition_cache,pattern_cache,
+        path[stage],path[stage+1],R,coefficient_cache) for stage in 1:p]
+    maximum_dimension=maximum(dimensions)
+    first_buffer=zeros(R,maximum_dimension,centre_dimension)
+    second_buffer=similar(first_buffer)
+    powers=Vector{Int}(undef,p)
+    power=1
+    for stage in 1:p
+        powers[stage]=power
+        stage<p&&(power=Base.checked_mul(power,local_dimension))
+    end
+    for word in 0:words-1
+        current=first_buffer;next=second_buffer
+        fill!(current,zero(R))
+        @inbounds for index in 1:centre_dimension
+            current[index,index]=one(R)
+        end
+        current_dimension=centre_dimension
+        for stage in 1:p
+            next_dimension=dimensions[stage+1]
+            local_label=(word÷powers[stage])%local_dimension
+            transition=transitions[stage][local_label+1]
+            mul!(view(next,1:next_dimension,1:centre_dimension),transition,
+                 view(current,1:current_dimension,1:centre_dimension))
+            current,next=next,current
+            current_dimension=next_dimension
+        end
+        copyto!(view(U,:,:,word+1),
+                view(current,1:endpoint_dimension,1:centre_dimension))
     end
     U
 end
 
-PBodyGeometry(b::PIBasis,p::Integer;T=Float64)=PBodyGeometry(b,p,T)
-function PBodyGeometry(b::B,p::Integer,::Type{R}) where {D,L,B<:PIBasis{D,L},R<:AbstractFloat}
+
+function _path_isometry(path::AbstractVector{Partition{D}},::Type{R}) where
+        {D,R<:AbstractFloat}
+    L=D*(D+1)÷2
+    pattern_cache=Dict{Partition{D},Vector{GTPattern{D,L}}}()
+    transition_cache=Dict{Tuple{Partition{D},Partition{D}},Vector{Matrix{R}}}()
+    _path_isometry(path,R,pattern_cache,transition_cache)
+end
+
+PBodyGeometry(b::PIBasis,p::Integer;T=Float64,coefficient_cache=nothing)=
+    PBodyGeometry(b,p,T;coefficient_cache)
+function PBodyGeometry(b::B,p::Integer,::Type{R};coefficient_cache=nothing) where
+        {D,L,B<:PIBasis{D,L},R<:AbstractFloat}
     1<=p<=b.N||throw(ArgumentError("p must satisfy 1 ≤ p ≤ N"))
+    coefficient_cache===nothing||_check_onebox_coefficient_cache(
+        coefficient_cache,b,Int(p),R)
     paths=Dict{Partition{D},Vector{Vector{Partition{D}}}}(
         q=>_removal_paths(q,Int(p)) for q in b.sectors)
     iso=Dict{Tuple{Vararg{Partition{D}}},Array{R,3}}()
-    for ps in values(paths),path in ps;iso[Tuple(path)]=_path_isometry(path,R);end
+    pattern_cache=coefficient_cache===nothing ?
+        Dict{Partition{D},Vector{GTPattern{D,L}}}() :
+        copy(coefficient_cache.patterns)
+    transition_cache=Dict{Tuple{Partition{D},Partition{D}},Vector{Matrix{R}}}()
+    for ps in values(paths),path in ps
+        iso[Tuple(path)]=_path_isometry(path,R,pattern_cache,transition_cache,
+                                        coefficient_cache)
+    end
     path_weights=Dict{Tuple{Vararg{Partition{D}}},Rational{BigInt}}()
     for ps in values(paths),path in ps
         path_weights[Tuple(path)]=_subset_path_weight(path)
@@ -58,7 +179,8 @@ function _check_pbody_geometry(cache::PBodyGeometry,b::PIBasis,p::Integer)
 end
 
 function _check_pbody_operator(cache::PBodyGeometry,X)
-    dp=cache.basis.d^cache.p;size(X)==(dp,dp)||throw(DimensionMismatch("p-body operator must be $dp×$dp"))
+    dp=_pbody_word_count(cache.basis.d,cache.p)
+    size(X)==(dp,dp)||throw(DimensionMismatch("p-body operator must be $dp×$dp"))
     d=cache.basis.d;p=cache.p
     for k in 1:p-1
         R=_real_float_type(eltype(X));perm=_tensor_swap_permutation(p,d,k);maxdiff=zero(R)
@@ -143,13 +265,19 @@ function _convert_checked_pbody_block(::Type{R},block;
     output
 end
 
-function _pbody_pair_contractions(cache::PBodyGeometry,X,Y,l::Partition,
-                                  n::Partition,::Type{W}) where W<:AbstractFloat
+function _pbody_pair_contractions(cache::PBodyGeometry,X,Y,l::Partition{D},
+                                  n::Partition{D},::Type{W}) where
+        {D,W<:AbstractFloat}
     Xwide=Matrix{Complex{W}}(X);Ywide=Matrix{Complex{W}}(Y)
     left_paths=cache.paths[l];right_paths=cache.paths[n]
-    left_isometries=[_path_isometry(path,W) for path in left_paths]
+    L=D*(D+1)÷2
+    pattern_cache=Dict{Partition{D},Vector{GTPattern{D,L}}}()
+    transition_cache=Dict{Tuple{Partition{D},Partition{D}},Vector{Matrix{W}}}()
+    left_isometries=[_path_isometry(path,W,pattern_cache,transition_cache)
+                     for path in left_paths]
     right_isometries=l==n ? left_isometries :
-        [_path_isometry(path,W) for path in right_paths]
+        [_path_isometry(path,W,pattern_cache,transition_cache)
+         for path in right_paths]
     Pair=Tuple{_PreparedExactScale{W,true},Matrix{Complex{W}},Matrix{Complex{W}}}
     contractions=Pair[]
     for (left_index,left_path) in pairs(left_paths),
@@ -274,14 +402,18 @@ function _wide_pbody_kernel_group(cache::PBodyGeometry,X,Y,l::Partition,
 end
 
 function _wide_pbody_collective_block(cache::PBodyGeometry,X,
-                                      lambda::Partition,::Type{R}) where R<:AbstractFloat
+        lambda::Partition{D},::Type{R}) where {D,R<:AbstractFloat}
     W=R===Float16 ? Float64 : BigFloat
     evaluate=() -> begin
         Xwide=Matrix{Complex{W}}(X)
         n=length(cache.basis.patterns[_sidx(cache.basis,lambda)])
         block=zeros(Complex{W},n,n)
+        L=D*(D+1)÷2
+        pattern_cache=Dict{Partition{D},Vector{GTPattern{D,L}}}()
+        transition_cache=
+            Dict{Tuple{Partition{D},Partition{D}},Vector{Matrix{W}}}()
         for path in cache.paths[lambda]
-            U=_path_isometry(path,W)
+            U=_path_isometry(path,W,pattern_cache,transition_cache)
             exact_scale=cache.path_weights[Tuple(path)]
             block .+=_checked_mul_exact_ratio(
                 _path_contractions(U,U,Xwide),numerator(exact_scale),

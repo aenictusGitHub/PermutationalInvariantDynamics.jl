@@ -807,7 +807,7 @@ end
 # Let the generic fixed-step evolution layer discover and reuse composite
 # tensor-mode scratch without teaching the read-only superoperator about
 # mutable storage.
-_liouvillian_workspace(S::CompositeSuperoperator)=
+_linear_operator_workspace(S::CompositeSuperoperator)=
     CompositeSuperoperatorWorkspace(S)
 
 const _CompositeEvolutionOperator=Union{AbstractMatrix,

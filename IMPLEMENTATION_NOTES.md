@@ -90,8 +90,9 @@ Scalar-driven kernels are certified individually. Nonfinite entries, rates,
 and tolerances throw. The reverse diagonal lookup is a population-sized
 dictionary used only during compilation, so `PopulationPlan` retains no
 `length(basis)` lookup. Its sparse reduced matrix, basis, and scalar rate
-schedules are immutable; `PopulationWorkspace` owns the six RK/application
-vectors. High-level evolution promotes from the saved time grid, while the
+schedules are immutable; `PopulationWorkspace` owns three RK vectors plus one
+independent kernel-application buffer. Its legacy `k3`/`k4` fields are empty
+compatibility placeholders in newly constructed workspaces. High-level evolution promotes from the saved time grid, while the
 in-place Float32 path rejects wider floating times.
 
 The reduced compiler still uses a standalone `sqrt(f^nu)` coordinate map;
@@ -125,6 +126,19 @@ Rational Hamiltonian `rate/hbar` quotients are cancelled before floating
 conversion; ordinary floating values keep the direct division path. The raw
 coordinate and method-specific solver functions remain available for research
 control.
+
+Clustered selected spectra have an explicitly named thick-restarted block
+Arnoldi route. `BlockArnoldiWorkspace` caches the search basis and its images,
+deflates dependent directions, and reports only freshly recomputed full-space
+residuals; it is not presented as block IRAM. High-level resource estimates
+include the requested `block_size`. Period maps expose a fixed-capacity
+`FloquetBatchWorkspace`: its forward mode evaluates RK4 blocks with three
+scratch matrices beyond the destination, while full mode retains the reverse
+stages needed for the exact discrete adjoint. Neither mode grows capacity in a
+hot application; prepared Liouvillian sector-batch buffers are pre-grown by
+the Floquet batch constructor. Sparse compiled sources skip that matrix-free
+scratch, supplied-workspace guards count any later source-batch growth, and
+the low-storage destination must use the map scalar type.
 
 The mean-field pipeline is independent of Schur geometry. `MeanFieldPlan`
 lowers the same physical term constructors to the finite product closure
@@ -370,16 +384,30 @@ checks `sum K'*K` against the prepared `Q` block for every channel/source
 sector. This works for qubits and qudits without a dense Choi problem or a
 `d^N` object.
 
-`WeakPITrajectoryWorkspace` owns fixed-step RK4 vectors, channel/branch
-intensities, and selected-branch scratch; batch workspaces retain one instance
-and RNG per task with trajectory-index-derived seeds. Saved jump records carry
+`WeakPITrajectoryWorkspace` owns three-register fixed-step RK4 scratch,
+channel/branch intensities, and selected-branch scratch. Full mode adds `k3`,
+`k4`, and six Dormand--Prince/event-root vectors, while fixed mode omits them.
+Density and weak-PI no-jump stages combine all rate-weighted `K'K` blocks
+before one sector action; individual intensities are evaluated only for a
+selected event. The adaptive path evolves the normalized pseudo-ket and
+hazard with common 5(4) stages. Its quartic dense extension retains four
+scalar hazard coefficients, bisects without new RHS evaluations, reconstructs
+the root state once from the retained stages, and samples the same prepared
+Kraus branches. Batch
+workspaces retain one instance and RNG per task with trajectory-index-derived
+seeds. Saved jump records carry
 source, target, and one-box child partitions. Ensemble averages convert outer
 products to PI coefficient blocks only during reduction. The backend rejects
 mixed initial blocks, nonunit pseudo-kets, operator-valued schedules, local
-p-body jumps, narrowing inputs, and invalid rates. It currently has only the
-fixed-step/max-jump-probability integrator; the density-valued backend remains
-the event-driven route. A different Kraus rotation preserves master dynamics
-but may change path-level statistics.
+p-body jumps, narrowing inputs, and invalid rates. It provides fixed-step
+maximum-jump-probability and continuous-hazard adaptive integrators. A
+state-free confidence-controlled ensemble contracts observables directly from
+pseudo-kets and reports separately seeded trajectories as its effective
+independent sample count. The history-free stationary estimator optionally
+forms complete density batch means; their error assumes sufficiently long,
+approximately independent batches and explicitly leaves burn-in and
+finite-window bias uncontrolled. A different Kraus rotation preserves master
+dynamics but may change path-level statistics.
 
 The performance audit covers basis and generator construction, sparse and
 matrix-free application, preallocated PI and mean-field evolution, collective
@@ -704,9 +732,9 @@ their final ulp. If the widened result still lies inside that uncertainty
 interval, the routine raises instead of treating the interval as proof of an
 exact zero; stable nonzero entries retain strict output-range checks.
 Preallocated dynamic p-body kernels cannot
-widen caller-owned buffers, so cancellation-prone dynamic local gains are
-rejected at compilation and other dynamic p-body blocks apply the analogous
-forward-error/ulp check before raising with guidance to widen the
+widen caller-owned buffers, so cancellation-prone dynamic local p-body gains
+are rejected at compilation and other dynamic p-body blocks apply the
+analogous forward-error/ulp check before raising with guidance to widen the
 `InPlaceTimeOperator` prototype. Mean-field collective
 moments associate extensive factors with local expectations before
 multiplication, and p-body expectations fuse the exact subset count. This
@@ -723,3 +751,72 @@ that wider geometry. Scheduled direct-PI terms prepare exact inverse
 multiplicity scales once; ordinary sectors retain the previous direct division,
 while a sector with unrepresentable `sqrt(f^nu)` fuses its exact inverse with
 each stored coefficient.
+
+## Coordinated performance pass (2026-07-19)
+
+Six high-return changes now share the same immutable-plan/task-owned-workspace
+contract.
+
+Driven one-body `LocalJump` and `CorrelatedLocalJumps` schedules no longer
+retain all representation-theoretically allowed PI coordinate pairs. For each
+common child partition they prepare a rectangular contraction matrix and apply
+the gain as `C*X*C'`; correlated schedules keep one such set per possible
+effective Kossakowski channel and use only the evaluated rank. Forward,
+adjoint, and matrix-batch routes share the same factorization. At `N=20`, the
+audit reduced a warm driven application from roughly 103.7 ms to 0.168 ms and
+combined retained plan/workspace memory from about 43.3 MiB to 0.355 MiB.
+
+`CompiledPIModelFamily` compiles fixed operator geometry once and binds only
+selected scalar rates in each `SpecializedPIModel`. Family parameter scans
+reuse one task-owned `LiouvillianWorkspace` after the first point. A typed
+`RecycledGMRESAlgorithm` retains a bounded GCRO space, but reapplies every
+retained direction under each new trace-fixed operator and validates the raw
+Liouvillian residual. Harmonic scans continue with the full selected Ritz
+matrix. Stationary correlation spectra use bounded shared-Arnoldi multi-shift
+batches, retrying only unconverged columns with restarted shifted GMRES; a
+supplied workspace is never replaced outside the declared memory budget.
+
+High-level sparse compilation, family specialization, and scan execution now
+share a 512 MiB default preflight. Explicit materialization is rejected before
+the sparse coordinate matrix is allocated; automatic family binding uses its
+compile-time bounds and reuses a task-owned workspace when matrix-free is
+selected. Scan preflight reserves the full ordinary or recycled Krylov basis,
+transient Ritz/continuation copies, retained outputs, and all active local
+workers before passing the remaining allowance downstream. Point diagnostics
+separate the conservative known peak from unknown builder allocations and
+user diagnostic payloads. `Inf` is retained as an explicit disabled state
+rather than converted into a finite sentinel.
+
+The scan auto policy applies the same dimension crossovers as the high-level
+commands after including all workers and retained history: an over-budget
+direct or dense candidate falls back to GMRES or Arnoldi, while an explicit
+request remains an error. Resource output/restart/live-vector bounds retain
+iterative result precision and conservatively reserve `ComplexF64` storage for
+Float32 factorizing steady-state and dense-spectrum routes. Prepared steady
+scans use the already retained operator directly, avoiding an unreported
+sparse-to-matrix-free compatibility conversion.
+
+Strong diagonal ket/bra charge restrictions lower compatible fixed prepared
+Hamiltonian, collective-dissipator, and local-gain kernels into Cartesian
+Schur rectangles after an exhaustive ambient leakage certificate. The hot
+forward, adjoint, response, and Krylov paths then retain no ambient vectors.
+Equal ket/bra selections share identical restricted block matrices. General
+coordinate masks and unsupported kernels retain the embedded fallback;
+`restriction_full_residual` deliberately uses separate ambient scratch to
+audit the omitted coordinates.
+
+Appendix-D path isometries cache each GT-pattern table and one-box transition
+matrix, then propagate all centre columns through two reusable buffers for
+each local word. A representative `N=6,d=3,p=3` setup fell from about 569 MiB
+to 14.6 MiB allocated while retaining the same 0.95 MiB geometry. Word counts
+and radix powers are checked before allocation.
+
+PI--HEOM stores one packed edge list plus CSR-style ADO incidences instead of
+dense neighbor/factor tables. Forward and adjoint traversals reuse `Q*rho`
+and `rho*Q` once per source-ADO/bath group, and system applications use bounded
+16-column batches. The stationary preconditioner extracts the system block
+once. `ComplexF32`/`ComplexF64` use one guarded Schur form, the root LU, and
+compact ADO shifts, with reciprocal-condition and transformed-residual checks;
+unsafe shifts and generic precision fall back to duplicate-aware LU. The safe
+route retains `O(nPI^2+nADO)` data. Its two Schur scratch vectors are locked,
+so one shared preconditioner serializes concurrent applications.

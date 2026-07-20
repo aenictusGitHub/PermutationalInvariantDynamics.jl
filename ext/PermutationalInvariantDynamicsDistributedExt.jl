@@ -16,7 +16,8 @@ function _distributed_scan_plan(plan::PID.ParameterScanPlan,save_outputs::Bool)
         continuation=false,save_outputs,
         save_vectors=plan.save_vectors,save_restart=plan.save_restart,
         spectrum_target=plan.spectrum_target,nev=plan.nev,
-        diagnostic=plan.diagnostic,seed=plan.seed)
+        diagnostic=plan.diagnostic,seed=plan.seed,
+        memory_budget=plan.budget_disabled ? Inf : plan.memory_budget)
 end
 
 function _distributed_scan_chunk(plan,indices)

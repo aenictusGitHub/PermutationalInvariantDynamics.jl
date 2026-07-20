@@ -58,10 +58,10 @@ function _check_finite_krylov_target(target)
 end
 
 """Reusable storage for restarted GMRES on a PI Liouville-space vector."""
-mutable struct KrylovWorkspace{T}
+mutable struct KrylovWorkspace{T,R}
     V::Matrix{T}
     H::Matrix{T}
-    cs::Vector{Float64}
+    cs::Vector{R}
     sn::Vector{T}
     g::Vector{T}
     w::Vector{T}
@@ -75,7 +75,8 @@ function KrylovWorkspace(::Type{T}, n::Integer, krylovdim::Integer) where T
     n > 0 || throw(ArgumentError("dimension must be positive"))
     krylovdim > 0 || throw(ArgumentError("krylovdim must be positive"))
     m=min(Int(krylovdim),Int(n))
-    KrylovWorkspace(zeros(T,n,m+1),zeros(T,m+1,m),zeros(Float64,m),
+    R=_real_float_type(T)
+    KrylovWorkspace(zeros(T,n,m+1),zeros(T,m+1,m),zeros(R,m),
                     zeros(T,m),zeros(T,m+1),zeros(T,n),zeros(T,n),zeros(T,n),
                     zeros(T,n),zeros(T,m))
 end
@@ -84,11 +85,18 @@ KrylovWorkspace(L, krylovdim::Integer=30)=
     KrylovWorkspace(_complex_float_type(eltype(L)),size(L,1),krylovdim)
 
 """
-    ArnoldiWorkspace(L, krylovdim)
+    ArnoldiWorkspace(L, krylovdim; mode=:full)
 
 Reusable basis, image, pencil, and vector storage shared by ordinary,
 harmonic, and implicit-QR Arnoldi. A workspace is mutable and must be owned by
 one task at a time.
+
+The default `mode=:full` preserves storage for every Arnoldi-family solver.
+Use `mode=:ordinary` when the workspace will only be passed to
+[`krylov_liouvillian_spectrum`](@ref); this omits the four additional
+PI-vector blocks and two projected pencils used by restarted/interior
+algorithms. Harmonic Arnoldi, implicit-QR Arnoldi, and Jacobi--Davidson reject
+an ordinary-only workspace rather than allocating the missing arrays.
 """
 mutable struct ArnoldiWorkspace{T}
     V::Matrix{T}
@@ -103,27 +111,45 @@ mutable struct ArnoldiWorkspace{T}
     tmp::Vector{T}
 end
 
-function ArnoldiWorkspace(::Type{T},n::Integer,krylovdim::Integer) where T
+function ArnoldiWorkspace(::Type{T},n::Integer,krylovdim::Integer;
+                          mode::Symbol=:full) where T
     n>0||throw(ArgumentError("dimension must be positive"))
     krylovdim>0||throw(ArgumentError("krylovdim must be positive"))
+    mode in (:full,:ordinary)||throw(ArgumentError(
+        "Arnoldi workspace mode must be :full or :ordinary"))
     m=min(Int(n),Int(krylovdim))
-    ArnoldiWorkspace(zeros(T,n,m+1),zeros(T,m+1,m),zeros(T,n,m),
-                     zeros(T,n,m),zeros(T,m,m),zeros(T,m,m),
-                     zeros(T,n,m),zeros(T,n,m),zeros(T,n),zeros(T,n))
+    advanced=mode===:full
+    ArnoldiWorkspace(
+        zeros(T,n,m+1),zeros(T,m+1,m),
+        advanced ? zeros(T,n,m) : zeros(T,0,0),
+        advanced ? zeros(T,n,m) : zeros(T,0,0),
+        advanced ? zeros(T,m,m) : zeros(T,0,0),
+        advanced ? zeros(T,m,m) : zeros(T,0,0),
+        advanced ? zeros(T,n,m) : zeros(T,0,0),
+        advanced ? zeros(T,n,m) : zeros(T,0,0),
+        zeros(T,n),zeros(T,n))
 end
 
-ArnoldiWorkspace(L,krylovdim::Integer=max(20,min(size(L,1),40)))=
-    ArnoldiWorkspace(_complex_float_type(eltype(L)),size(L,1),krylovdim)
+ArnoldiWorkspace(L,krylovdim::Integer=max(20,min(size(L,1),40));
+                 mode::Symbol=:full)=
+    ArnoldiWorkspace(_complex_float_type(eltype(L)),size(L,1),krylovdim;mode)
 
-function _check_arnoldi_workspace(ws::ArnoldiWorkspace,n,m)
+function _check_arnoldi_workspace(ws::ArnoldiWorkspace,n,m;
+                                  mode::Symbol=:full)
+    mode in (:full,:ordinary)||throw(ArgumentError(
+        "Arnoldi workspace check mode must be :full or :ordinary"))
     size(ws.V,1)==n&&size(ws.V,2)>=m+1||throw(DimensionMismatch("Arnoldi workspace basis is too small"))
     size(ws.H,1)>=m+1&&size(ws.H,2)>=m||throw(DimensionMismatch("Arnoldi workspace Hessenberg array is too small"))
-    for M in (ws.LV,ws.Z,ws.X,ws.LX)
-        size(M,1)==n&&size(M,2)>=m||throw(DimensionMismatch("Arnoldi workspace matrix is too small"))
-    end
-    size(ws.A,1)>=m&&size(ws.A,2)>=m&&size(ws.B,1)>=m&&size(ws.B,2)>=m||
-        throw(DimensionMismatch("Arnoldi workspace pencil is too small"))
     length(ws.q)==n&&length(ws.tmp)==n||throw(DimensionMismatch("Arnoldi workspace vector has the wrong dimension"))
+    if mode===:full
+        any(isempty,(ws.LV,ws.Z,ws.A,ws.B,ws.X,ws.LX))&&throw(ArgumentError(
+            "this Arnoldi solver requires a mode=:full ArnoldiWorkspace"))
+        for M in (ws.LV,ws.Z,ws.X,ws.LX)
+            size(M,1)==n&&size(M,2)>=m||throw(DimensionMismatch("Arnoldi workspace matrix is too small"))
+        end
+        size(ws.A,1)>=m&&size(ws.A,2)>=m&&size(ws.B,1)>=m&&size(ws.B,2)>=m||
+            throw(DimensionMismatch("Arnoldi workspace pencil is too small"))
+    end
     ws
 end
 
@@ -168,6 +194,10 @@ size(P::SchurSectorPreconditioner,i::Integer)=i in (1,2) ? P.n : 1
 eltype(::SchurSectorPreconditioner{T}) where T=T
 """Return setup, storage, apply-cost, and amortization metadata for `P`."""
 preconditioner_cost(P::SchurSectorPreconditioner)=P.metadata
+_preconditioner_operator_scale(::Any)=nothing
+_preconditioner_operator_scale(P::SchurSectorPreconditioner)=P.operator_scale
+_preconditioner_metadata(::Any)=nothing
+_preconditioner_metadata(P::SchurSectorPreconditioner)=P.metadata
 
 function ldiv!(dest::AbstractVector,P::SchurSectorPreconditioner,src::AbstractVector)
     length(dest)==P.n&&length(src)==P.n||throw(DimensionMismatch("preconditioner vector has wrong length"))
@@ -262,8 +292,9 @@ function schur_sector_preconditioner(model::PIModel;representation=:matrixfree,k
 end
 
 function _complex_givens(a,b)
-    iszero(b) && return (1.0,zero(promote_type(typeof(a),typeof(b))))
-    iszero(a) && return (0.0,one(promote_type(typeof(a),typeof(b))))
+    T=promote_type(typeof(a),typeof(b));R=_real_float_type(T)
+    iszero(b) && return (one(R),zero(T))
+    iszero(a) && return (zero(R),one(T))
     scale=abs(a)+abs(b); normab=scale*sqrt(abs2(a/scale)+abs2(b/scale))
     alpha=a/abs(a); (abs(a)/normab,alpha*conj(b)/normab)
 end
@@ -349,6 +380,7 @@ Solve the trace-fixed stationary equation with restarted GMRES, using only
 """
 function krylov_steady_state(L;basis=nothing,trace_vector=nothing,
                              initial_state=nothing,krylovdim::Integer=30,
+                             recycle_dim::Integer=0,
                              maxiter::Integer=500,atol::Real=1e-10,
                              rtol::Real=1e-8,workspace=nothing,preconditioner=nothing,
                              operator_scale=nothing,return_info::Bool=false)
@@ -368,23 +400,37 @@ function krylov_steady_state(L;basis=nothing,trace_vector=nothing,
     tc=T.(t);v=tc/dot(tc,tc)
     x=initial_state isa PIState ? T.(initial_state.data) : initial_state===nothing ? copy(v) : T.(initial_state)
     length(x)==n||throw(DimensionMismatch("initial_state has wrong length"))
-    ws=workspace===nothing ? KrylovWorkspace(T,n,krylovdim) : workspace
+    recycle_dim>=0||throw(ArgumentError("recycle_dim must be nonnegative"))
+    ws = if workspace===nothing
+        recycle_dim>0 ? RecycledGMRESWorkspace(T,n,krylovdim,recycle_dim) :
+                        KrylovWorkspace(T,n,krylovdim)
+    else
+        workspace
+    end
+    ws isa Union{KrylovWorkspace,RecycledGMRESWorkspace}||throw(ArgumentError(
+        "workspace must be a KrylovWorkspace or RecycledGMRESWorkspace"))
+    recycle_dim>0&&!(ws isa RecycledGMRESWorkspace)&&throw(ArgumentError(
+        "recycle_dim > 0 requires a RecycledGMRESWorkspace"))
     promote_type(eltype(ws.V),T)==eltype(ws.V)||throw(ArgumentError(
         "Krylov workspace scalar type cannot represent the solver inputs"))
     _check_krylov_matvec_precision(L,eltype(ws.V))
     preconditioner===nothing||size(preconditioner)==(n,n)||throw(DimensionMismatch("preconditioner has wrong dimension"))
-    Lscale = if preconditioner isa SchurSectorPreconditioner
+    prepared_preconditioner_scale=
+        _preconditioner_operator_scale(preconditioner)
+    Lscale = if prepared_preconditioner_scale!==nothing
         if operator_scale!==nothing
             requested=_validated_operator_scale(operator_scale)
-            scale_type=_real_float_type(typeof(preconditioner.operator_scale))
-            isapprox(requested,preconditioner.operator_scale;atol=zero(scale_type),
+            scale_type=_real_float_type(typeof(prepared_preconditioner_scale))
+            isapprox(requested,prepared_preconditioner_scale;atol=zero(scale_type),
                      rtol=sqrt(eps(scale_type)))||
-                throw(ArgumentError("operator_scale is inconsistent with the Schur-sector preconditioner"))
+                throw(ArgumentError("operator_scale is inconsistent with the prepared preconditioner"))
         end
-        preconditioner.operator_scale
+        prepared_preconditioner_scale
     else
+        scale_probe=ws isa RecycledGMRESWorkspace ? ws.correction : ws.z
+        scale_image=ws isa RecycledGMRESWorkspace ? ws.image : ws.w
         _validated_operator_scale(operator_scale===nothing ?
-            _estimated_operator_scale!(L,ws.z,ws.w) : operator_scale)
+            _estimated_operator_scale!(L,scale_probe,scale_image) : operator_scale)
     end
     invscale=inv(Lscale)
     function apply!(y,z)
@@ -393,21 +439,34 @@ function krylov_steady_state(L;basis=nothing,trace_vector=nothing,
         y
     end
     RT=_real_float_type(T);atolT=RT(atol);rtolT=RT(rtol)
-    result=_gmres!(x,apply!,v,ws;atol=atolT,rtol=rtolT,maxiter=maxiter,
-                   preconditioner=preconditioner)
-    mul!(ws.w,L,x);residual=norm(ws.w);normalized_residual=residual/Lscale;terr=abs(dot(tc,x)-1)
+    recycled=ws isa RecycledGMRESWorkspace
+    result = recycled ? recycled_gmres!(x,apply!,v,ws;
+        atol=atolT,rtol=rtolT,maxiter=maxiter,target=zero(T),
+        preconditioner=preconditioner,require_convergence=false) :
+        _gmres!(x,apply!,v,ws;atol=atolT,rtol=rtolT,maxiter=maxiter,
+                preconditioner=preconditioner)
+    residual_image=recycled ? ws.image : ws.w
+    mul!(residual_image,L,x);residual=norm(residual_image)
+    normalized_residual=residual/Lscale;terr=abs(dot(tc,x)-1)
     tol=atolT+rtolT*max(norm(x),one(RT))
     converged=result.converged&&normalized_residual<=tol&&terr<=atolT+rtolT
     converged||throw(ArgumentError("matrix-free Krylov steady-state solve did not converge in $(result.iterations) iterations; normalized_residual=$normalized_residual, trace_error=$terr"))
+    linear_residual=recycled ? result.projected_residual : result.residual
+    raw_linear_residual=recycled ? result.residual : result.raw_residual
     info=(state=x,residual=residual,trace_error=terr,nullity=nothing,method=:krylov,
           iterations=result.iterations,eigenvalue=nothing,converged=true,
-          linear_residual=result.residual,unpreconditioned_linear_residual=result.raw_residual,
+          linear_residual,
+          unpreconditioned_linear_residual=raw_linear_residual,
           normalized_residual,operator_scale=Lscale,
           restarts=result.restarts,krylov_dimension=size(ws.H,2),
+          krylov_variant=recycled ? :recycled : :restarted,
+          recycle_dimension=recycled ? result.recycle_dimension : 0,
+          recycled_initially=recycled ? result.recycled_initially : false,
+          recycle_reset=recycled ? result.recycle_reset : false,
+          operator_applications=recycled ? result.operator_applications : missing,
           preconditioned=preconditioner!==nothing,
           preconditioner=preconditioner===nothing ? nothing : typeof(preconditioner),
-          preconditioner_cost=preconditioner isa SchurSectorPreconditioner ?
-              preconditioner.metadata : nothing)
+          preconditioner_cost=_preconditioner_metadata(preconditioner))
     return_info ? info : x
 end
 
@@ -438,7 +497,8 @@ function krylov_liouvillian_spectrum(L;nev::Integer=6,krylovdim::Integer=max(20,
     m=min(n,max(Int(krylovdim),Int(nev)+1));T=_complex_float_type(eltype(L))
     initial_vector===nothing||(T=_promote_krylov_array_type(T,initial_vector))
     _check_krylov_matvec_precision(L,T)
-    ws=workspace===nothing ? ArnoldiWorkspace(T,n,m) : _check_arnoldi_workspace(workspace,n,m)
+    ws=workspace===nothing ? ArnoldiWorkspace(T,n,m;mode=:ordinary) :
+        _check_arnoldi_workspace(workspace,n,m;mode=:ordinary)
     promote_type(eltype(ws.V),T)==eltype(ws.V)||throw(ArgumentError("Arnoldi workspace scalar type cannot represent the operator"))
     _check_krylov_matvec_precision(L,eltype(ws.V))
     V=view(ws.V,:,1:m+1);H=view(ws.H,1:m+1,1:m);w=ws.tmp;q=ws.q
@@ -871,12 +931,16 @@ _projector_range_dimension(projector,n::Integer)=nothing
 
 """
     harmonic_arnoldi_spectrum(L; nev=6, krylovdim=40, thickdim=12,
-                              maxrestarts=20, projector=nothing)
+                              maxrestarts=20, projector=nothing,
+                              initial_subspace=nothing)
 
 Compute eigenvalues nearest `target` with thick-restarted harmonic Arnoldi.
 Converged and best unconverged harmonic Ritz vectors are retained between
 cycles. An optional matrix-free orthogonal `projector` restricts every basis
 and residual vector to a weak-symmetry charge sector.
+`initial_subspace` accepts several continuation vectors and is mutually
+exclusive with `initial_vector`; dependent or projector-null columns are
+dropped by two-pass orthogonalization.
 When the complete projector range is known and has been spanned, extraction
 switches to ordinary Rayleigh--Ritz in that invariant subspace.  This avoids
 the singular harmonic pencil at an exactly represented target without
@@ -889,7 +953,8 @@ per-cycle residual history.
 function harmonic_arnoldi_spectrum(L;nev::Integer=6,krylovdim::Integer=max(30,3nev+6),
                                    thickdim::Integer=max(nev+2,2nev),
                                    maxrestarts::Integer=20,target=0,
-                                   initial_vector=nothing,projector=nothing,
+                                   initial_vector=nothing,initial_subspace=nothing,
+                                   projector=nothing,
                                    atol::Real=1e-10,rtol::Real=1e-8,
                                    vectors::Bool=false,rng=Random.default_rng(),
                                    require_convergence::Bool=true,
@@ -909,8 +974,12 @@ function harmonic_arnoldi_spectrum(L;nev::Integer=6,krylovdim::Integer=max(30,3n
     m=min(n,search_limit,max(Int(krylovdim),Int(nev)+2))
     keep=min(m-1,max(Int(thickdim),Int(nev)))
     _check_finite_krylov_target(target)
+    initial_vector===nothing||initial_subspace===nothing||throw(ArgumentError(
+        "initial_vector and initial_subspace are mutually exclusive"))
     T=_complex_float_type(eltype(L))
     initial_vector===nothing||(T=_promote_krylov_array_type(T,initial_vector))
+    initial_subspace===nothing||
+        (T=_promote_krylov_array_type(T,initial_subspace))
     T=_promote_krylov_scalar_type(T,target)
     projector===nothing||(T=_promote_krylov_operator_type(T,projector))
     _check_krylov_matvec_precision(L,T)
@@ -920,16 +989,38 @@ function harmonic_arnoldi_spectrum(L;nev::Integer=6,krylovdim::Integer=max(30,3n
     V=view(ws.V,:,1:m);LV=view(ws.LV,:,1:m);Zwork=view(ws.Z,:,1:m)
     Xwork=view(ws.X,:,1:m);LXwork=view(ws.LX,:,1:m);q=ws.q;tmp=ws.tmp
     pwork=_projector_workspace(projector,projector_workspace)
-    if initial_vector===nothing
-        randn!(rng,tmp)
-    else
-        length(initial_vector)==n||throw(DimensionMismatch("initial_vector has wrong length"))
-        tmp.=initial_vector
-    end
-    seednorm=norm(tmp);_project_vector!(q,projector,tmp,pwork);nq=norm(q)
     RT=typeof(real(zero(eltype(V))));breakfactor=sqrt(eps(RT))
-    nq>breakfactor*max(seednorm,floatmin(RT))||throw(ArgumentError("initial_vector has zero component in the selected symmetry sector"))
-    V[:,1].=q./nq;nkeep=1;applications=0;best=nothing;history=NamedTuple[]
+    nkeep=0
+    if initial_subspace!==nothing
+        initial_subspace isa AbstractMatrix||throw(ArgumentError(
+            "initial_subspace must be a matrix or nothing"))
+        size(initial_subspace,1)==n||throw(DimensionMismatch(
+            "initial_subspace has the wrong row dimension"))
+        size(initial_subspace,2)>0||throw(ArgumentError(
+            "initial_subspace cannot have zero columns"))
+        for column in 1:min(size(initial_subspace,2),keep)
+            copyto!(tmp,view(initial_subspace,:,column));seednorm=norm(tmp)
+            _project_vector!(q,projector,tmp,pwork);projected_norm=norm(q)
+            beta=_orthogonalize!(q,V,nkeep)
+            beta<=breakfactor*max(projected_norm,seednorm*eps(RT),
+                                  floatmin(RT))&&continue
+            nkeep+=1;V[:,nkeep].=q./beta
+        end
+        nkeep>0||throw(ArgumentError(
+            "initial_subspace has no independent component in the selected symmetry sector"))
+    else
+        if initial_vector===nothing
+            randn!(rng,tmp)
+        else
+            length(initial_vector)==n||throw(DimensionMismatch("initial_vector has wrong length"))
+            tmp.=initial_vector
+        end
+        seednorm=norm(tmp);_project_vector!(q,projector,tmp,pwork);nq=norm(q)
+        nq>breakfactor*max(seednorm,floatmin(RT))||throw(ArgumentError("initial_vector has zero component in the selected symmetry sector"))
+        V[:,1].=q./nq;nkeep=1
+    end
+    initial_retained_dimension=nkeep
+    applications=0;best=nothing;history=NamedTuple[]
     for cycle in 0:maxrestarts
         k=nkeep
         # Images of retained vectors are recomputed once per restart. Expansion
@@ -1001,6 +1092,7 @@ function harmonic_arnoldi_spectrum(L;nev::Integer=6,krylovdim::Integer=max(30,3n
         best=(values=vals,residuals=residuals,converged=converged,
               restarts=cycle,iterations=applications,krylov_dimension=m,
               retained_dimension=keep,final_retained_dimension=nkeep,
+              initial_retained_dimension,
               locked,dimension=n,target=requested_target,
               harmonic_shift=sigma,algorithm=:harmonic,
               ritz_extraction=search_space_exhausted ? :rayleigh_ritz : :harmonic,

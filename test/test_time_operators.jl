@@ -110,6 +110,77 @@
     @test (@allocated apply!(outputs,allocation_plan,inputs,time,nothing,
                              allocation_work))<=2048
 
+    # Resource guards count each dynamic-kernel workspace instead of using a
+    # fixed multiple of the PI vector size. This small model deliberately
+    # exceeds the former 16-vector approximation.
+    many_schedules=ntuple(20) do index
+        InPlaceTimeOperator(sx,(destination,t,p)->begin
+            @. destination=(one(t)+index*t)*sx
+            nothing
+        end)
+    end
+    many_terms=ntuple(index->LocalHamiltonian(
+        many_schedules[index];rate=0.01index),20)
+    many_plan=LiouvillianPlan(PIModel(PIBasis(4,2),many_terms))
+    many_work=LiouvillianWorkspace(many_plan)
+    estimated=PID._performance_liouvillian_workspace_bytes(many_plan)
+    payload=sum(sum(sizeof(array) for array in block)
+                for block in many_work.blocks)+
+        sum(sizeof(kernel.operator)+
+            sum(sizeof(array) for array in kernel.blocks)
+            for kernel in many_work.kernel_workspaces)
+    @test estimated==payload
+    @test estimated>16length(many_plan.basis)*sizeof(ComplexF64)
+
+    batch_columns=8
+    batch_estimate=PID._performance_liouvillian_workspace_bytes(
+        many_plan;batch_columns)
+    largest=maximum(length,many_plan.basis.patterns)
+    @test batch_estimate-estimated==
+        3largest^2*batch_columns*sizeof(ComplexF64)
+
+    # A driven one-body local gain is retained as one rectangular contraction
+    # per common child sector.  The former coarse representation stored every
+    # allowed `(output coordinate,input coordinate)` pair, even when the
+    # evaluated local matrix made most entries zero.
+    local_scaling_basis=PIBasis(20,2)
+    dense_local=ComplexF64[0.2 1.0;0.4im -0.1]
+    local_scaling_schedule=InPlaceTimeOperator(
+        dense_local,(destination,t,p)->nothing)
+    local_scaling_plan=LiouvillianPlan(PIModel(local_scaling_basis,[
+        LocalJump(local_scaling_schedule;rate=0.2)]))
+    local_scaling_work=LiouvillianWorkspace(local_scaling_plan)
+    local_scaling_kernel=only(local_scaling_plan.kernels)
+    local_scaling_prepared=only(local_scaling_work.kernel_workspaces)
+    @test !hasfield(typeof(local_scaling_kernel),:I)
+    @test !hasfield(typeof(local_scaling_kernel),:J)
+    @test !hasfield(typeof(local_scaling_prepared),:values)
+    @test length(local_scaling_prepared.contractions)==
+          length(local_scaling_kernel.branches.entries)
+    connected_pairs=Set((branch.output_sector,branch.input_sector)
+        for branch in local_scaling_kernel.branches.entries)
+    old_coordinates=sum(length(local_scaling_basis.patterns[li])^2*
+                        length(local_scaling_basis.patterns[ni])^2
+                        for (li,ni) in connected_pairs)
+    old_coordinate_bytes=old_coordinates*(
+        2*sizeof(Int)+sizeof(eltype(local_scaling_plan)))
+    retained_bytes=Base.summarysize(local_scaling_plan)+
+                   Base.summarysize(local_scaling_work)
+    @test old_coordinate_bytes>32*1024^2
+    @test retained_bytes<old_coordinate_bytes÷32
+    local_scaling_input=randn(rng,ComplexF64,length(local_scaling_basis))
+    local_scaling_output=similar(local_scaling_input)
+    apply!(local_scaling_output,local_scaling_plan,local_scaling_input,
+           time,nothing,local_scaling_work)
+    @test (@allocated apply!(local_scaling_output,local_scaling_plan,
+        local_scaling_input,time,nothing,local_scaling_work))<=4096
+    local_scaling_inputs=hcat(local_scaling_input,0.3local_scaling_input)
+    local_scaling_outputs=similar(local_scaling_inputs)
+    apply!(local_scaling_outputs,local_scaling_plan,local_scaling_inputs,
+           time,nothing,local_scaling_work)
+    @test (@allocated apply!(local_scaling_outputs,local_scaling_plan,
+        local_scaling_inputs,time,nothing,local_scaling_work))<=4096
+
     stage_calls=Ref(0)
     floquet_schedule=InPlaceTimeOperator(sx,(destination,t,p)->begin
         stage_calls[]+=1
@@ -263,6 +334,22 @@
     @test output32≈frozen32*input32 atol=3f-5 rtol=3f-5
     apply_adjoint!(output32,pair_plan32,input32,time,nothing,pair_work32)
     @test output32≈adjoint(frozen32)*input32 atol=3f-5 rtol=3f-5
+
+    local_basis32=PIBasis(3,2)
+    local_plan32=@inferred LiouvillianPlan(PIModel(local_basis32,[
+        LocalJump(schedule32;rate=0.25f0)]))
+    local_work32=LiouvillianWorkspace(local_plan32)
+    local_input32=randn(rng,ComplexF32,length(local_basis32))
+    local_output32=similar(local_input32)
+    @test eltype(local_plan32)===ComplexF32
+    apply!(local_output32,local_plan32,local_input32,time,nothing,local_work32)
+    local_frozen32=freeze(local_plan32.fallback_model;time=time,
+                          representation=:sparse)
+    @test local_output32≈local_frozen32*local_input32 atol=3f-5 rtol=3f-5
+    apply_adjoint!(local_output32,local_plan32,local_input32,time,nothing,
+                   local_work32)
+    @test isapprox(local_output32,adjoint(local_frozen32)*local_input32;
+                   atol=3f-5,rtol=3f-5)
 
     # Plan-owned block scratch has the compiled scalar type.  A wider source
     # would otherwise be narrowed while it is copied into that scratch.

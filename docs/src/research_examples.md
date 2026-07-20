@@ -14,10 +14,11 @@ script. Then choose the closest workflow below.
 | Compare stationary solvers | [`steady_state_methods.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/steady_state_methods.jl) | Direct, shift-invert, SVD, and matrix-free GMRES paths |
 | Keep observables but not states | [`streaming_output.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/streaming_output.jl) | Memory-light deterministic and stochastic output |
 | Simulate jump records | [`quantum_trajectories.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/quantum_trajectories.jl) | Event-driven paths and analytical ensemble checks |
-| Study periodic dynamics | [`floquet_periodic_decay.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/floquet_periodic_decay.jl) | One-period maps, multipliers, and a periodic state |
+| Study periodic dynamics | [`floquet_periodic_decay.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/floquet_periodic_decay.jl) | Reusable matrix-free period maps, selected multipliers, and a periodic state |
+| Compare density and Schur pseudo-ket paths | [`weak_pi_trajectories.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/weak_pi_trajectories.jl) | Fixed/event-driven weak-PI paths, confidence stopping, and stationary batch diagnostics |
 | Combine ensembles or an ancilla | [`composite_ensembles.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/composite_ensembles.jl) | Factorized composite coordinates and cross-system maps |
-| Add a finite-memory bath | [`pi_heom.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/pi_heom.jl) | HEOM construction and hierarchy-depth convergence |
-| Embed one truncated pseudomode per spin | [`debecker2026_all_to_all_ising_pseudomodes.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/debecker2026_all_to_all_ising_pseudomodes.jl) | Uniform-all-pair PI supersites, spin-only negativity, a parity-selected x-GHZ witness, and cutoff checks |
+| Add a finite-memory bath | [`pi_heom.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/pi_heom.jl) | Exactly scaled ADOs, depth convergence, SciML construction, and a block-preconditioned steady solve |
+| Embed one truncated pseudomode per spin | [`debecker2026_all_to_all_ising_pseudomodes.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/debecker2026_all_to_all_ising_pseudomodes.jl) | Uniform-all-pair PI supersites, trajectory estimates, spin-only negativity, a strong-parity-reduced x-GHZ steady solve, and cutoff checks |
 
 Each script has a same-basename guide in the repository's `examples/`
 directory. The sections below explain the specialized workflows and link to
@@ -106,6 +107,15 @@ GMRES resolvents. The first readout operator is not implicitly adjointed, and
 the stationary spectrum is the connected one-sided complex transform. See
 [Quantum regression and optical correlations](correlations.md).
 
+For general response calculations, `ResponseWorkspace` reuses the dominant
+shifted-GMRES and exponential-action arrays across `resolvent_norm`,
+`pseudospectral_abscissa`, `adjoint_evolve`,
+`integrated_correlation_time`, and `steady_state_susceptibility`. The
+matrix-free resolvent is a converged power/GMRES estimate rather than a
+rigorous upper bound; every shifted solve must converge. Trace-fixed Poisson
+and tangent solves report their physical residual and trace error. See
+[Matrix-free Krylov solvers](matrix_free_krylov.md#matrix-free-response-and-adjoint-analysis).
+
 ## Several PI ensembles and finite auxiliaries
 
 `examples/composite_ensembles.jl` combines two independent compressed PI
@@ -166,10 +176,21 @@ compact columns. Threaded and optional Distributed execution apply only after
 continuation is disabled. See [Prepared parameter scans](parameter_scans.md).
 
 `examples/pi_heom.jl` stores every ADO of a collectively dephased qubit
-ensemble in PI coordinates and compares three hierarchy depths with an exact
-exponential-bath coherence. It separately demonstrates that convergence of
-one observable is weaker than convergence of the complete reduced state. See
-[PI--HEOM](heom.md) and [Numerical convergence reports](convergence.md).
+ensemble in exactly similarity-scaled PI coordinates and compares three
+hierarchy depths with an exact exponential-bath coherence. It separately
+demonstrates that convergence of one observable is weaker than convergence of
+the complete reduced state. A one-step `heom_problem` check exposes the same
+matrix-free right-hand side to SciML, while a small unique stationary model
+demonstrates a reusable ADO-diagonal `HEOMBlockPreconditioner`. Scaling changes
+conditioning and stored auxiliary coordinates, not the root reduced state or
+the hierarchy truncation. See [PI--HEOM](heom.md) and [Numerical convergence
+reports](convergence.md).
+
+The example still uses a finite exponential decomposition and hard hierarchy
+boundary. Bath-decomposition error, depth error, and integration/Krylov error
+are separate refinements. The current backend supports fixed Hermitian global
+PI bath couplings; it does not infer residue corrections, terminators, or the
+specialized hierarchy for independent local non-Markovian baths.
 
 ## Uniform all-pair Ising spins with local pseudomodes
 
@@ -208,16 +229,39 @@ tolerances checks the broad `kappa/omega_c=20` curve; the current pointwise
 `Cxx` difference is about `8e-16`. This replaces a fixed-step RK4 refinement,
 which was not stable enough in that broad-decay regime.
 
+At one stationary reference point the script calls both
+`trajectory_steady_state` and `weak_pi_trajectory_steady_state`. The first
+uses density-valued conditional paths; the second resolves the local gain into
+one-box Schur Kraus branches and evolves direct-sum pseudo-kets. Each route
+streams a post-settling density average within every independent path before
+combining path means, and neither retains histories or jump logs. Comparisons
+with the direct stationary solution include the full PI-coordinate error,
+Hilbert--Schmidt Monte Carlo standard error, Liouvillian residual, `Cxx`, and
+spin-only negativity. The colored stars on the stationary maps show the
+weak-PI estimate. Burn-in time, within-path spacing, the selected fixed-step
+or event-driven integration controls, path count, and pseudomode cutoff remain
+separate convergence requirements.
+
 The helper treats `Jpair` as the literal coefficient of every unordered pair;
 the displayed `J` uses the explicit Kac choice `Jpair=J/(N-1)`. It also maps
 the manuscript convention `D_paper=2D_package` to a local mode-jump rate
 `2kappa` and sets the exchange strength to `sqrt(gamma*kappa)`. Both
 `coupling=:minus` and `coupling=:z` are available. The latter retains a strong
 spin-parity symmetry, so an unrestricted steady state need not be unique. For
-that branch the script evolves the even-parity `|e,0>^N` state with adaptive
-matrix-free `krylov_expv` to `omega_c*t=1600`, checks the exponential-action
-error estimate and `norm(L*rho)` over the grid, and compares the witness at
-full and half settling times at one grid corner.
+that branch the script restricts both Schur-block indices to the initial
+even-parity Hilbert support. This is a 204-coordinate stationary solve instead
+of the full 816-coordinate default problem; an ordinary weak-conjugation
+projector would retain both diagonal parity blocks and would not resolve the
+stationary degeneracy. Every point checks strong-block leakage, parity, state
+diagnostics, and the full `norm(L*rho)` residual. One adaptive matrix-free
+`krylov_expv` propagation to `omega_c*t=1600` plus a half-time value remain as
+independent reference checks rather than being repeated across the grid.
+
+The longitudinal model also has the PI-compatible weak symmetry generated by
+``\sigma_x\otimes(-1)^{a^\dagger a}`` on every supersite. The example certifies
+it explicitly, but does not restrict the selected state to one of its charges:
+for odd `N` that transformation exchanges the two strong spin-parity sectors
+and a trivial-charge projection would alter the GHZ coherence.
 
 The supplied manuscript studies a nearest-neighbour periodic chain. That
 geometry is not invariant under arbitrary permutations, so this runnable
@@ -259,6 +303,12 @@ observable. The optional Makie output contains a manuscript-style dynamics
 panel, stationary correlation and spin-negativity maps, and a separate cutoff
 figure. A third, manuscript-Fig.-4-style figure shows the parity-selected
 x-GHZ witness, its `0.5` contour, and the maximum long-time residual. The
+extracted `Cxx=0` and GHZ-witness boundaries are also written, independently
+of Makie, as run-qualified tab-delimited text files beside the figures. Each
+file retains the raw interpolated contour, the origin-constrained quadratic
+candidate, and any available fallback candidate together with fit metadata.
+Set `PI_EXAMPLE_FIGURE_DIR` to redirect both numerical and graphical output.
+The
 [complete example
 guide](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/debecker2026_all_to_all_ising_pseudomodes.md)
 records the model boundary, rate conversion, solver checks, and figure stems.
@@ -419,10 +469,25 @@ pseudo-kets, and compares their ensemble with density-valued paths, certified
 population dynamics, and general matrix-free PI evolution for
 ``\gamma_l/\Gamma_c=1``. Equal trajectory counts and fixed-step controls make
 the warmed per-path timing descriptive of that run, but not a portable speed
-certificate. The pseudo-kets are not labeled-particle wavefunctions, and
-their particular Kraus record must not be identified path-by-path with another
-unraveling. Composite cavity pseudo-ket trajectories remain outside this
-single-ensemble backend.
+certificate. The same prepared Schur-Kraus plan is also exercised with
+adaptive Dormand--Prince propagation and continuous hazard roots. An
+observable-only adaptive ensemble stops only at deterministic batch boundaries
+when its simultaneous empirical-Bernstein targets pass or its trajectory cap
+is reached.
+
+The example also forms a history-free stationary density estimate from
+event-driven pseudo-kets. It takes sector-block outer products before every
+average, averages correlated samples within a path, and uses independently
+seeded path means for its primary Monte Carlo standard error. Optional batch
+means diagnose within-path autocorrelation under an explicitly approximate
+independence assumption; they do not certify burn-in or finite-window bias.
+Integrator controls, settling time, sampling window, and independent path
+count therefore remain separate convergence checks.
+
+The pseudo-kets are not labeled-particle wavefunctions, and their particular
+Kraus record must not be identified path-by-path with another unraveling.
+Composite cavity pseudo-ket trajectories remain outside this single-ensemble
+backend.
 
 With the examples-only CairoMakie environment active, both trajectory scripts
 also render their numerical comparisons. The weak-PI example uses 95%
@@ -532,9 +597,9 @@ Selected slow modes and the gap use the same matrix-free action:
 
 ```julia
 modes = pi_liouvillian_spectrum(model;
-    method=:krylov, nev=6, krylovdim=40, vectors=true)
+    method=:arnoldi, nev=6, krylovdim=40, vectors=true)
 gap = pi_liouvillian_gap(model;
-    method=:krylov, nev=6, krylovdim=40, return_info=true)
+    method=:arnoldi, nev=6, krylovdim=40, return_info=true)
 ```
 
 Increase `krylovdim` until every requested Ritz residual is converged. A
@@ -552,20 +617,34 @@ Floquet gap, the periodic steady state, and stroboscopic populations.
 rate = (t,p) -> gamma*(1 + a*cos(2pi*t/period))
 model = PIModel(basis, [LocalJump(sm; rate=rate)])
 prepared = compile(model; backend=:matrixfree)
-F = floquet_propagator(prepared, period; steps=160)
-periodic = stationary_state(F - I; basis=basis,
-                            algorithm=SVDAlgorithm(), return_info=true)
-rhoF = periodic.state
+F = floquet_map(prepared, period; steps=160)
+selected = selected_floquet_multipliers(
+    F; method=:arnoldi, which=:LM, nev=4,
+    krylovdim=length(basis))
+gap = floquet_gap(
+    F; method=:arnoldi, nev=4,
+    krylovdim=length(basis), return_info=true)
+periodic = floquet_steady_state(
+    F; method=:krylov, krylovdim=20, return_info=true)
 states = stroboscopic_evolution(rho0, F, 4)
 ```
 
-Solving `F-I` reuses the already converged one-period channel. The convenience
-`floquet_steady_state(model, period; ...)` remains useful when the propagator is
-not otherwise needed.
+Every period action integrates only the supplied PI vector. Arnoldi/IRAM and
+the trace-fixed GMRES solve therefore reuse the period map without
+constructing a dense PI-dimensional channel. The script checks selected Ritz
+residuals, the periodic-state residual, and a certified matrix-free parity
+restriction. A small dense `floquet_propagator` remains only as an independent
+reference for the complete multiplier set.
 
-Increase `steps` until the relevant propagator, multiplier, or observable has
-converged. Stiff protocols may require a dedicated SciML integration rather
-than the fixed-step Floquet helper.
+`floquet_gap(...; return_info=true)` distinguishes a residual-resolved
+selected decay estimate from a certified global gap. The latter requires a
+complete multiplier set; a partial Arnoldi/IRAM window must retain
+`global_gap_certified=false`. Jacobi--Davidson can target a particular
+multiplier but is not a global spectral-radius method.
+
+Increase `steps` until the relevant map action, multiplier, or observable has
+converged, independently of Krylov tolerances. Stiff protocols may require a
+dedicated integration strategy rather than the fixed-step Floquet helper.
 
 `examples/gambetta2019_dissipative_discrete_time_crystal.jl` applies the same
 piecewise workflow to the fully connected dissipative Rydberg protocol of

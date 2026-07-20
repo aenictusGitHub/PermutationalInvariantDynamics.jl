@@ -1,5 +1,3 @@
-import SciMLBase
-
 # Product-state (first-cumulant) closure.  The rules below deliberately lower
 # from the public term semantics rather than from Schur kernels: their cost is
 # controlled by the local dimension and body order, and is independent of the
@@ -228,7 +226,13 @@ function _mf_workspace_type(plan::MeanFieldPlan,sigma)
     Complex{R}
 end
 
-"""Mutable, per-task scratch for mean-field contractions and RK4 evolution."""
+"""
+Mutable, per-task scratch for mean-field contractions and low-storage RK4
+evolution. New workspaces allocate three full one-site integration matrices:
+`stage`, the current derivative `k1`, and the weighted accumulator `k2`.
+Legacy fields `k3` and `k4` remain as empty compatibility placeholders;
+field-constructed workspaces with full legacy matrices remain accepted.
+"""
 struct MeanFieldWorkspace{T,P}
     plan::P
     powers::Vector{Matrix{T}}
@@ -256,13 +260,16 @@ function MeanFieldWorkspace(plan::MeanFieldPlan,sigma::AbstractMatrix)
     MeanFieldWorkspace{T,typeof(plan)}(plan,powers,effective_operators,
         zeros(T,D,D),zeros(T,D,D),zeros(T,D,D),
         zeros(T,plan.d,plan.d),zeros(T,plan.d,plan.d),zeros(T,plan.d,plan.d),
-        zeros(T,plan.d,plan.d),zeros(T,plan.d,plan.d))
+        zeros(T,0,0),zeros(T,0,0))
 end
 
 function _mf_check_workspace(work::MeanFieldWorkspace,plan::MeanFieldPlan,sigma,dest=nothing)
     work.plan===plan || throw(ArgumentError("mean-field workspace belongs to a different plan"))
     size(sigma)==(plan.d,plan.d) || throw(DimensionMismatch("one-particle state must be $(plan.d)×$(plan.d)"))
     dest===nothing || size(dest)==size(sigma) || throw(DimensionMismatch("mean-field derivative has the wrong dimensions"))
+    all(matrix->size(matrix)==size(sigma),(work.stage,work.k1,work.k2))&&
+        all(matrix->size(matrix) in ((0,0),size(sigma)),(work.k3,work.k4))||
+        throw(DimensionMismatch("mean-field integration workspace has incompatible dimensions"))
     Twork=eltype(work.stage);Tstate=eltype(sigma)
     promote_type(Tstate,Twork)===Twork || throw(ArgumentError(
         "mean-field workspace element type $Twork cannot represent state values of type $Tstate"))
@@ -502,26 +509,41 @@ function meanfield_problem(plan::MeanFieldPlan,sigma0::AbstractMatrix,tspan;para
     SciMLBase.ODEProblem(f!,u0,tspan,parameters)
 end
 
-"""Propagate a one-particle density matrix with a preallocated fixed-step RK4 kernel."""
+"""Propagate a one-particle density matrix with a preallocated three-scratch fixed-step RK4 kernel."""
 function meanfield_evolve!(dest::AbstractMatrix,plan::MeanFieldPlan,src::AbstractMatrix,tspan;
                            steps::Integer=256,parameters=nothing,workspace=nothing)
     steps>0 || throw(ArgumentError("steps must be positive"))
     size(dest)==size(src) || throw(DimensionMismatch("source and destination dimensions differ"))
+    dest===src||!Base.mightalias(dest,src)||throw(ArgumentError(
+        "mean-field evolution permits exact in-place use but not partially overlapping source and destination storage"))
     work=workspace===nothing ? MeanFieldWorkspace(plan,src) : workspace
     _mf_check_workspace(work,plan,src,dest)
     promote_type(eltype(dest),eltype(work.stage))===eltype(work.stage) ||
         throw(ArgumentError("mean-field evolution destination precision must match its workspace"))
+    active=(work.stage,work.k1,work.k2)
+    for i in eachindex(active)
+        Base.mightalias(active[i],dest)&&throw(ArgumentError(
+            "mean-field evolution destination must not alias workspace scratch"))
+        for j in 1:i-1
+            Base.mightalias(active[i],active[j])&&throw(ArgumentError(
+                "mean-field integration workspace arrays must not alias"))
+        end
+    end
     dest===src || copyto!(dest,src)
     t0,t1=tspan;t1>=t0 || throw(ArgumentError("tspan must be ordered"));h=(t1-t0)/steps;t=t0
     for _ in 1:steps
         meanfield_rhs!(work.k1,plan,dest,t,parameters,work)
+        copyto!(work.k2,work.k1)
         @. work.stage=dest+(h/2)*work.k1
-        meanfield_rhs!(work.k2,plan,work.stage,t+h/2,parameters,work)
-        @. work.stage=dest+(h/2)*work.k2
-        meanfield_rhs!(work.k3,plan,work.stage,t+h/2,parameters,work)
-        @. work.stage=dest+h*work.k3
-        meanfield_rhs!(work.k4,plan,work.stage,t+h,parameters,work)
-        @. dest=dest+(h/6)*(work.k1+2work.k2+2work.k3+work.k4)
+        meanfield_rhs!(work.k1,plan,work.stage,t+h/2,parameters,work)
+        @. work.k2=work.k2+2work.k1
+        @. work.stage=dest+(h/2)*work.k1
+        meanfield_rhs!(work.k1,plan,work.stage,t+h/2,parameters,work)
+        @. work.k2=work.k2+2work.k1
+        @. work.stage=dest+h*work.k1
+        meanfield_rhs!(work.k1,plan,work.stage,t+h,parameters,work)
+        @. work.k2=work.k2+work.k1
+        @. dest=dest+(h/6)*work.k2
         t+=h
     end
     dest

@@ -26,10 +26,25 @@ end
     prepared = compile(model; backend=:matrixfree)
     workspace = LiouvillianWorkspace(prepared)
     destination = similar(rho.data)
+    trajectory_plan = TrajectoryPlan(model)
+    trajectory_workspace = TrajectoryBatchWorkspace(
+        trajectory_plan, rho; workers=1)
+    weak_state = weak_pi_pseudoket(rho)
+    weak_plan = WeakPITrajectoryPlan(model)
+    weak_workspace = WeakPITrajectoryBatchWorkspace(
+        weak_plan, weak_state; workers=1)
 
     JET.@test_call target_modules=(PID,) purity(rho)
     JET.@test_call target_modules=(PID,) collective_expectation(rho, sx)
     JET.@test_call target_modules=(PID,) apply!(destination, prepared,
                                                 rho.data, 0.0, nothing,
                                                 workspace)
+    JET.@test_call target_modules=(PID,) trajectory_steady_state(
+        trajectory_plan, rho;
+        trajectories=2, settling_time=0.01, dt=0.01,
+        workspace=trajectory_workspace, return_info=true)
+    JET.@test_call target_modules=(PID,) weak_pi_trajectory_steady_state(
+        weak_plan, weak_state;
+        trajectories=2, settling_time=0.01, dt=0.01,
+        workspace=weak_workspace, return_info=true)
 end

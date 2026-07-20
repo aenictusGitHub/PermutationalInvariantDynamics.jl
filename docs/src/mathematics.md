@@ -138,13 +138,73 @@ nor all `N!` group elements. These validation functions necessarily accept
 objects of dimensions `d^N` and `d^(2N)`; they are not the production PI
 simulation path. A `PIModel` returns `true` by construction.
 
+## Prepared one-box Clebsch--Gordan coefficients
+
+One-body contractions and Appendix-D paths repeatedly use the same real
+one-box ``U(d)`` Clebsch--Gordan coefficients.  For several geometry setups on
+one exact basis, prepare them once and pass the read-only cache explicitly:
+
+```julia
+coefficients = OneBoxCGCache(
+    basis; max_depth=3, T=Float64, memory_budget=64 * 1024^2)
+one_body = OneBodyGeometry(
+    basis; T=Float64, coefficient_cache=coefficients)
+three_body = PBodyGeometry(
+    basis, 3; T=Float64, coefficient_cache=coefficients)
+
+# The same cache can serve all compatible geometry families in one model.
+prepared = compile(model; coefficient_cache=coefficients)
+```
+
+`max_depth=1` covers `OneBodyGeometry` when `N > 0` (the zero-particle case
+uses depth zero); `PBodyGeometry(basis,p)` requires a cache prepared through
+at least depth `p`. The cache is tied to the exact
+`PIBasis` object and floating type, stores only the structurally admissible
+one-box data within that depth, and checks its predicted storage against
+`memory_budget` before allocating the coefficient tables. It may be shared by
+sequential or concurrent read-only construction. Omitting `coefficient_cache`
+preserves the
+call-local path, which computes each transition once for that geometry and
+retains no process-global mutable state.  That default is often preferable for
+one small, one-off geometry because a standalone cache also has a setup cost;
+the explicit cache pays off when its coefficients are reused.  For individual
+coefficient queries, the same object can be passed as `cache=coefficients` to
+`cgc` or `three_nu_symbol`.
+
+Ordinary model compilation already uses this optimization automatically when
+a model needs more than one one-box geometry family and its dimensions are
+small: currently `d=2, N<=32`, `d=3, N<=8`, or `d=4, N<=5` (and the trivial
+`d=1, N<=64` case).  These bounds also apply to a restricted basis with the
+same `(N,d)`.  That automatic cache is bounded by 64 MiB, exists only during
+lowering, and is released after the finished packed geometries have been
+built.  A single geometry family keeps the lower-overhead call-local route.
+Prepare and pass an explicit cache when several independent model compilations
+should share the same coefficients or when a larger calculation has a
+deliberately chosen memory budget.
+The explicit `coefficient_cache` keyword is accepted by `LiouvillianPlan`,
+`compile`, `liouvillian`, `steady_state`, and `compile_family`; each route
+validates exact basis ownership, required removal depth, and scalar precision
+before lowering any term.
+
+This is deliberately not a table of generic Wigner ``3j`` or ``6j`` symbols.
+The package's `three_nu_symbol` is a dyadic of two one-box ``U(d)``
+coefficients, and Appendix-D isometries are products of the same one-box maps;
+a Wigner-symbol table would therefore add SU(2)-specific storage without
+accelerating the qudit geometry.  Qubit reduction and negativity instead
+prepare the complete recoupling matrices they actually use inside
+`ReductionPlan`, where their lifetime, precision, and memory cost remain
+explicit.
+
 ## Appendix-D p-body processes
 
 `PBodyGeometry(basis,p)` enumerates the allowed sequences of `p` removable
 corners and caches the successive one-box CG isometries. These realize the
 generalized partition triangle and generalized three-nu tensors of equations
 (D.5)--(D.15), without constructing computational-space operators of size
-`d^N`.
+`d^N`. Setup indexes each GT-pattern list once, caches every one-box edge
+matrix shared by several removal paths, and propagates all centre patterns
+through two preallocated buffers. It does not construct a pattern-amplitude
+dictionary for every local word.
 
 `pbody_collective_operator(basis,X,p)` represents
 ``\sum_{n_1<\cdots<n_p}X^{(n_1,\ldots,n_p)}``, while
@@ -335,6 +395,10 @@ of reduced-state, purity, negativity, and partial-transpose routines.
 `ReductionWorkspace(plan, rho)` adds caller-owned product-block, partial-trace,
 partial-transpose, and reduced-sector scratch for repeated state scans. Pass it
 through `workspace=` to `reduced_state`, `reduced_purity`, or `negativity`.
+Use `mode=:reduction` to omit partial-transpose storage or
+`mode=:negativity` to omit partial-trace and reduced-sector storage when a
+balanced bipartition makes the general-purpose `mode=:both` workspace too
+large. A mode-specific workspace rejects incompatible operations.
 `reduced_state!(out, rho, plan, workspace)` also avoids allocating a new result.
 Plans may be shared; use one mutable workspace per concurrent task.
 
@@ -351,9 +415,12 @@ tradeoffs.
 has been defined. Sparse/dense matrices and matrix-free Liouvillians share a
 fixed-step fourth-order Runge--Kutta implementation. `evolve!` writes into a
 supplied state or coordinate vector, and an `EvolutionWorkspace` reuses all
-five stage arrays across repeated calls. `time_evolution(L,rho,times)` advances
-sequentially with one workspace. Step counts should be convergence-tested for
-stiff generators; `dynamics_problem` remains available for adaptive solvers.
+three full scratch arrays (stage state, derivative, and weighted accumulator)
+across repeated calls. The classical RK4 formula and order are unchanged;
+only its forward storage schedule differs. `time_evolution(L,rho,times)`
+advances sequentially with one workspace. Step counts should be
+convergence-tested for stiff generators; `dynamics_problem` remains available
+for adaptive solvers.
 
 ## Quantum trajectories
 
@@ -366,7 +433,8 @@ equation. Appendix-D local and collective channels follow the same rule.
 
 With `algorithm=:fixed`, the normalized no-jump equation is integrated with
 preallocated RK4 stages and steps are shortened automatically to enforce
-`max_jump_probability`. With `algorithm=:event` (also `:adaptive`), an
+`max_jump_probability`. With `algorithm=:event` (also `:adaptive` or
+`:event_driven`), an
 embedded Dormand--Prince 5(4) solve advances the normalized state and its
 integrated hazard together. Bisection locates each continuous hazard root, so
 jump times are not tied to sampling-grid endpoints. `abstol`, `reltol`,
@@ -374,13 +442,62 @@ jump times are not tied to sampling-grid endpoints. `abstol`, `reltol`,
 `TrajectoryPlan` compiles the immutable representation-theoretic geometry
 once. `TrajectoryWorkspace` owns the mutable integrator scratch for one path,
 and `TrajectoryBatchWorkspace` retains one such workspace and RNG per worker
-for reuse across ensembles. An empty model accepts `T=Float32` (or another
-concrete real floating type) because it has no term from which to infer that
-precision. During no-jump propagation, channel intensities are contracted
-directly from the prepared ``K^\dagger K`` Schur blocks; a full gain state is
-formed only for the channel selected at an actual jump.
+for reuse across ensembles. Fixed-step RK4 uses three full-vector registers;
+`mode=:fixed` omits the otherwise unused `k3` and `k4` registers plus six
+adaptive-only vectors per worker. The default `mode=:full` supports both
+algorithms and is required for continuous event-time integration. An empty
+model accepts `T=Float32` (or another concrete real floating type) because it
+has no term from which to infer that precision. During no-jump propagation,
+the rate-weighted ``K^\dagger K`` Schur blocks are first combined into one
+effective loss operator per sector. Individual channel intensities and a full
+gain state are formed only when an actual jump must be selected. Accepted
+Dormand--Prince stages supply a four-scalar quartic hazard interpolant, so
+bisection locates the event without repeating full integration trials.
 `quantum_trajectories` creates reproducible independent realizations and
 `trajectory_average` returns the sampled ensemble density matrices.
+For an autonomous fixed-operator unraveling,
+`trajectory_steady_state(source, rho0; trajectories, settling_time, dt, ...)`
+streams an approximate stationary density operator without retaining path
+histories or jump records. If several post-settling samples are requested, it
+first forms the time average on each path and then averages those independent
+path means. Consequently correlated samples separated by `sampling_interval`
+do not artificially increase the reported sample count. At least two paths
+are required. The Hilbert--Schmidt sample spread and standard error reported
+by `TrajectorySteadyStateResult` are computed across these independent path
+means in the orthonormal PI coefficient coordinates. Optional Hermitian
+observables use the same path-level sampling unit for their variances,
+standard errors, and normal confidence intervals.
+
+The returned Liouvillian residual, relative residual, and trace error diagnose
+the averaged density operator but do not certify convergence or uniqueness.
+Research use must independently increase the settling time, vary the
+within-path spacing and sample count, converge fixed-step or event-driven
+integration controls, and increase the number of trajectories. In a
+non-unique stationary manifold the ensemble mean may depend on the initial
+state. For a fixed Lindbladian its ensemble-mean evolution is independent of
+the valid unraveling; the conditional-path distribution, Monte Carlo
+variance, and finite-sample realization can depend on that unraveling. Driven
+sources are rejected: use Floquet analysis for periodic dynamics or `freeze`
+only when the instantaneous autonomous generator is the intended question.
+
+The weak-PI pseudo-ket estimator follows the same path-level reduction, but
+the nonlinear density conversion is performed first. For path ``r`` and its
+post-settling samples,
+
+```math
+\overline C^{(r)}_\nu
+=\frac{1}{K}\sum_k
+\frac{|\psi^{(r)}_\nu(t_k)\rangle
+      \langle\psi^{(r)}_\nu(t_k)|}{\sqrt{f^\nu}},
+\qquad
+\widehat C=\frac{1}{M}\sum_r\overline C^{(r)}.
+```
+
+No cross-sector outer product is physical, and amplitudes must not be averaged
+before this map. `weak_pi_trajectory_steady_state` consequently returns a
+mixed `PIState`. Its Hilbert--Schmidt uncertainty uses ``\|C\|_2`` in the
+orthonormal PI coefficient basis and treats only the ``M`` path means as
+independent samples.
 Stochastic trajectories require finite, nonnegative real rates representable
 in the prepared precision; negative time-local rates remain supported by
 deterministic evolution but do not define this jump process. Time grids,

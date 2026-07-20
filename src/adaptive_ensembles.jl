@@ -14,8 +14,11 @@ ratio at every checked batch boundary. The pointwise normal intervals in
 `observables` are descriptive and are not substituted for this stopping
 certificate. `converged=false` is returned explicitly when
 `max_trajectories` is reached; the routine never labels that result converged.
+`metadata.effective_independent_samples` reports the trajectory count used by
+the stopping bound.  Its independence assumption concerns separately seeded
+trajectories; it does not remove time-discretization, settling, or model bias.
 """
-struct AdaptiveTrajectoryResult{T,O,J,R,H}
+struct AdaptiveTrajectoryResult{T,O,J,R,H,M}
     backend::Symbol
     times::Vector{T}
     trajectory_count::Int
@@ -27,6 +30,7 @@ struct AdaptiveTrajectoryResult{T,O,J,R,H}
     atol::R
     rtol::R
     convergence_history::H
+    metadata::M
 end
 
 function Base.show(io::IO,result::AdaptiveTrajectoryResult)
@@ -192,7 +196,10 @@ function _adaptive_observable_convergence(acc::_OnlineObservableAccumulator{R},
 end
 
 function _adaptive_summary(acc,ops,times,controls,history,backend,jumps,
-                           ranges,maximum_checks)
+                           ranges,maximum_checks;
+                           metadata=(;effective_independent_samples=acc.count,
+                               independence_unit=:trajectory,
+                               stopping_bound=:empirical_bernstein_simultaneous))
     converged,_,_=_adaptive_observable_convergence(
         acc,controls.confidence,controls.atol,controls.rtol,ranges,
         maximum_checks)
@@ -200,7 +207,7 @@ function _adaptive_summary(acc,ops,times,controls,history,backend,jumps,
     AdaptiveTrajectoryResult(backend,copy(times),acc.count,converged,
         converged ? :confidence_target : :maximum_trajectories,
         observables,jumps,controls.confidence,controls.atol,controls.rtol,
-        history)
+        history,metadata)
 end
 
 function _reset_adaptive_accumulator!(acc::_OnlineObservableAccumulator)
@@ -346,6 +353,141 @@ function adaptive_quantum_trajectories(
         _jump_statistics(global_jumps,ts)
     _adaptive_summary(global_observables,ops,ts,controls,history,
                       :quantum_jump,jump_summary,ranges,maximum_checks)
+end
+
+"""
+    adaptive_weak_pi_quantum_trajectories(source, state0, times;
+        observables, dt, min_trajectories=64, max_trajectories=10_000,
+        batch_size=32, confidence=0.95, atol=nothing, rtol=nothing,
+        seed=0, threaded=false, jump_statistics=false,
+        algorithm=:fixed, trajectory_keywords...)
+
+Run state-free weak-PI pseudo-ket trajectories until every requested
+Hermitian-observable mean at every saved time satisfies the simultaneous
+empirical-Bernstein target.  The immutable Schur Kraus plan is shared and
+observable values are contracted directly from pseudo-kets; neither
+`WeakPIQuantumTrajectory` histories nor sampled PI density operators are
+constructed.
+
+`algorithm=:event` and its `:adaptive`/`:event_driven` aliases use continuous
+hazard roots.  Fixed and event-driven integration bias must still be assessed
+by refining their numerical controls.  Each separately seeded trajectory is
+one independent sample for the stopping certificate, reported as
+`result.metadata.effective_independent_samples`.  The certificate controls
+Monte Carlo dispersion only; it does not cover finite-time initialization,
+time-grid, model-truncation, or observable-selection bias.
+"""
+function adaptive_weak_pi_quantum_trajectories(
+        source::Union{PIModel,CompiledPIModel,WeakPITrajectoryPlan},
+        state0::WeakPIPseudoKet{R},times;observables,dt::Real,
+        min_trajectories::Integer=64,max_trajectories::Integer=10_000,
+        batch_size::Integer=32,confidence=nothing,atol=nothing,rtol=nothing,
+        seed::Integer=0,threaded::Bool=false,jump_statistics::Bool=false,
+        workspace=nothing,parameters=nothing,max_jump_probability=nothing,
+        algorithm::Symbol=:fixed,abstol=nothing,reltol=nothing,dtmin=nothing,
+        dtmax=nothing,event_time_tolerance=nothing) where {R<:AbstractFloat}
+    # A supplied batch workspace already owns the prepared immutable plan.
+    # Reuse it instead of compiling an equivalent Kraus plan and then running
+    # the workspace with that duplicate preparation.
+    ts,options=_prepare_trajectory_arguments(times,R;dt,parameters,
+        max_jump_probability,algorithm,abstol,reltol,dtmin,dtmax,
+        event_time_tolerance)
+    ops=_prepare_streaming_observables(state0.basis,observables;
+                                       require_hermitian=true)
+    isempty(ops)&&throw(ArgumentError(
+        "adaptive weak-PI stopping requires at least one observable"))
+    blocks=_weak_observable_blocks(ops)
+    Rstats_base=_observable_scalar_type(state0,ops)
+    controls,Rstats,maximum_checks=_adaptive_controls_and_type(
+        Rstats_base,length(ops),length(ts);min_trajectories,max_trajectories,
+        batch_size,confidence,atol,rtol)
+    requested_workers=threaded ? min(controls.batch,Threads.nthreads()) : 1
+    mode=options.algorithm===:fixed ? :fixed : :full
+    batch=if workspace===nothing
+        prepared_plan=_weak_plan_for_state(source,state0)
+        WeakPITrajectoryBatchWorkspace(prepared_plan,state0;
+            workers=requested_workers,mode)
+    else
+        workspace isa WeakPITrajectoryBatchWorkspace||throw(ArgumentError(
+            "workspace must be a WeakPITrajectoryBatchWorkspace"))
+        _check_weak_batch_workspace(workspace,source,state0)
+    end
+    plan=batch.plan
+    _validate_weak_initial_state(plan,state0)
+    worker_count=threaded ? min(length(batch.workers),Threads.nthreads(),
+                                controls.batch) : 1
+    foreach(worker->_require_weak_workspace_mode(worker,options.algorithm),
+            view(batch.workers,1:worker_count))
+    bounds=_adaptive_observable_bounds(ops,Rstats)
+    ranges=bounds.ranges
+    global_observables=_OnlineObservableAccumulator(
+        Rstats,length(ops),length(ts))
+    global_jumps=jump_statistics ?
+        _OnlineJumpAccumulator(Rstats,length(plan.jumps)) : nothing
+    buffers=[Matrix{Rstats}(undef,length(ops),length(ts))
+             for _ in 1:worker_count]
+    local_observables=[_OnlineObservableAccumulator(
+        Rstats,length(ops),length(ts)) for _ in 1:worker_count]
+    local_jumps=jump_statistics ?
+        [_OnlineJumpAccumulator(Rstats,length(plan.jumps))
+         for _ in 1:worker_count] : nothing
+    master=MersenneTwister(seed);history=NamedTuple[];sampled=0
+    while sampled<controls.max
+        count=min(controls.batch,controls.max-sampled)
+        foreach(_reset_adaptive_accumulator!,local_observables)
+        local_jumps===nothing||foreach(_reset_adaptive_accumulator!,local_jumps)
+        resize!(batch.seeds,count);rand!(master,batch.seeds)
+        next=Threads.Atomic{Int}(1)
+        function run_worker(worker_index)
+            worker=batch.workers[worker_index];rng=batch.rngs[worker_index]
+            while true
+                local_index=Threads.atomic_add!(next,1)
+                local_index>count&&break
+                Random.seed!(rng,batch.seeds[local_index])
+                result=_weak_pi_trajectory_prepared(plan,state0,ts,worker,rng,
+                    options;observable_ops=ops,observable_blocks=blocks,
+                    observable_values=buffers[worker_index],
+                    save_states=false,record_jumps=jump_statistics)
+                _validate_adaptive_observations!(
+                    buffers[worker_index],bounds,ops)
+                _accumulate_observables!(
+                    local_observables[worker_index],buffers[worker_index])
+                jump_statistics&&_accumulate_jumps!(
+                    local_jumps[worker_index],result.jump_times,
+                    result.jump_channels)
+            end
+        end
+        if worker_count==1
+            run_worker(1)
+        else
+            @sync for worker_index in 1:worker_count
+                Threads.@spawn run_worker(worker_index)
+            end
+        end
+        _merge_adaptive_batch!(global_observables,global_jumps,
+                               local_observables,local_jumps)
+        sampled=global_observables.count
+        converged,worst_ratio,worst_half_width=
+            _adaptive_observable_convergence(global_observables,
+                controls.confidence,controls.atol,controls.rtol,ranges,
+                maximum_checks)
+        push!(history,(trajectories=sampled,
+            effective_independent_samples=sampled,worst_ratio,
+            worst_half_width,
+            converged=converged&&sampled>=controls.min,
+            method=:empirical_bernstein_simultaneous))
+        converged&&sampled>=controls.min&&break
+    end
+    jump_summary=global_jumps===nothing ? nothing :
+        _jump_statistics(global_jumps,ts)
+    metadata=(;effective_independent_samples=global_observables.count,
+        independence_unit=:separately_seeded_trajectory,
+        stopping_bound=:empirical_bernstein_simultaneous,
+        algorithm=options.algorithm,
+        integration_bias_controlled=false,
+        finite_time_bias_controlled=false)
+    _adaptive_summary(global_observables,ops,ts,controls,history,
+        :weak_pi,jump_summary,ranges,maximum_checks;metadata)
 end
 
 """

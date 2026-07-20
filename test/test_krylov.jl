@@ -41,12 +41,18 @@
                arn.vectors*Diagonal(arn.values))<2e-9
     @test pi_liouvillian_spectrum(model;method=:krylov,nev=4,
                                   krylovdim=length(b))≈dense[1:4] atol=2e-10
+    block_spectrum=pi_liouvillian_spectrum(model;method=:block_arnoldi,
+        nev=4,block_size=2,krylovdim=length(b),maxrestarts=0,
+        vectors=true,rng=MersenneTwister(0x626c6f63))
+    @test block_spectrum.values≈dense[1:4] atol=3e-10
+    @test maximum(block_spectrum.residuals)<3e-10
+    @test block_spectrum.algorithm===:block_arnoldi
 
     densegap=pi_liouvillian_gap(model)
     kgap=pi_liouvillian_gap(model;method=:krylov,nev=4,
                             krylovdim=length(b),return_info=true)
     @test kgap.gap≈densegap atol=2e-10
-    @test kgap.method===:krylov
+    @test kgap.method===:arnoldi
     @test kgap.stationary_multiplicity_certified
     @test_throws ArgumentError pi_liouvillian_gap(model;method=:krylov,symmetry=:auto)
 
@@ -251,6 +257,40 @@
         symmetry=sz,charge=-1,nev=2,krylovdim=4,
         initial_vector=charged_seed,rng=MersenneTwister(15),
         atol=1e-10,rtol=1e-8)≈0.2 atol=2e-8
+
+    # The gap wrapper accepts a simultaneous projector as well as a single
+    # conjugation charge.  It must use the joint projector's certified range
+    # dimension (there is no component-level `masks` field) and require a
+    # stationary root only when every requested charge is trivial.
+    joint_basis=PIBasis(2,2)
+    sx=ComplexF64[0 1;1 0]
+    joint_model=PIModel(joint_basis,(LocalJump(sx),LocalJump(sz)))
+    joint_trivial=joint_symmetry_projector(
+        joint_basis,(sx=>1,sz=>1))
+    joint_trivial_gap=pi_liouvillian_gap(joint_model;method=:harmonic,
+        symmetry=joint_trivial,nev=joint_trivial.range_dimension,
+        krylovdim=length(joint_basis),maxrestarts=0,return_info=true,
+        initial_vector=ones(ComplexF64,length(joint_basis)),
+        rng=MersenneTwister(151),atol=1e-10,rtol=1e-8)
+    @test joint_trivial_gap.sector_dimension==joint_trivial.range_dimension
+    @test joint_trivial_gap.symmetry_charge==(1+0im,1+0im)
+    @test joint_trivial_gap.stationary_multiplicity==1
+    @test joint_trivial_gap.gap≈4 atol=2e-8
+    @test joint_trivial_gap.gap_certified
+
+    joint_mixed=joint_symmetry_projector(
+        joint_basis,(sx=>1,sz=>-1))
+    joint_mixed_gap=pi_liouvillian_gap(joint_model;method=:harmonic,
+        symmetry=joint_mixed,nev=joint_mixed.range_dimension,
+        krylovdim=length(joint_basis),maxrestarts=0,return_info=true,
+        initial_vector=ones(ComplexF64,length(joint_basis)),
+        rng=MersenneTwister(152),atol=1e-10,rtol=1e-8)
+    @test joint_mixed_gap.sector_dimension==joint_mixed.range_dimension
+    @test joint_mixed_gap.symmetry_charge==(1+0im,-1+0im)
+    @test joint_mixed_gap.stationary_multiplicity==0
+    @test joint_mixed_gap.gap≈2 atol=2e-8
+    @test joint_mixed_gap.gap_certified
+
     @test_throws ArgumentError matrixfree_symmetry_projector(b,sz;charge=im)
 
     @test_throws ArgumentError krylov_steady_state(Lm;trace_vector=zeros(length(b)))
@@ -275,6 +315,7 @@
     aws32=ArnoldiWorkspace(L32,length(b))
     jdws32=JacobiDavidsonWorkspace(L32,10,8)
     @test eltype(kws32.V)===ComplexF32
+    @test eltype(kws32.cs)===Float32
     @test eltype(aws32.V)===ComplexF32
     @test eltype(jdws32.arnoldi.V)===ComplexF32
     aws64=ArnoldiWorkspace(ComplexF64,length(b),length(b))
@@ -352,6 +393,20 @@
         diagonal32;nev=2,krylovdim=4,target=NaN)
     @test_throws ArgumentError harmonic_arnoldi_spectrum(
         diagonal32;nev=2,krylovdim=4,target=Inf)
+
+    # GMRES rotations must follow the working real precision. In particular,
+    # generic high precision must not be narrowed through Float64 scratch.
+    big_workspace=KrylovWorkspace(Complex{BigFloat},3,3)
+    @test eltype(big_workspace.cs)===BigFloat
+    big_matrix=Complex{BigFloat}[2 1 0;0 3 1;0 0 4]
+    big_rhs=Complex{BigFloat}[1,2,3]
+    big_solution=zeros(Complex{BigFloat},3)
+    big_apply! = (destination,input)->mul!(destination,big_matrix,input)
+    big_result=PermutationalInvariantDynamics._gmres!(
+        big_solution,big_apply!,big_rhs,big_workspace;
+        atol=big"1e-50",rtol=big"1e-40",maxiter=12)
+    @test big_result.converged
+    @test norm(big_matrix*big_solution-big_rhs)<big"1e-35"
     @test_throws ArgumentError jacobi_davidson_spectrum(
         diagonal32;nev=1,target=complex(0,Inf),subspace_dim=4)
     @test_throws ArgumentError krylov_liouvillian_spectrum(
@@ -361,7 +416,16 @@
     # Reusable Arnoldi storage preserves results and removes the large basis
     # and pencil allocations on repeated calls.
     seed=randn(MersenneTwister(22),ComplexF64,length(b))
-    aws=PermutationalInvariantDynamics.ArnoldiWorkspace(Lm,length(b))
+    aws=PermutationalInvariantDynamics.ArnoldiWorkspace(
+        Lm,length(b);mode=:ordinary)
+    full_aws=PermutationalInvariantDynamics.ArnoldiWorkspace(Lm,length(b))
+    @test size(aws.LV)==(0,0)
+    @test size(aws.Z)==(0,0)
+    @test size(aws.A)==(0,0)
+    @test Base.summarysize(aws)<Base.summarysize(full_aws)
+    @test size(full_aws.LV)==(length(b),length(b))
+    @test_throws ArgumentError PermutationalInvariantDynamics.ArnoldiWorkspace(
+        Lm,length(b);mode=:invalid)
     awarm=krylov_liouvillian_spectrum(Lm;nev=4,krylovdim=length(b),
         initial_vector=seed,workspace=aws)
     araw=krylov_liouvillian_spectrum(Lm;nev=4,krylovdim=length(b),initial_vector=seed)
@@ -371,7 +435,24 @@
         krylovdim=length(b),initial_vector=seed,workspace=aws)
     alloc_arnoldi_raw=@allocated krylov_liouvillian_spectrum(Lm;nev=4,
         krylovdim=length(b),initial_vector=seed)
-    @test alloc_arnoldi<3*alloc_arnoldi_raw÷4
+    # The no-workspace route now constructs the lean ordinary workspace, so
+    # its setup difference is intentionally much smaller than when it also
+    # allocated harmonic/IRAM/JD arrays.
+    @test alloc_arnoldi<alloc_arnoldi_raw
+
+    @test_throws ArgumentError harmonic_arnoldi_spectrum(Lm;nev=2,
+        krylovdim=length(b),initial_vector=seed,workspace=aws,
+        require_convergence=false)
+    @test_throws ArgumentError implicitly_restarted_arnoldi_spectrum(Lm;
+        nev=2,krylovdim=length(b),initial_vector=seed,workspace=aws,
+        require_convergence=false)
+    jdlean=JacobiDavidsonWorkspace(
+        Lm,length(b),min(length(b),4))
+    jdlean.arnoldi=PermutationalInvariantDynamics.ArnoldiWorkspace(
+        Lm,length(b);mode=:ordinary)
+    @test_throws ArgumentError jacobi_davidson_spectrum(Lm;nev=1,
+        subspace_dim=length(b),correction_krylovdim=min(length(b),4),
+        workspace=jdlean,require_convergence=false)
 
     hws=PermutationalInvariantDynamics.ArnoldiWorkspace(Lm,length(b))
     hwarm=harmonic_arnoldi_spectrum(Lm;nev=3,krylovdim=length(b),

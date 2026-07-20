@@ -332,18 +332,17 @@ end
 """
     CompositeTrajectoryWorkspace(plan, rho)
 
-Preallocated stages, shared tensor-mode buffers, exact-trace scratch, and
-factor-fibre workspaces for one density-valued composite trajectory. Full
-composite buffers are shared sequentially across all jump channels, so their
-count does not grow with the number of channels. Reuse one workspace
-sequentially; concurrent paths require distinct workspaces.
+Preallocated three-register classical-RK4 scratch, shared tensor-mode buffers,
+exact-trace scratch, and factor-fibre workspaces for one density-valued
+composite trajectory. Full composite buffers are shared sequentially across
+all jump channels, so their count does not grow with the number of channels.
+Reuse one workspace sequentially; concurrent paths require distinct
+workspaces.
 """
 struct CompositeTrajectoryWorkspace{V,R,P,BW,CW}
     tmp::V
     k1::V
     k2::V
-    k3::V
-    k4::V
     current::V
     channel_gain::V
     tensor_buffer1::V
@@ -368,8 +367,8 @@ function CompositeTrajectoryWorkspace(plan::CompositeTrajectoryPlan,
     channel_work=map(channel->_composite_jump_workspace(
         channel,eltype(vector)),plan.channels)
     CompositeTrajectoryWorkspace(
-        similar(vector),similar(vector),similar(vector),similar(vector),
-        similar(vector),vector,similar(vector),similar(vector),similar(vector),
+        similar(vector),similar(vector),similar(vector),vector,
+        similar(vector),similar(vector),similar(vector),
         zeros(R,length(plan.channels)),zeros(R,length(plan.channels)),
         zeros(R,length(plan.channels)),zeros(R,length(plan.channels)),plan,
         CompositeSuperoperatorWorkspace(plan.background;T=eltype(vector)),
@@ -552,17 +551,20 @@ end
 function _composite_conditional_rk4_trial!(x,w,t,h,p,hazard_limit)
     _composite_conditional_action!(w.k1,x,w,t,p)
     _initialize_composite_hazards!(w)
+    copyto!(w.k2,w.k1)
     @. w.tmp=x+(h/2)*w.k1
-    _composite_conditional_action!(w.k2,w.tmp,w,t+h/2,p)
+    _composite_conditional_action!(w.k1,w.tmp,w,t+h/2,p)
     _accumulate_composite_hazards!(w,2)
-    @. w.tmp=x+(h/2)*w.k2
-    _composite_conditional_action!(w.k3,w.tmp,w,t+h/2,p)
+    @. w.k2=w.k2+2w.k1
+    @. w.tmp=x+(h/2)*w.k1
+    _composite_conditional_action!(w.k1,w.tmp,w,t+h/2,p)
     _accumulate_composite_hazards!(w,2)
-    @. w.tmp=x+h*w.k3
-    _composite_conditional_action!(w.k4,w.tmp,w,t+h,p)
+    @. w.k2=w.k2+2w.k1
+    @. w.tmp=x+h*w.k1
+    _composite_conditional_action!(w.k1,w.tmp,w,t+h,p)
     hazard=_finish_composite_hazards!(w,h)
     hazard<=hazard_limit||return false,hazard
-    @. x=x+(h/6)*(w.k1+2w.k2+2w.k3+w.k4)
+    @. x=x+(h/6)*(w.k2+w.k1)
     trace_value=_checked_composite_trace_value(
         _prepared_composite_trace(w.plan.trace_plan,x),
         eltype(w.intensities),"conditional composite state trace")
@@ -776,16 +778,21 @@ function quantum_trajectory(plan::CompositeTrajectoryPlan,
         rho0::CompositePIState{R},times;dt::Real,
         rng::AbstractRNG=Random.default_rng(),parameters=nothing,
         max_jump_probability=nothing,workspace=nothing,
-        algorithm::Symbol=:fixed,kwargs...) where R<:AbstractFloat
+        algorithm::Symbol=:fixed,
+        memory_budget=_DEFAULT_HIGHLEVEL_MEMORY_BUDGET,
+        kwargs...) where R<:AbstractFloat
     isempty(kwargs)||throw(ArgumentError(
         "adaptive trajectory controls are unavailable for composite fixed-step trajectories"))
     algorithm===:fixed||throw(ArgumentError(
         "composite trajectories currently support only algorithm=:fixed"))
+    ts,options=_prepare_trajectory_arguments(times,R;dt,parameters,
+        max_jump_probability,algorithm=:fixed)
+    _guard_trajectory_history("composite trajectory state history",
+        length(rho0.data),eltype(rho0.data),ts,1,memory_budget;
+        guidance="Request fewer saved times for a long path.")
     w=workspace===nothing ? CompositeTrajectoryWorkspace(plan,rho0) :
         _check_composite_trajectory_workspace(workspace,plan,rho0)
     _validate_composite_trajectory_initial_state(plan,rho0)
-    ts,options=_prepare_trajectory_arguments(times,R;dt,parameters,
-        max_jump_probability,algorithm=:fixed)
     _composite_quantum_trajectory_prepared(plan,rho0,ts,w,rng,options)
 end
 
@@ -847,6 +854,10 @@ With named Hermitian `CompositePIOperator` observables and
 `save_states=false`, return a [`TrajectoryEnsembleResult`](@ref) containing
 online means, variances, confidence intervals, and optional jump statistics
 without constructing sampled state histories.
+
+`memory_budget` preflights predictable saved state/time histories and retained
+observable-statistics arrays before they are allocated. Data-dependent jump
+records and reusable worker scratch are additional storage.
 """
 function quantum_trajectories(plan::CompositeTrajectoryPlan,
         rho0::CompositePIState{R},times,n::Integer;seed::Integer=0,
@@ -854,7 +865,9 @@ function quantum_trajectories(plan::CompositeTrajectoryPlan,
         parameters=nothing,max_jump_probability=nothing,
         algorithm::Symbol=:fixed,observables=nothing,
         save_states::Bool=true,jump_statistics::Bool=true,
-        confidence::Real=0.95,kwargs...) where R<:AbstractFloat
+        confidence::Real=0.95,
+        memory_budget=_DEFAULT_HIGHLEVEL_MEMORY_BUDGET,
+        kwargs...) where R<:AbstractFloat
     n>0||throw(ArgumentError("trajectory count must be positive"))
     isempty(kwargs)||throw(ArgumentError(
         "adaptive trajectory controls are unavailable for composite fixed-step trajectories"))
@@ -862,9 +875,17 @@ function quantum_trajectories(plan::CompositeTrajectoryPlan,
         "composite trajectories currently support only algorithm=:fixed"))
     !save_states&&observables===nothing&&throw(ArgumentError(
         "save_states=false requires at least one composite observable"))
-    _validate_composite_trajectory_initial_state(plan,rho0)
     ts,options=_prepare_trajectory_arguments(times,R;dt,parameters,
         max_jump_probability,algorithm=:fixed)
+    if save_states
+        _guard_trajectory_history("composite trajectory ensemble state history",
+            length(rho0.data),eltype(rho0.data),ts,n,memory_budget;
+            guidance=
+            "Set save_states=false to retain only online observable statistics.")
+    else
+        _performance_memory_limit(memory_budget)
+    end
+    _validate_composite_trajectory_initial_state(plan,rho0)
     batch,workers,rngs=_composite_ensemble_resources(
         plan,rho0,n,threaded,workspace)
     seeds=_composite_ensemble_seeds!(batch,rngs,Int(n),seed)
@@ -876,6 +897,13 @@ function quantum_trajectories(plan::CompositeTrajectoryPlan,
     return_legacy=observables===nothing&&save_states
     0<confidence<1||throw(ArgumentError("confidence must lie in (0,1)"))
     Rstats=_observable_scalar_type(rho0,ops)
+    statistics_estimate=_trajectory_observable_statistics_bytes(
+        length(ops),length(ts),worker_count,Rstats)
+    history_estimate=save_states ? _trajectory_history_bytes(
+        length(rho0.data),eltype(rho0.data),length(ts),n,eltype(ts)) : big(0)
+    _require_performance_budget("composite trajectory retained output",
+        history_estimate+statistics_estimate,memory_budget;guidance=
+        "Set save_states=false, request fewer times, or reduce the observable set.")
     observable_buffers=isempty(ops) ? nothing :
         [Matrix{Rstats}(undef,length(ops),length(ts))
          for _ in 1:worker_count]

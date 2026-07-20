@@ -93,6 +93,23 @@
     @test logarithmic_negativity(general,2;plan=reduction,
                                  workspace=reduction_work)≈
           logarithmic_negativity(general,2;plan=reduction) atol=3e-10
+    reduction_only=ReductionWorkspace(reduction,general;mode=:reduction)
+    negativity_only=ReductionWorkspace(reduction,general;mode=:negativity)
+    @test isempty(reduction_only.partial_transpose)
+    @test isempty(negativity_only.partial_trace)
+    @test isempty(negativity_only.reduced_blocks)
+    @test Base.summarysize(reduction_only)<Base.summarysize(reduction_work)
+    @test Base.summarysize(negativity_only)<Base.summarysize(reduction_work)
+    @test reduced_state(general,2;plan=reduction,
+                        workspace=reduction_only).data≈planned_state.data atol=3e-10
+    @test negativity(general,2;plan=reduction,
+                     workspace=negativity_only)≈
+          negativity(general,2;plan=reduction) atol=3e-10
+    @test_throws ArgumentError negativity(
+        general,2;plan=reduction,workspace=reduction_only)
+    @test_throws ArgumentError reduced_state(
+        general,2;plan=reduction,workspace=negativity_only)
+    @test_throws ArgumentError ReductionWorkspace(reduction,general;mode=:invalid)
     inplace_state=PIState(reduction.output_basis)
     returned=reduced_state!(inplace_state,general,reduction,reduction_work)
     @test returned===inplace_state
@@ -244,6 +261,42 @@ end
         b2100,ComplexF64[1 0;0 1];cache=cache2100)
 end
 
+@testset "shared one-box coefficients during mixed model compilation" begin
+    PID=PermutationalInvariantDynamics
+    basis=PIBasis(4,3)
+    x=ComplexF64[0 1 0;1 0 1;0 1 0]
+    pair=kron(x,x)
+    model=PIModel(basis,(
+        LocalHamiltonian(x;rate=0.17),
+        PBodyHamiltonian(pair,2;rate=0.09)))
+
+    context=PID.TermCompileContext(model)
+    @test context.coefficient_cache isa OneBoxCGCache
+    @test context.coefficient_cache.max_depth==2
+    @test context.onebody isa OneBodyGeometry
+    pgeometry=PID._pbody_geometry!(context,2)
+    @test pgeometry isa PBodyGeometry
+    @test context.coefficient_cache.coefficient_count>0
+
+    explicit=OneBoxCGCache(basis;max_depth=2)
+    cached_plan=LiouvillianPlan(model;coefficient_cache=explicit)
+    automatic_plan=LiouvillianPlan(model)
+    probe=ComplexF64.(1:length(basis))
+    cached_output=similar(probe);automatic_output=similar(probe)
+    apply!(cached_output,cached_plan,probe,0.0,nothing,
+           LiouvillianWorkspace(cached_plan))
+    apply!(automatic_output,automatic_plan,probe,0.0,nothing,
+           LiouvillianWorkspace(automatic_plan))
+    @test cached_output==automatic_output
+
+    shallow=OneBoxCGCache(basis;max_depth=1)
+    @test_throws ArgumentError LiouvillianPlan(
+        model;coefficient_cache=shallow)
+    other=PIBasis(4,3)
+    @test_throws ArgumentError LiouvillianPlan(
+        PIModel(other,(LocalHamiltonian(x),));coefficient_cache=explicit)
+end
+
 
 @testset "large-N collective geometry stability and setup scaling" begin
     PID=PermutationalInvariantDynamics
@@ -340,5 +393,15 @@ end
         @test candidate_estimate.contraction_terms_upper>=retained_terms
         @test candidate_estimate.retained_bytes>=retained_excluding_basis
         @test candidate_estimate.setup_bytes>=candidate_estimate.retained_bytes
+        if d==3
+            legacy_tables=Dict(key=>
+                [collect(table[row,column]) for row in axes(table,1),
+                                                   column in axes(table,2)]
+                for (key,table) in candidate_cache.contractions)
+            @test Base.summarysize(candidate_cache.contractions)<
+                  Base.summarysize(legacy_tables)
+            @test length(candidate_cache.connections.nonempty)<
+                  length(candidate_cache.connections)
+        end
     end
 end

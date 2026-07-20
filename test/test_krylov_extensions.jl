@@ -9,6 +9,119 @@
         A[i,i+1]=0.18+0.07im
     end
 
+    @testset "thick-restarted block Arnoldi" begin
+        clustered=Matrix(Diagonal(ComplexF64[-0.2,-0.2,-0.35,-0.5,-0.8,-1.1]))
+        clustered[1,3]=0.03im;clustered[2,4]=-0.02
+        block_work=BlockArnoldiWorkspace(ComplexF64,6,6,2)
+        block_result=block_arnoldi_spectrum(clustered;nev=4,
+            block_size=2,krylovdim=6,maxrestarts=0,workspace=block_work,
+            vectors=true,rng=MersenneTwister(0x626c6f63),
+            atol=1e-12,rtol=1e-10)
+        reference=sort(eigvals(clustered);by=real,rev=true)[1:4]
+        @test sort(block_result.values;by=real,rev=true)≈reference atol=2e-12
+        @test maximum(block_result.residuals)<2e-12
+        @test all(block_result.converged)
+        @test block_result.algorithm===:block_arnoldi
+        @test block_result.operator_batches<block_result.operator_applications
+        for column in axes(block_result.vectors,2)
+            v=view(block_result.vectors,:,column)
+            @test norm(clustered*v-block_result.values[column]*v)≈
+                block_result.residuals[column] atol=2e-14
+        end
+
+        # Exercise the actual thick-restart path: the full dimension is much
+        # larger than the bounded search space and convergence takes several
+        # retained-subspace cycles.
+        restarted_matrix=Matrix(Diagonal(
+            ComplexF64.(-collect(0.1:0.1:2.0))))
+        restarted_matrix[1,6]=0.02im;restarted_matrix[2,7]=-0.015
+        restarted=block_arnoldi_spectrum(restarted_matrix;nev=2,
+            block_size=2,krylovdim=8,retained_dimension=4,maxrestarts=20,
+            vectors=true,rng=MersenneTwister(123),atol=1e-10,rtol=1e-8)
+        restarted_reference=sort(eigvals(restarted_matrix);by=real,rev=true)[1:2]
+        @test 0<restarted.restarts<=20
+        @test restarted.final_subspace_dimension<restarted.dimension
+        @test restarted.values≈restarted_reference atol=8e-9
+        for column in axes(restarted.vectors,2)
+            v=view(restarted.vectors,:,column)
+            raw=norm(restarted_matrix*v-restarted.values[column]*v)
+            @test raw≈restarted.residuals[column] atol=2e-14
+        end
+
+        # A true matrix callback is used once per Arnoldi block. The vector
+        # callback remains the safe fallback but is not selected here.
+        vector_calls=Ref(0);batch_calls=Ref(0)
+        callback=MatrixFreeLiouvillian(6,
+            (destination,source,t,p)->begin
+                vector_calls[]+=1;mul!(destination,clustered,source)
+            end,ComplexF64,ones(ComplexF64,6);
+            batched_action! = (destination,source,t,p)->begin
+                batch_calls[]+=1;mul!(destination,clustered,source)
+            end)
+        callback_result=block_arnoldi_spectrum(callback;nev=3,
+            block_size=2,krylovdim=6,maxrestarts=0,
+            rng=MersenneTwister(0x62617463),atol=1e-12,rtol=1e-10)
+        @test batch_calls[]==callback_result.operator_batches
+        @test iszero(vector_calls[])
+        @test maximum(callback_result.residuals)<2e-12
+
+        # A prepared matrix-free compatibility operator grows its retained
+        # sector batch buffers lazily. The hard budget must include that first
+        # allocation and must stop charging it once the capacity is present.
+        pi_basis=PIBasis(4,2)
+        lowering=ComplexF64[0 1;0 0]
+        prepared=compile(PIModel(pi_basis,(LocalJump(lowering),));
+            backend=:matrixfree,memory_budget=Inf)
+        @test prepared.operator.workspace.batch.capacity==0
+        batch_growth=
+            PermutationalInvariantDynamics._performance_batched_action_growth_bytes(
+                prepared,2)
+        largest=maximum(length,pi_basis.patterns)
+        @test batch_growth==3BigInt(largest)^2*2sizeof(ComplexF64)
+        exact_budget=
+            PermutationalInvariantDynamics._selected_spectrum_workspace_bytes(
+                prepared,:block_arnoldi,4,2;block_size=2,maxrestarts=0)
+        @test_throws ArgumentError block_arnoldi_spectrum(prepared;nev=2,
+            block_size=2,krylovdim=4,maxrestarts=0,
+            require_convergence=false,memory_budget=exact_budget-1,
+            rng=MersenneTwister(0x62756467))
+        budgeted_prepared=block_arnoldi_spectrum(prepared;nev=2,
+            block_size=2,krylovdim=4,maxrestarts=0,
+            require_convergence=false,memory_budget=exact_budget,
+            rng=MersenneTwister(0x62756467))
+        @test length(budgeted_prepared.values)==2
+        @test prepared.operator.workspace.batch.capacity==2
+        @test iszero(
+            PermutationalInvariantDynamics._performance_batched_action_growth_bytes(
+                prepared,2))
+
+        seed=randn(MersenneTwister(0x73656564),ComplexF64,6)
+        dependent=hcat(seed,seed)
+        deflated=block_arnoldi_spectrum(clustered;nev=3,block_size=2,
+            krylovdim=6,maxrestarts=1,initial_subspace=dependent,
+            require_convergence=false,rng=MersenneTwister(0x6465666c))
+        @test length(deflated.values)==3
+        @test_throws ArgumentError block_arnoldi_spectrum(clustered;
+            nev=2,block_size=2,krylovdim=4,
+            initial_subspace=zeros(ComplexF64,6,2))
+        @test_throws ArgumentError block_arnoldi_spectrum(clustered;
+            nev=2,block_size=4,krylovdim=2,
+            initial_subspace=randn(MersenneTwister(7),ComplexF64,6,3))
+        @test_throws ArgumentError block_arnoldi_spectrum(clustered;
+            nev=2,block_size=2,krylovdim=4,memory_budget=0)
+        @test_throws ArgumentError block_arnoldi_spectrum(
+            (destination,source)->mul!(destination,clustered,source);
+            nev=2,block_size=2,krylovdim=4)
+
+        float32_result=block_arnoldi_spectrum(ComplexF32.(clustered);
+            nev=2,block_size=2,krylovdim=6,maxrestarts=0,
+            rng=MersenneTwister(0x663332),atol=1f-5,rtol=2f-5)
+        @test eltype(float32_result.values)===ComplexF32
+        narrow_work=BlockArnoldiWorkspace(ComplexF32,6,4,2)
+        @test_throws ArgumentError block_arnoldi_spectrum(clustered;
+            nev=2,block_size=2,krylovdim=4,workspace=narrow_work)
+    end
+
     @testset "block GMRES" begin
         B=randn(rng,ComplexF64,n,3)
         workspace=BlockGMRESWorkspace(ComplexF64,n,3,4)
@@ -255,4 +368,27 @@
         @test_throws ArgumentError krylov_expv!(narrow_destination,A32,b32,
             0.2f0,wide_workspace)
     end
+end
+
+@testset "block Arnoldi caps batch storage by the search dimension" begin
+    PID=PermutationalInvariantDynamics
+    work=BlockArnoldiWorkspace(ComplexF64,20,2,100)
+    @test size(work.V)==(20,2)
+    @test size(work.W)==(20,2)
+    @test size(work.residual_seeds)==(20,2)
+    @test size(work.coefficients)==(2,2)
+    @test size(work.factor)==(2,2)
+    estimated=PID._performance_block_arnoldi_workspace_bytes(
+        20,ComplexF64,2,100)
+    payload=sum(sizeof(array) for array in
+        (work.V,work.AV,work.X,work.AX,work.W,work.residual_seeds,
+         work.coefficients,work.projected,work.factor))
+    @test estimated==payload
+
+    one_cycle=block_arnoldi_spectrum(
+        Diagonal(ComplexF64[-1,-2,-3,-4,-5,-6]);
+        nev=2,krylovdim=2,block_size=2,maxrestarts=0,
+        require_convergence=false)
+    @test length(one_cycle.values)==2
+    @test one_cycle.restarts==0
 end

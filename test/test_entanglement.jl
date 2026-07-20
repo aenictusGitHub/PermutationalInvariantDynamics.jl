@@ -120,6 +120,32 @@ end
     @test cached_connections==uncached_connections
 end
 
+@testset "direct qubit negativity factorial reuse" begin
+    PID=PermutationalInvariantDynamics
+    basis=PIBasis(10,2)
+    singlet_partition=Partition((5,5))
+    singlet=basis_state(
+        basis,singlet_partition,
+        only(basis.patterns[basis.index[singlet_partition]]))
+
+    # Reusing factorials changes setup work only.  It remains bit-identical to
+    # the uncached coefficient oracle and to the prepared ReductionPlan route.
+    cached=PID._qubit_negativity(singlet,5)
+    uncached=PID._qubit_negativity(singlet,5,nothing)
+    @test cached===uncached
+    @test cached===negativity(singlet,5;plan=ReductionPlan(basis,5))
+
+    # Warm both paths before measuring.  A modest full-basis problem is large
+    # enough that repeated BigInt factorial construction is visible while the
+    # test remains quick on the Julia 1.10 CI target.
+    mixed=maximally_mixed_state(basis)
+    PID._qubit_negativity(mixed,5)
+    PID._qubit_negativity(mixed,5,nothing)
+    cached_bytes=@allocated PID._qubit_negativity(mixed,5)
+    uncached_bytes=@allocated PID._qubit_negativity(mixed,5,nothing)
+    @test cached_bytes<uncached_bytes
+end
+
 @testset "reduced density-matrix purity" begin
     for N in 2:6
         b=PIBasis(N,2);sym=Partition((N,0));gs=b.patterns[b.index[sym]]

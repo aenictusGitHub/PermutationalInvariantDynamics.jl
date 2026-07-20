@@ -3,8 +3,8 @@
 
 Immutable, shareable description of a parameter scan. `model_builder` is
 called as either `model_builder(parameter)` or
-`model_builder(parameter, index)` and must return a [`PIModel`](@ref) or an
-already [`CompiledPIModel`](@ref). Models are compiled point by point because
+`model_builder(parameter, index)` and must return a [`PIModel`](@ref), an
+already [`CompiledPIModel`](@ref), or a [`SpecializedPIModel`](@ref). Models are compiled point by point because
 their prepared kernels may depend on the scanned parameter; a returned
 compiled model is used directly. The default compilation backend is
 `:matrixfree`; override `compile_options` explicitly for a materialized scan.
@@ -14,6 +14,15 @@ calls [`liouvillian_spectrum`](@ref). The corresponding solver is selected by
 `algorithm`. `compile_options` and `solver_options` must be named tuples.
 Internally managed keywords such as `initial_state`, `workspace`, and
 `return_info` are rejected instead of being silently overridden.
+
+`memory_budget` defaults to 512 MiB and is enforced before each solver
+workspace is allocated. Its conservative scan peak includes active compiled
+operators, solver storage, one live output per worker, every output requested
+by `save_outputs=true`, and the final restart seed. The builder and arbitrary
+user diagnostics are not size-predictable and are reported as exclusions.
+Explicit sparse compilation or family specialization is rejected before
+materialization when its own bound exceeds the same budget. Pass
+`memory_budget=Inf` only as an explicit opt-out after checking available RAM.
 
 With `continuation=true`, a serial scan uses the preceding successful state or
 Ritz vector as the next initial condition and reuses a compatible Krylov
@@ -45,6 +54,8 @@ struct ParameterScanPlan{P,B,A,C,S,D}
     nev::Int
     diagnostic::D
     seed::UInt64
+    memory_budget::Int
+    budget_disabled::Bool
 end
 
 const _SCAN_TASKS=(:steady_state,:spectrum)
@@ -77,7 +88,8 @@ function ParameterScanPlan(parameters,model_builder;
         continuation::Bool=true,save_outputs::Bool=true,
         save_vectors::Bool=false,save_restart::Bool=true,
         spectrum_target::Symbol=:largest_real,nev::Integer=6,
-        diagnostic=nothing,seed::Integer=0)
+        diagnostic=nothing,seed::Integer=0,
+        memory_budget=_DEFAULT_HIGHLEVEL_MEMORY_BUDGET)
     task in _SCAN_TASKS||throw(ArgumentError(
         "task must be :steady_state or :spectrum"))
     spectrum_target in _SCAN_SPECTRUM_TARGETS||throw(ArgumentError(
@@ -94,25 +106,32 @@ function ParameterScanPlan(parameters,model_builder;
         "model_builder must accept (parameter) or (parameter, index)"))
     coptions=_scan_named_tuple(compile_options,"compile_options")
     soptions=_scan_named_tuple(solver_options,"solver_options")
+    haskey(coptions,:memory_budget)&&throw(ArgumentError(
+        "use ParameterScanPlan(...; memory_budget=...) instead of "*
+        "compile_options.memory_budget so compilation and solver storage "*
+        "share one resource limit"))
     if task===:steady_state
         scan_method,_=_algorithm_options(algorithm)
         scan_method in (:auto,:direct,:svd,:eigen,:shiftinvert,
                         :shift_invert,:inverse_iteration,:krylov,:gmres)||
             throw(ArgumentError("unsupported steady-state scan algorithm $scan_method"))
         _scan_forbid_options(soptions,
-            (:return_info,:initial_state,:workspace),"solver_options")
+            (:return_info,:initial_state,:workspace,:memory_budget),
+            "solver_options")
         if algorithm isa GMRESAlgorithm
             _scan_forbid_options(soptions,(:krylovdim,),"solver_options")
+        elseif algorithm isa RecycledGMRESAlgorithm
+            _scan_forbid_options(soptions,(:krylovdim,:recycle_dim),
+                                 "solver_options")
         end
     else
         scan_method,_=_spectrum_algorithm(
             algorithm,spectrum_target,max(nev_int,2),nev_int)
-        scan_method in (:dense,:krylov,:arnoldi,:harmonic,:iram,
-                        :implicit_qr,:jd,:jacobi_davidson)||
+        scan_method in (:dense,:arnoldi,:block_arnoldi,:harmonic,:iram,:jd)||
             throw(ArgumentError("unsupported spectral scan algorithm $scan_method"))
         _scan_forbid_options(soptions,
             (:return_info,:initial_vector,:workspace,:rng,:vectors,:nev,
-             :subspace_dim,:target),
+             :subspace_dim,:target,:memory_budget),
             "solver_options")
         if algorithm isa HarmonicArnoldiAlgorithm
             algorithm.nev==nev_int||throw(ArgumentError(
@@ -121,9 +140,11 @@ function ParameterScanPlan(parameters,model_builder;
                 (:krylovdim,:thickdim,:maxrestarts),"solver_options")
         end
     end
+    budget_limit=_performance_memory_limit(memory_budget)
     ParameterScanPlan(values,model_builder,task,algorithm,coptions,soptions,
         continuation,save_outputs,save_vectors,save_restart,spectrum_target,
-        nev_int,diagnostic,_scan_seed(seed))
+        nev_int,diagnostic,_scan_seed(seed),_memory_budget_bytes(memory_budget),
+        budget_limit===nothing)
 end
 
 """
@@ -148,14 +169,57 @@ function ParameterScanPlan(parameters,prototype,remaker;kwargs...)
     ParameterScanPlan(parameters,builder;kwargs...)
 end
 
+struct _FamilySpecializationRequest{F,R,O}
+    family::F
+    rates::R
+    options::O
+end
+
+"""
+    ParameterScanPlan(parameters, family::CompiledPIModelFamily;
+                      rate_builder=nothing,
+                      specialize_options=(backend=:matrixfree,), kwargs...)
+
+Construct a scan that reuses one family's prepared Schur geometry at every
+point. By default each parameter is passed directly to [`specialize`](@ref).
+`rate_builder` may instead accept `(parameter)` or `(parameter, index)` and
+return the scalar or ordered rate collection to bind. `specialize_options`
+controls the per-point backend and must be a named tuple.
+"""
+function ParameterScanPlan(parameters,family::CompiledPIModelFamily;
+        rate_builder=nothing,specialize_options=(backend=:matrixfree,),kwargs...)
+    options=_scan_named_tuple(specialize_options,"specialize_options")
+    haskey(options,:workspace)&&throw(ArgumentError(
+        "family scan workspaces are managed by ParameterScanWorkspace"))
+    haskey(options,:memory_budget)&&throw(ArgumentError(
+        "use ParameterScanPlan(...; memory_budget=...) instead of "*
+        "specialize_options.memory_budget so specialization and solver "*
+        "storage share one resource limit"))
+    builder=function(parameter,index)
+        rates = if rate_builder===nothing
+            parameter
+        elseif applicable(rate_builder,parameter,index)
+            rate_builder(parameter,index)
+        elseif applicable(rate_builder,parameter)
+            rate_builder(parameter)
+        else
+            throw(ArgumentError(
+                "rate_builder must accept (parameter) or (parameter, index)"))
+        end
+        _FamilySpecializationRequest(family,rates,options)
+    end
+    ParameterScanPlan(parameters,builder;kwargs...)
+end
+
 """
     ParameterScanWorkspace()
 
-Task-owned mutable continuation and Krylov scratch for
+Task-owned mutable continuation, Liouvillian, and Krylov scratch for
 [`parameter_scan`](@ref). Reuse it sequentially across compatible scans, but
-never from concurrent tasks. Krylov storage is discarded and rebuilt whenever
-the task, PI coordinate dimension, scalar type, or requested subspace size
-changes.
+never from concurrent tasks. Family scans reuse one `LiouvillianWorkspace`
+while the immutable family plan is unchanged. Krylov storage is discarded and
+rebuilt whenever the task, PI coordinate dimension, scalar type, or requested
+subspace size changes.
 """
 mutable struct ParameterScanWorkspace
     continuation_seed::Any
@@ -163,8 +227,11 @@ mutable struct ParameterScanWorkspace
     continuation_eltype::Any
     solver_workspace::Any
     solver_signature::Any
+    liouvillian_workspace::Any
+    liouvillian_plan::Any
 end
-ParameterScanWorkspace()=ParameterScanWorkspace(nothing,nothing,nothing,nothing,nothing)
+ParameterScanWorkspace()=ParameterScanWorkspace(
+    nothing,nothing,nothing,nothing,nothing,nothing,nothing)
 
 """Clear all continuation and solver scratch retained by `workspace`."""
 function clear_parameter_scan_workspace!(workspace::ParameterScanWorkspace)
@@ -173,6 +240,8 @@ function clear_parameter_scan_workspace!(workspace::ParameterScanWorkspace)
     workspace.continuation_eltype=nothing
     workspace.solver_workspace=nothing
     workspace.solver_signature=nothing
+    workspace.liouvillian_workspace=nothing
+    workspace.liouvillian_plan=nothing
     workspace
 end
 
@@ -229,7 +298,8 @@ Base.getindex(result::ParameterScanResult,index::Integer)=result.points[index]
 Base.iterate(result::ParameterScanResult,args...)=iterate(result.points,args...)
 
 function Base.show(io::IO,plan::ParameterScanPlan)
-    print(io,"ParameterScanPlan($(length(plan.parameters)) points, task=$(plan.task), continuation=$(plan.continuation))")
+    budget=plan.budget_disabled ? "disabled" : "$(plan.memory_budget) bytes"
+    print(io,"ParameterScanPlan($(length(plan.parameters)) points, task=$(plan.task), continuation=$(plan.continuation), memory_budget=$budget)")
 end
 function Base.show(io::IO,result::ParameterScanResult)
     successes=count(point->point.status===:success,result.points)
@@ -248,19 +318,420 @@ end
     end
 end
 
-function _scan_compile(plan,parameter,index)
-    source=_scan_model(plan,parameter,index)
-    if source isa CompiledPIModel
+function _scan_family_workspace!(workspace::ParameterScanWorkspace,family)
+    if workspace.liouvillian_plan===family.plan&&
+       workspace.liouvillian_workspace isa LiouvillianWorkspace
+        return workspace.liouvillian_workspace,true
+    end
+    workspace.liouvillian_workspace=LiouvillianWorkspace(family.plan)
+    workspace.liouvillian_plan=family.plan
+    workspace.liouvillian_workspace,false
+end
+
+function _scan_model_scalar_type(model::PIModel)
+    T=Complex{_model_geometry_type(model)}
+    for term in model.terms
+        T=_scale_promoted_type(T,term_rate(term))
+    end
+    _complex_float_type(T)
+end
+
+function _scan_source_shape(source)
+    source isa _FamilySpecializationRequest&&return (
+        length(source.family.plan.basis),source.family.plan.Ttype)
+    source isa PIModel&&return (
+        length(source.basis),_scan_model_scalar_type(source))
+    source isa Union{CompiledPIModel,SpecializedPIModel}&&return (
+        size(source,1),eltype(source))
+    throw(ArgumentError("unsupported scan source $(typeof(source))"))
+end
+
+function _scan_validate_source(source,index)
+    source isa Union{_FamilySpecializationRequest,PIModel,
+                     CompiledPIModel,SpecializedPIModel}&&return source
+    throw(ArgumentError(
+        "model_builder returned $(typeof(source)) at index $index; "*
+        "expected PIModel, CompiledPIModel, or SpecializedPIModel"))
+end
+
+function _scan_compile(plan,parameter,index,workspace,active_workers::Int=1)
+    # Validate the builder contract before resource inspection so an invalid
+    # return is reported as such rather than as an internal shape-estimation
+    # failure.
+    source=_scan_validate_source(_scan_model(plan,parameter,index),index)
+    operator_budget=_scan_operator_budget(plan,source,active_workers)
+    if source isa _FamilySpecializationRequest
+        backend=get(source.options,:backend,:matrixfree)
+        matrixfree = backend===:matrixfree||
+            (backend===:auto&&!_performance_budget_fits(
+                source.family.estimates.sparse_specialization_peak_upper_bound,
+                operator_budget))
+        if matrixfree
+            _require_performance_budget(
+                "matrix-free family scan specialization",
+                source.family.estimates.matrixfree_specialization_upper_bound,
+                operator_budget;guidance=
+                "Reduce scan output retention, Krylov size, or worker count.")
+            liouvillian_workspace,reused=
+                _scan_family_workspace!(workspace,source.family)
+            specialized=specialize(source.family,source.rates;
+                source.options...,workspace=liouvillian_workspace,
+                memory_budget=operator_budget)
+            estimates=merge(specialized.estimates,
+                (;scan_liouvillian_workspace_reused=reused))
+            return SpecializedPIModel(specialized.family,specialized.model,
+                specialized.plan,specialized.operator,specialized.rates,
+                specialized.backend,estimates)
+        end
+        specialized=specialize(source.family,source.rates;source.options...,
+            memory_budget=operator_budget)
+        estimates=merge(specialized.estimates,
+            (;scan_liouvillian_workspace_reused=false))
+        return SpecializedPIModel(specialized.family,specialized.model,
+            specialized.plan,specialized.operator,specialized.rates,
+            specialized.backend,estimates)
+    elseif source isa Union{CompiledPIModel,SpecializedPIModel}
         source
     elseif source isa PIModel
-        compile(source;plan.compile_options...)
-    else
-        throw(ArgumentError(
-            "model_builder returned $(typeof(source)) at index $index; expected PIModel or CompiledPIModel"))
+        compile(source;plan.compile_options...,
+            memory_budget=operator_budget)
     end
 end
 
+@inline _scan_algorithm_is_auto(algorithm)=
+    algorithm===:auto||algorithm isa AutoAlgorithm
+
+function _scan_solver_upper_bytes(plan,n::Int,source_type,
+                                  method_override=nothing)
+    T=_complex_float_type(source_type)
+    if plan.task===:steady_state
+        method=method_override===nothing ?
+            _scan_steady_method(plan.algorithm) : method_override
+        if method===:krylov
+            _,algorithm_options=_algorithm_options(plan.algorithm)
+            options=merge(algorithm_options,plan.solver_options)
+            T=_promote_krylov_scalar_type(
+                T,get(options,:operator_scale,nothing))
+            T=_promote_krylov_scalar_type(
+                T,get(options,:preconditioner_regularization,0))
+            preconditioner=get(options,:preconditioner,nothing)
+            preconditioner!==nothing&&!(preconditioner isa Symbol)&&
+                (T=_promote_krylov_operator_type(T,preconditioner))
+            krylovdim=plan.algorithm isa Union{GMRESAlgorithm,
+                                                RecycledGMRESAlgorithm} ?
+                plan.algorithm.krylovdim : Int(get(options,:krylovdim,30))
+            recycle_dim=Int(get(options,:recycle_dim,0))
+            bytes=_performance_gmres_bytes(n,T,krylovdim;
+                recycle_dim=max(recycle_dim,0))
+            preconditioner===nothing||
+                (bytes+=_performance_array_bytes(n,T,1;linear_arrays=2))
+            return bytes,method
+        end
+        # Direct, SVD, eigen, shift-invert, and auto may retain a bordered
+        # matrix plus factorization/eigensolver scratch. Match the common
+        # dense high-level guard rather than probing or materializing L.
+        arrays=method in (:svd,:eigen,:auto) ? 8 : 6
+        denseT=promote_type(T,ComplexF64)
+        return _performance_array_bytes(n,denseT,arrays;linear_arrays=8),method
+    end
+    method = method_override===nothing ?
+        first(_scan_spectrum_method(plan,n)) :
+        _canonical_spectrum_algorithm(method_override)
+    if method===:dense
+        denseT=promote_type(T,ComplexF64)
+        # liouvillian_spectrum performs its public high-level preflight before
+        # the lower-level 5/7-array eigensolver guard. Match the stronger
+        # eight-copy bound so a scan-approved point cannot be rejected by the
+        # nested command after aggregate accounting has succeeded.
+        return _performance_array_bytes(
+            n,denseT,8;linear_arrays=6),method
+    elseif method===:block_arnoldi
+        dim=Int(get(plan.solver_options,:krylovdim,
+            max(30,3plan.nev+2Int(get(plan.solver_options,:block_size,
+                                      min(plan.nev,4))))))
+        block_size=Int(get(plan.solver_options,:block_size,min(plan.nev,4)))
+        return _performance_block_arnoldi_bytes(
+            n,T,dim,block_size)+_performance_block_arnoldi_output_bytes(
+                n,T,plan.nev,get(plan.solver_options,:maxrestarts,20);
+                vectors=true),method
+    elseif method===:jd
+        T=_promote_krylov_scalar_type(
+            T,get(plan.solver_options,:operator_scale,nothing))
+        preconditioner=get(plan.solver_options,:preconditioner,nothing)
+        preconditioner!==nothing&&
+            (T=_promote_krylov_operator_type(T,preconditioner))
+        dim=Int(get(plan.solver_options,:krylovdim,
+            get(plan.solver_options,:subspace_dim,max(30,3plan.nev+6))))
+        correction_dim=Int(get(plan.solver_options,:correction_krylovdim,
+            min(n,20)))
+        # JacobiDavidsonWorkspace owns a full Arnoldi space, an independent
+        # correction GMRES space, and six additional full-coordinate vectors.
+        bytes=_performance_arnoldi_bytes(n,T,dim;mode=:full)+
+              _performance_gmres_bytes(n,T,correction_dim)+
+              _performance_entries_bytes(6BigInt(n),T)
+        return bytes,method
+    end
+    default_dim = plan.algorithm isa HarmonicArnoldiAlgorithm ?
+        plan.algorithm.krylovdim : method in (:iram,:implicit_qr,:harmonic) ?
+        max(30,3plan.nev+6) : max(20,2plan.nev+4)
+    dim=Int(get(plan.solver_options,:krylovdim,default_dim))
+    mode=method===:arnoldi ? :ordinary : :full
+    bytes=_performance_arnoldi_bytes(n,T,dim;mode)
+    if mode===:ordinary
+        nb=BigInt(n);mb=min(nb,BigInt(dim))
+        nested=_performance_entries_bytes(2nb*mb+nb+3mb*mb,T)
+        bytes=max(bytes,nested)
+    end
+    bytes,method
+end
+
+function _scan_output_scalar_type(plan,n_int::Int,source_type,
+                                  method_override=nothing)
+    T=_complex_float_type(source_type)
+    if plan.task===:steady_state
+        method=method_override===nothing ?
+            _scan_steady_method(plan.algorithm) : method_override
+        if method!==:krylov
+            # The bordered, SVD, eigen, shift-invert, and feasible :auto
+            # routes all form the common ComplexF64-promoted dense problem.
+            return promote_type(T,ComplexF64)
+        end
+        _,algorithm_options=_algorithm_options(plan.algorithm)
+        options=merge(algorithm_options,plan.solver_options)
+        T=_promote_krylov_scalar_type(T,get(options,:operator_scale,nothing))
+        T=_promote_krylov_scalar_type(T,
+            get(options,:preconditioner_regularization,0))
+        preconditioner=get(options,:preconditioner,nothing)
+        preconditioner!==nothing&&!(preconditioner isa Symbol)&&
+            (T=_promote_krylov_operator_type(T,preconditioner))
+        return T
+    end
+    method = method_override===nothing ?
+        first(_scan_spectrum_method(plan,n_int)) :
+        _canonical_spectrum_algorithm(method_override)
+    method===:dense&&return promote_type(T,ComplexF64)
+    if method===:jd
+        T=_promote_krylov_scalar_type(T,
+            get(plan.solver_options,:operator_scale,nothing))
+        preconditioner=get(plan.solver_options,:preconditioner,nothing)
+        preconditioner!==nothing&&
+            (T=_promote_krylov_operator_type(T,preconditioner))
+    end
+    T
+end
+
+function _scan_output_upper_bytes(plan,n_int::Int,source_type,
+                                  method_override=nothing)
+    n=BigInt(n_int);nev=BigInt(plan.nev)
+    scalar_bytes=_scalar_retained_bytes(
+        _scan_output_scalar_type(plan,n_int,source_type,method_override))
+    if plan.task===:steady_state
+        per_output=n*scalar_bytes
+        restart=plan.continuation&&plan.save_restart ? per_output : BigInt(0)
+        # The solver result and defensive PIState construction coexist. A
+        # continuation point additionally owns its detached restart copy.
+        live=plan.continuation ? 3per_output : 2per_output
+        return per_output,restart,live
+    end
+    per_output=nev*scalar_bytes+
+        (plan.save_vectors ? n*nev*scalar_bytes : BigInt(0))
+    method = method_override===nothing ?
+        first(_scan_spectrum_method(plan,n_int)) :
+        _canonical_spectrum_algorithm(method_override)
+    iterative=method in (:arnoldi,:block_arnoldi,:harmonic,:iram,:jd)
+    restart = if !iterative||!plan.continuation||!plan.save_restart
+        BigInt(0)
+    elseif method in (:harmonic,:block_arnoldi)
+        columns=method===:block_arnoldi ?
+            min(nev,BigInt(get(plan.solver_options,:block_size,
+                               min(plan.nev,4)))) : nev
+        n*columns*scalar_bytes
+    else
+        n*scalar_bytes
+    end
+    values=nev*scalar_bytes
+    live = if !iterative
+        per_output
+    elseif method in (:harmonic,:block_arnoldi)
+        values+3n*nev*scalar_bytes
+    else
+        values+n*(nev+2)*scalar_bytes
+    end
+    per_output,restart,live
+end
+
+function _scan_resource_components(plan,n::Int,T,workers::Int,method,
+                                   operator_retained_bytes::BigInt,
+                                   operator_action_bytes::Integer=big(0))
+    operator_action_bytes>=0||throw(ArgumentError(
+        "operator action estimate must be nonnegative"))
+    method=plan.task===:steady_state ? _stationary_solver_method(method) :
+        _canonical_spectrum_algorithm(method)
+    solver_bytes,_=_scan_solver_upper_bytes(plan,n,T,method)
+    per_output,restart_bytes,live_output=
+        _scan_output_upper_bytes(plan,n,T,method)
+    retained=plan.save_outputs ? BigInt(length(plan.parameters))*per_output :
+        BigInt(0)
+    fixed=operator_retained_bytes+BigInt(workers)*live_output+
+          retained+restart_bytes
+    action_bytes=BigInt(operator_action_bytes)
+    worker_peak=solver_bytes+action_bytes
+    known_peak=fixed+BigInt(workers)*worker_peak
+    (;method,solver_bytes,operator_action_bytes=action_bytes,
+      worker_solver_peak_bytes=worker_peak,
+      per_output,restart_bytes,live_output,
+      retained_output_bytes=retained,fixed_bytes=fixed,known_peak)
+end
+
+function _scan_effective_method(plan,n::Int,T,workers::Int,
+                                operator_retained_bytes::BigInt,
+                                operator_action_bytes::Integer=big(0))
+    if !_scan_algorithm_is_auto(plan.algorithm)
+        return plan.task===:steady_state ? _scan_steady_method(plan.algorithm) :
+            first(_scan_spectrum_method(plan,n))
+    end
+    dense_method,iterative_method = if plan.task===:steady_state
+        n<=512 ? (:direct,:krylov) : (:krylov,:krylov)
+    elseif plan.spectrum_target===:near_zero
+        (:harmonic,:harmonic)
+    else
+        n<=256 ? (:dense,:arnoldi) : (:arnoldi,:arnoldi)
+    end
+    dense_method===iterative_method&&return dense_method
+    plan.budget_disabled&&return dense_method
+    dense=_scan_resource_components(plan,n,T,workers,dense_method,
+                                    operator_retained_bytes,
+                                    operator_action_bytes)
+    dense.known_peak<=BigInt(plan.memory_budget) ? dense_method :
+                                                  iterative_method
+end
+
+function _scan_operator_action_upper_bytes(plan,compiled,method,T)
+    bytes=_performance_source_action_bytes(compiled,T)
+    if plan.task===:spectrum&&
+            _canonical_spectrum_algorithm(method)===:block_arnoldi
+        n=size(compiled,1)
+        block_size=Int(get(plan.solver_options,:block_size,min(plan.nev,4)))
+        krylovdim=Int(get(plan.solver_options,:krylovdim,
+            max(30,3plan.nev+2block_size)))
+        active_block=min(n,krylovdim,block_size)
+        bytes+=_performance_batched_action_growth_bytes(
+            compiled,active_block)
+    end
+    bytes
+end
+
+function _scan_operator_budget(plan,source,workers::Int)
+    plan.budget_disabled&&return Inf
+    n,T=_scan_source_shape(source)
+    # A family is already retained and shared by local worker tasks; its
+    # specialization bound deliberately excludes this common immutable plan.
+    shared=source isa _FamilySpecializationRequest ?
+        BigInt(Base.summarysize(source.family)) : BigInt(0)
+    selection_operator = if source isa _FamilySpecializationRequest
+        requested=get(source.options,:backend,:matrixfree)
+        per_worker = requested===:sparse ?
+            BigInt(source.family.estimates.sparse_operator_upper_bound) :
+            source.family.estimates.matrixfree_specialization_upper_bound
+        shared+BigInt(workers)*per_worker
+    elseif source isa PIModel&&get(plan.compile_options,:backend,:auto)===:sparse
+        scalar_bytes=_scalar_retained_bytes(T)
+        sparse_operator=BigInt(n)^2*(scalar_bytes+2sizeof(Int))+
+                        (BigInt(n)+1)*sizeof(Int)
+        BigInt(workers)*sparse_operator
+    elseif source isa Union{CompiledPIModel,SpecializedPIModel}
+        BigInt(workers)*BigInt(Base.summarysize(source))
+    elseif source isa PIModel
+        # A raw model has not yet exposed the size of its compiled operator.
+        # Reserving zero here can make :auto select a dense solver under a
+        # budget which leaves no room even for model preparation.  The
+        # assembly-free preparation bound is conservative for this decision
+        # and is also the minimum allowance passed to `compile` below.
+        BigInt(workers)*_model_preparation_bytes(source)
+    else
+        shared
+    end
+    base_action=source isa Union{CompiledPIModel,SpecializedPIModel} ?
+        _performance_source_action_bytes(source,T) : big(0)
+    method=_scan_effective_method(
+        plan,n,T,workers,selection_operator,base_action)
+    action=source isa Union{CompiledPIModel,SpecializedPIModel} ?
+        _scan_operator_action_upper_bytes(plan,source,method,T) : base_action
+    components=_scan_resource_components(
+        plan,n,T,workers,method,shared,action)
+    available=max(BigInt(plan.memory_budget)-components.known_peak,BigInt(0))
+    Int(min(div(available,workers),BigInt(typemax(Int))))
+end
+
+function _scan_resource_report(plan,compiled,workers::Int)
+    workers>0||throw(ArgumentError("scan worker count must be positive"))
+    full_operator_bytes=BigInt(Base.summarysize(compiled))
+    shared_operator_bytes = compiled isa SpecializedPIModel ?
+        BigInt(Base.summarysize(compiled.family)) : BigInt(0)
+    operator_per_worker_bytes=max(
+        full_operator_bytes-shared_operator_bytes,BigInt(0))
+    operator_retained_bytes=shared_operator_bytes+
+        BigInt(workers)*operator_per_worker_bytes
+    n=size(compiled,1);T=eltype(compiled)
+    base_action=_performance_source_action_bytes(compiled,T)
+    method=_scan_effective_method(
+        plan,n,T,workers,operator_retained_bytes,base_action)
+    operator_action_bytes=_scan_operator_action_upper_bytes(
+        plan,compiled,method,T)
+    components=_scan_resource_components(
+        plan,n,T,workers,method,operator_retained_bytes,
+        operator_action_bytes)
+    solver_bytes=components.solver_bytes
+    restart_bytes=components.restart_bytes
+    live_output_bytes=components.live_output
+    retained_output_bytes=components.retained_output_bytes
+    fixed_bytes=components.fixed_bytes
+    known_peak=components.known_peak
+    unknown=plan.diagnostic===nothing ? (:builder_allocations,) :
+        (:builder_allocations,:diagnostic_payloads)
+    if plan.budget_disabled
+        status=:disabled;known_fits=true;safe=missing;solver_budget=Inf
+    else
+        budget=BigInt(plan.memory_budget)
+        known_fits=known_peak<=budget
+        status=known_fits ? (isempty(unknown) ? :fits : :unknown) : :exceeds
+        safe=known_fits ? missing : false
+        available=max(budget-fixed_bytes,BigInt(0))
+        solver_budget=Int(min(div(available,workers),BigInt(typemax(Int))))
+    end
+    (;memory_budget=plan.budget_disabled ? Inf : plan.memory_budget,
+      budget_status=status,safe_to_run=safe,known_budget_fits=known_fits,
+      known_peak_bytes=known_peak,
+      active_workers=workers,method,
+      operator_retained_bytes,
+      shared_operator_bytes,
+      operator_per_worker_bytes,
+      solver_workspace_upper_bytes=solver_bytes,
+      operator_action_per_worker_upper_bytes=operator_action_bytes,
+      operator_action_upper_bytes=BigInt(workers)*operator_action_bytes,
+      worker_solver_peak_upper_bytes=components.worker_solver_peak_bytes,
+      live_output_bytes=BigInt(workers)*live_output_bytes,
+      retained_output_upper_bytes=retained_output_bytes,
+      restart_upper_bytes=restart_bytes,solver_memory_budget=solver_budget,
+      unknown_components=unknown,
+      assumptions=(full_point_count_checked_at_each_observed_dimension=true,
+                   compiled_size_uses_summarysize=true,
+                   family_geometry_counted_once=true,
+                   operator_action_counted_per_worker=true))
+end
+
+function _enforce_scan_resource_report(report,index)
+    report.known_budget_fits&&return report
+    throw(ArgumentError(
+        "parameter scan point $index has a conservative known peak of "*
+        "$(report.known_peak_bytes) bytes, exceeding memory_budget="*
+        "$(report.memory_budget); use save_outputs=false, reduce the "*
+        "Krylov dimension or worker count, select a matrix-free backend, "*
+        "increase memory_budget, or pass memory_budget=Inf as an explicit opt-out"))
+end
+
 @inline _scan_basis(compiled::CompiledPIModel)=compiled.plan.basis
+@inline _scan_basis(compiled::SpecializedPIModel)=compiled.plan.basis
 @inline _scan_basis_signature(basis::PIBasis)=
     (N=basis.N,d=basis.d,sectors=Tuple(basis.sectors),dimension=length(basis))
 
@@ -286,8 +757,7 @@ function _scan_steady_method(algorithm)
     method
 end
 
-function _scan_steady_workspace!(workspace,plan,compiled)
-    method=_scan_steady_method(plan.algorithm)
+function _scan_steady_workspace!(workspace,plan,compiled,method)
     method===:krylov||return (nothing,false)
     n=size(compiled,1);T=_complex_float_type(eltype(compiled))
     _,algorithm_options=_algorithm_options(plan.algorithm)
@@ -299,8 +769,26 @@ function _scan_steady_workspace!(workspace,plan,compiled)
     if preconditioner!==nothing&&!(preconditioner isa Symbol)
         T=_promote_krylov_operator_type(T,preconditioner)
     end
-    krylovdim=plan.algorithm isa GMRESAlgorithm ? plan.algorithm.krylovdim :
-              Int(get(plan.solver_options,:krylovdim,30))
+    krylovdim = if plan.algorithm isa Union{GMRESAlgorithm,
+                                            RecycledGMRESAlgorithm}
+        plan.algorithm.krylovdim
+    else
+        Int(get(plan.solver_options,:krylovdim,30))
+    end
+    recycle_dim=Int(get(options,:recycle_dim,0))
+    recycle_dim>=0||throw(ArgumentError("recycle_dim must be nonnegative"))
+    if recycle_dim>0
+        signature=(:steady_state_recycled,n,T,min(n,krylovdim),
+                   min(max(n-1,0),recycle_dim))
+        if workspace.solver_signature==signature&&
+           workspace.solver_workspace isa RecycledGMRESWorkspace
+            return (workspace.solver_workspace,true)
+        end
+        workspace.solver_workspace=RecycledGMRESWorkspace(
+            T,n,krylovdim,recycle_dim)
+        workspace.solver_signature=signature
+        return (workspace.solver_workspace,false)
+    end
     signature=(:steady_state,n,T,min(n,krylovdim))
     if workspace.solver_signature==signature&&
        workspace.solver_workspace isa KrylovWorkspace
@@ -315,12 +803,26 @@ function _scan_spectrum_method(plan,n)
     _spectrum_algorithm(plan.algorithm,plan.spectrum_target,n,plan.nev)
 end
 
-function _scan_spectrum_workspace!(workspace,plan,compiled)
-    n=size(compiled,1);method,_=_scan_spectrum_method(plan,n)
-    method in (:krylov,:arnoldi,:harmonic,:iram,:implicit_qr,
-               :jd,:jacobi_davidson)||return (nothing,false,method)
+function _scan_spectrum_workspace!(workspace,plan,compiled,method)
+    n=size(compiled,1)
+    method in (:arnoldi,:block_arnoldi,:harmonic,:iram,:jd)||
+        return (nothing,false,method)
     T=_complex_float_type(eltype(compiled))
-    if method in (:jd,:jacobi_davidson)
+    if method===:block_arnoldi
+        block_size=Int(get(plan.solver_options,:block_size,min(plan.nev,4)))
+        krylovdim=Int(get(plan.solver_options,:krylovdim,
+            max(30,3plan.nev+2block_size)))
+        signature=(:spectrum_block_arnoldi,n,T,min(n,krylovdim),
+                   min(n,krylovdim,block_size))
+        if workspace.solver_signature==signature&&
+           workspace.solver_workspace isa BlockArnoldiWorkspace
+            return (workspace.solver_workspace,true,method)
+        end
+        workspace.solver_workspace=BlockArnoldiWorkspace(
+            T,n,krylovdim,block_size)
+        workspace.solver_signature=signature
+        return (workspace.solver_workspace,false,method)
+    elseif method===:jd
         T=_promote_krylov_scalar_type(T,
             get(plan.solver_options,:operator_scale,nothing))
         preconditioner=get(plan.solver_options,:preconditioner,nothing)
@@ -342,18 +844,20 @@ function _scan_spectrum_workspace!(workspace,plan,compiled)
     end
     default_dim = if plan.algorithm isa HarmonicArnoldiAlgorithm
         plan.algorithm.krylovdim
-    elseif method in (:iram,:implicit_qr,:harmonic)
+    elseif method in (:iram,:harmonic)
         max(30,3plan.nev+6)
     else
         max(20,2plan.nev+4)
     end
     krylovdim=Int(get(plan.solver_options,:krylovdim,default_dim))
-    signature=(:spectrum_arnoldi,n,T,min(n,krylovdim))
+    workspace_mode=method===:arnoldi ? :ordinary : :full
+    signature=(:spectrum_arnoldi,workspace_mode,n,T,min(n,krylovdim))
     if workspace.solver_signature==signature&&
        workspace.solver_workspace isa ArnoldiWorkspace
         return (workspace.solver_workspace,true,method)
     end
-    workspace.solver_workspace=ArnoldiWorkspace(T,n,krylovdim)
+    workspace.solver_workspace=ArnoldiWorkspace(
+        T,n,krylovdim;mode=workspace_mode)
     workspace.solver_signature=signature
     workspace.solver_workspace,false,method
 end
@@ -361,10 +865,11 @@ end
 @inline _scan_continuation_signature(plan,compiled)=
     (task=plan.task,basis=_scan_basis_signature(_scan_basis(compiled)))
 
-function _scan_compatible_seed(workspace,plan,compiled)
+function _scan_compatible_seed(workspace,plan,compiled,expected_type=
+                               _complex_float_type(eltype(compiled)))
     plan.continuation||return nothing
     signature=_scan_continuation_signature(plan,compiled)
-    T=_complex_float_type(eltype(compiled))
+    T=_complex_float_type(expected_type)
     workspace.continuation_signature==signature&&
         workspace.continuation_eltype===T ? workspace.continuation_seed : nothing
 end
@@ -372,7 +877,8 @@ end
 function _scan_store_seed!(workspace,plan,compiled,seed)
     workspace.continuation_seed=seed
     workspace.continuation_signature=_scan_continuation_signature(plan,compiled)
-    workspace.continuation_eltype=_complex_float_type(eltype(compiled))
+    workspace.continuation_eltype = seed isa PIState ? eltype(seed.data) :
+        eltype(seed)
     workspace
 end
 
@@ -380,6 +886,8 @@ function _scan_clear_seed!(workspace)
     workspace.continuation_seed=nothing
     workspace.continuation_signature=nothing
     workspace.continuation_eltype=nothing
+    workspace.solver_workspace isa RecycledGMRESWorkspace&&
+        (workspace.solver_workspace.nrecycle=0)
     workspace
 end
 
@@ -390,6 +898,7 @@ end
 _copy_scan_seed(::Nothing)=nothing
 _copy_scan_seed(seed::PIState)=copy(seed)
 _copy_scan_seed(seed::AbstractVector)=copy(seed)
+_copy_scan_seed(seed::AbstractMatrix)=copy(seed)
 function _copy_scan_seed(seed)
     throw(ArgumentError(
         "unsupported parameter-scan restart seed type $(typeof(seed))"))
@@ -423,11 +932,14 @@ function _scan_converged(info)
     value isa Bool ? value : all(value)
 end
 
-function _scan_point_steady!(plan,compiled,parameter,index,workspace)
+function _scan_point_steady!(plan,compiled,parameter,index,workspace,resources)
     _,algorithm_options=_algorithm_options(plan.algorithm)
-    method=_scan_steady_method(plan.algorithm)
+    method=resources.method
     iterative=method in (:krylov,:shiftinvert)
-    seed=iterative ? _scan_compatible_seed(workspace,plan,compiled) : nothing
+    seed_type=_scan_output_scalar_type(
+        plan,size(compiled,1),eltype(compiled),method)
+    seed=iterative ?
+        _scan_compatible_seed(workspace,plan,compiled,seed_type) : nothing
     initial_state = if seed isa PIState
         PIState(_scan_basis(compiled),seed.data)
     elseif seed===nothing
@@ -435,11 +947,18 @@ function _scan_point_steady!(plan,compiled,parameter,index,workspace)
     else
         throw(ArgumentError("steady-state continuation seed has an incompatible type"))
     end
-    solver_workspace,reused=_scan_steady_workspace!(workspace,plan,compiled)
+    solver_workspace,reused=
+        _scan_steady_workspace!(workspace,plan,compiled,method)
     options=merge(algorithm_options,plan.solver_options)
     started=time_ns()
-    info=steady_state(compiled;method,return_info=true,
-        initial_state,workspace=solver_workspace,options...)
+    # Use the specialization's already budgeted operator directly. Calling
+    # the compiled wrapper can convert a pre-existing sparse backend to a new
+    # matrix-free compatibility operator for Krylov, retaining an additional
+    # workspace which is neither needed nor part of this point's preflight.
+    info=steady_state(compiled.operator;basis=_scan_basis(compiled),
+        trace_vector=compiled.plan.tracevec,method,return_info=true,
+        initial_state,workspace=solver_workspace,
+        memory_budget=resources.solver_memory_budget,options...)
     solve_seconds=(time_ns()-started)/1e9
     state=PIState(_scan_basis(compiled),info.state)
     solver_info=Base.structdiff(info,(state=info.state,))
@@ -452,26 +971,45 @@ function _scan_point_steady!(plan,compiled,parameter,index,workspace)
         initial_state!==nothing,reused,solve_seconds,diagnostics
 end
 
-function _scan_point_spectrum!(plan,compiled,parameter,index,workspace,rng)
-    seed=_scan_compatible_seed(workspace,plan,compiled)
+function _scan_point_spectrum!(plan,compiled,parameter,index,workspace,rng,
+                               resources)
+    seed_type=_scan_output_scalar_type(
+        plan,size(compiled,1),eltype(compiled),resources.method)
+    seed=_scan_compatible_seed(workspace,plan,compiled,seed_type)
     initial_vector=seed isa AbstractVector ? seed : nothing
-    solver_workspace,reused,method=_scan_spectrum_workspace!(workspace,plan,compiled)
-    iterative=method in (:krylov,:arnoldi,:harmonic,:iram,:implicit_qr,
-                         :jd,:jacobi_davidson)
+    method=resources.method
+    solver_workspace,reused,method=
+        _scan_spectrum_workspace!(workspace,plan,compiled,method)
+    initial_subspace=method in (:harmonic,:block_arnoldi)&&
+        seed isa AbstractMatrix ? seed : nothing
+    iterative=method in (:arnoldi,:block_arnoldi,:harmonic,:iram,:jd)
     started=time_ns()
+    # The high-level spectral command performs its own preflight including
+    # Base.summarysize(compiled) and one returned spectrum. Passing only the
+    # outer residual solver allowance would count both objects twice. The
+    # outer scan report has already enforced the aggregate multi-worker and
+    # retained-history peak, so forward the complete point budget here.
+    nested_memory_budget=plan.budget_disabled ? Inf : plan.memory_budget
+    selected_algorithm=_scan_algorithm_is_auto(plan.algorithm) ?
+        method : plan.algorithm
     result = if iterative
+        seed_options=method===:block_arnoldi ? (;initial_subspace) :
+            initial_subspace===nothing ? (;initial_vector) : (;initial_subspace)
         liouvillian_spectrum(compiled;target=plan.spectrum_target,nev=plan.nev,
-            algorithm=plan.algorithm,vectors=true,return_info=true,
-            initial_vector=initial_vector,workspace=solver_workspace,rng=rng,
+            algorithm=selected_algorithm,vectors=true,return_info=true,
+            seed_options...,workspace=solver_workspace,rng=rng,
+            memory_budget=nested_memory_budget,
             plan.solver_options...)
     elseif plan.save_vectors
         liouvillian_spectrum(compiled;target=plan.spectrum_target,nev=plan.nev,
-            algorithm=plan.algorithm,vectors=true,return_info=true,
+            algorithm=selected_algorithm,vectors=true,return_info=true,
+            memory_budget=nested_memory_budget,
             plan.solver_options...)
     else
         values=liouvillian_spectrum(compiled;target=plan.spectrum_target,
-            nev=plan.nev,algorithm=plan.algorithm,vectors=false,
-            return_info=false,plan.solver_options...)
+            nev=plan.nev,algorithm=selected_algorithm,vectors=false,
+            return_info=false,memory_budget=nested_memory_budget,
+            plan.solver_options...)
         SpectrumResult(values,nothing,(method=method,dimension=size(compiled,1)))
     end
     solve_seconds=(time_ns()-started)/1e9
@@ -479,6 +1017,11 @@ function _scan_point_spectrum!(plan,compiled,parameter,index,workspace,rng)
     continuation_vector = if !iterative||result.vectors===nothing||
                              size(result.vectors,2)==0
         nothing
+    elseif method in (:harmonic,:block_arnoldi)
+        columns=method===:block_arnoldi ? min(size(result.vectors,2),
+            Int(get(plan.solver_options,:block_size,min(plan.nev,4)))) :
+            size(result.vectors,2)
+        copy(view(result.vectors,:,1:columns))
     else
         # A single exactly converged eigenvector makes an ordinary Arnoldi
         # factorization break down after one step. Seed the next point with a
@@ -506,7 +1049,7 @@ function _scan_point_spectrum!(plan,compiled,parameter,index,workspace,rng)
                  dimension=size(compiled,1),method=method,
                  compile=compiled.estimates)
     saved_result,info,plan.continuation ? continuation_vector : nothing,
-        iterative&&initial_vector!==nothing,reused,
+        iterative&&(initial_vector!==nothing||initial_subspace!==nothing),reused,
         solve_seconds,diagnostics
 end
 
@@ -517,17 +1060,21 @@ end
     Random.MersenneTwister(mixed)
 end
 
-function _scan_success_point!(plan,parameter,index,workspace)
+function _scan_success_point!(plan,parameter,index,workspace,
+                              active_workers::Int=1)
     total_started=time_ns();compile_started=time_ns()
-    compiled=_scan_compile(plan,parameter,index)
+    compiled=_scan_compile(plan,parameter,index,workspace,active_workers)
     compile_seconds=(time_ns()-compile_started)/1e9
+    resources=_enforce_scan_resource_report(
+        _scan_resource_report(plan,compiled,active_workers),index)
     result = if plan.task===:steady_state
-        _scan_point_steady!(plan,compiled,parameter,index,workspace)
+        _scan_point_steady!(plan,compiled,parameter,index,workspace,resources)
     else
         _scan_point_spectrum!(plan,compiled,parameter,index,workspace,
-            _scan_point_rng(plan.seed,index))
+            _scan_point_rng(plan.seed,index),resources)
     end
     output,info,restart_seed,warm,reused,solve_seconds,diagnostics=result
+    diagnostics=merge(diagnostics,(resources=resources,))
     residual=_scan_maximum_residual(info)
     trace_error=_scan_info_value(info,:trace_error,missing)
     converged=_scan_converged(info)
@@ -594,7 +1141,8 @@ function _scan_result(plan,points,restart_index,restart_seed,started;
     metadata=(elapsed_seconds=(time_ns()-started)/1e9,execution,
         requested_indices=copy(requested_indices),continuation=plan.continuation,
         save_outputs=plan.save_outputs,save_vectors=plan.save_vectors,
-        save_restart=plan.save_restart,stopped,
+        save_restart=plan.save_restart,memory_budget=plan.memory_budget,
+        budget_disabled=plan.budget_disabled,stopped,
         successful=count(point->point.status===:success,points),
         failed=count(point->point.status===:failed,points),
         restart_signature,restart_eltype)
@@ -610,7 +1158,7 @@ function _serial_parameter_scan(plan,indices,workspace,callback,on_error)
         parameter=plan.parameters[index];point_started=time_ns()
         point=nothing;seed=nothing;caught=nothing
         try
-            point,seed=_scan_success_point!(plan,parameter,index,workspace)
+            point,seed=_scan_success_point!(plan,parameter,index,workspace,1)
         catch error
             _scan_rethrow_interrupt(error)
             caught=error
@@ -667,7 +1215,8 @@ function _threaded_parameter_scan(plan,indices,callback,on_error)
                     index=indices[position];parameter=plan.parameters[index]
                     point_started=time_ns();point=nothing
                     try
-                        point,_=_scan_success_point!(plan,parameter,index,workspace)
+                        point,_=_scan_success_point!(plan,parameter,index,
+                            workspace,workers)
                     catch error
                         _scan_rethrow_interrupt(error)
                         point=_scan_failed_point(parameter,index,error,
@@ -833,7 +1382,8 @@ function _scan_validate_previous(plan,previous)
         "previous result task does not match the plan"))
     isequal(previous.parameters,plan.parameters)||throw(ArgumentError(
         "previous result parameters do not match the plan"))
-    for name in (:continuation,:save_outputs,:save_vectors,:save_restart)
+    for name in (:continuation,:save_outputs,:save_vectors,:save_restart,
+                 :memory_budget,:budget_disabled)
         hasproperty(previous.metadata,name)||throw(ArgumentError(
             "previous result metadata is missing $name"))
         getproperty(previous.metadata,name)==getproperty(plan,name)||
@@ -918,6 +1468,7 @@ function resume_parameter_scan(plan::ParameterScanPlan,
         (elapsed_seconds=0.0,execution=:resume_base,requested_indices=Int[],
          continuation=plan.continuation,save_outputs=plan.save_outputs,
          save_vectors=plan.save_vectors,save_restart=plan.save_restart,
+         memory_budget=plan.memory_budget,budget_disabled=plan.budget_disabled,
          stopped=false,successful=count(point->point.status===:success,retained),
          failed=count(point->point.status===:failed,retained),
          restart_signature=prior_restart_signature,
@@ -969,6 +1520,7 @@ function _merge_parameter_scan_results(plan::ParameterScanPlan,results;
         requested_indices=[point.index for point in points],
         continuation=plan.continuation,save_outputs=plan.save_outputs,
         save_vectors=plan.save_vectors,save_restart=plan.save_restart,
+        memory_budget=plan.memory_budget,budget_disabled=plan.budget_disabled,
         stopped=length(points)<length(plan.parameters),
         successful=count(point->point.status===:success,points),
         failed=count(point->point.status===:failed,points),

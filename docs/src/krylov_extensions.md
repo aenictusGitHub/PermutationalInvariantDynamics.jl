@@ -17,6 +17,53 @@ matrix-exponential problems are formed as ordinary dense arrays. Size and
 reuse the workspace to bound the large memory term, and benchmark projected
 work separately when the block or Krylov dimension is itself large.
 
+## Clustered modes: thick-restarted block Arnoldi
+
+`block_arnoldi_spectrum` advances several search directions in one operator
+call. This is useful for degenerate or tightly clustered slow modes and for
+sized operators with a genuine matrix--matrix action. A bare callable must be
+wrapped in `MatrixFreeLiouvillian` so the solver has an explicit dimension:
+
+```julia
+workspace = BlockArnoldiWorkspace(ComplexF64, size(A, 1), 48, 4)
+result = block_arnoldi_spectrum(A;
+    nev=6,
+    block_size=4,
+    krylovdim=48,
+    retained_dimension=12,
+    workspace,
+    vectors=true,
+)
+```
+
+The total search space, rather than the number of block steps, is bounded by
+`krylovdim`. Dependent directions are deflated, selected Ritz vectors are
+retained across a thick restart, and every reported mode is reapplied to the
+full operator before its residual is accepted. This is deliberately named a
+block/thick-restarted Arnoldi method; it is not exact-shift block IRAM.
+The default memory guard includes the reusable block arrays, projected dense
+eigensolve, predictable restart diagnostics, returned modes, source-action
+scratch, and the actual capacity of supplied workspaces. Set
+`memory_budget=Inf` only as an explicit opt-out.
+
+For a matrix-free Floquet map, pair it with a fixed-capacity forward batch
+workspace so the four RK stages evaluate a drive once for the entire block:
+
+```julia
+period_work = FloquetBatchWorkspace(period_map, 4; mode=:forward)
+result = block_arnoldi_spectrum(period_map;
+    nev=4,
+    block_size=4,
+    operator_workspace=period_work,
+)
+```
+
+`selected_floquet_multipliers(period_map; method=:block_arnoldi,
+block_size=4)` prepares this forward workspace automatically. Use
+`mode=:full` only when the same batch workspace must also apply the exact
+discrete adjoint. Its capacity is fixed and an oversized block raises instead
+of allocating hidden stage matrices.
+
 ## Several right-hand sides: block GMRES
 
 Block GMRES expands all residual directions together. This can reuse common
@@ -112,11 +159,10 @@ chain and never share it concurrently. The `recycle_reset` diagnostic is true
 if a changed operator made the retained image rank deficient and the solver
 safely discarded it.
 
-[`ParameterScanPlan`](@ref) continuation is a separate high-level mechanism:
-it warms the next solve with a state or Ritz vector but does not invoke GCRO or
-carry this recycled subspace. Use `RecycledGMRESWorkspace` directly when the
-sequence consists of custom linear systems and invariant-subspace recycling
-is desired.
+[`ParameterScanPlan`](@ref) uses this mechanism when configured with
+`RecycledGMRESAlgorithm`; ordinary `GMRESAlgorithm` remains a state-only warm
+start. Use `RecycledGMRESWorkspace` directly when the sequence consists of
+custom linear systems.
 
 ## Adaptive exponential action
 
@@ -151,6 +197,8 @@ non-narrowing rule.
 ## API
 
 ```@docs
+BlockArnoldiWorkspace
+block_arnoldi_spectrum
 BlockGMRESWorkspace
 block_gmres!
 block_gmres

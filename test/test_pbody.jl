@@ -1,6 +1,9 @@
 @testset "Appendix-D p-body paths and kernels" begin
     PID=PermutationalInvariantDynamics
     sx=ComplexF64[0 1;1 0];sz=ComplexF64[1 0;0 -1];sm=ComplexF64[0 1;0 0]
+    @test PID._pbody_word_count(3,4)==81
+    @test_throws ArgumentError PID._pbody_word_count(typemax(Int),2)
+    @test_throws ArgumentError PID._pbody_word_count(2,-1)
     for d in (2,3),N in 2:4
         b=PIBasis(N,d);X=diagm(ComplexF64.(collect(1:d)))
         @test pbody_collective_operator(b,X,1).data≈collective_operator(b,X).data atol=3e-11

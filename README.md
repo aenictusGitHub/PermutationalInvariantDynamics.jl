@@ -235,6 +235,9 @@ completely positive dynamical map.
 
 ## Development
 
+See [CONTRIBUTING.md](CONTRIBUTING.md) for architectural contracts, focused
+test groups, and the complete contributor workflow.
+
 ```sh
 julia --project=. -e 'using Pkg; Pkg.test()'
 julia --project=. benchmark/performance_regression.jl

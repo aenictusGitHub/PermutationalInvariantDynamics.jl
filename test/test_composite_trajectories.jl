@@ -44,6 +44,9 @@
     @test abs(trace(CompositePIOperator(basis,destination)))<4e-14
 
     workspace=CompositeTrajectoryWorkspace(plan,rho0)
+    @test sum(length,(workspace.tmp,workspace.k1,workspace.k2))==
+          3length(rho0.data)
+    @test !hasproperty(workspace,:k3)&&!hasproperty(workspace,:k4)
     internal=PermutationalInvariantDynamics
     rates=internal._composite_channel_intensities!(
         workspace,rho0.data,0.0,nothing)

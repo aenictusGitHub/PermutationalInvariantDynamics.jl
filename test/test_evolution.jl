@@ -10,6 +10,8 @@
     @test rho.data==rho0.data
 
     dest=copy(rho);w=EvolutionWorkspace(rho)
+    @test sum(length,(w.tmp,w.k1,w.k2,w.k3,w.k4))==3length(rho.data)
+    @test isempty(w.k3)&&isempty(w.k4)
     evolve!(dest,Lm,rho,(0.0,t);steps=400,workspace=w)
     @test dest.data≈reference.data atol=2e-12
     evolve!(dest,Lm,rho,(0.0,0.001);steps=1,workspace=w) # warm the kernel
@@ -17,6 +19,31 @@
     evolve!(dest,Lm,rho,(0.0,t);steps=400,workspace=w)
     evolve!(dest,Lm,dest,(t,2t);steps=400,workspace=w)
     @test dest.data≈exp(2t*Matrix(Ls))*rho.data atol=3e-12
+    shared=similar(rho.data)
+    aliased=EvolutionWorkspace(shared,shared,similar(shared),similar(shared,0),
+                               similar(shared,0),nothing)
+    @test_throws ArgumentError evolve!(shared,Lm,rho.data,(0.0,0.01);
+                                       steps=1,workspace=aliased)
+    overlap_storage=randn(ComplexF64,length(rho.data)+1)
+    overlap_source=@view overlap_storage[1:length(rho.data)]
+    overlap_destination=@view overlap_storage[2:length(rho.data)+1]
+    @test_throws ArgumentError evolve!(
+        overlap_destination,Lm,overlap_source,(0.0,0.01);steps=1)
+
+    # The low-storage recurrence retains the source precision, including the
+    # generic BigFloat path. A diagonal generator gives a simple one-step RK4
+    # polynomial oracle without relying on a generic matrix exponential.
+    for (C,R) in ((ComplexF32,Float32),(Complex{BigFloat},BigFloat))
+        diagonal=C[-1 0;0 -2]
+        source=C[1,2]
+        output=similar(source)
+        step=R(1)/R(16)
+        evolve!(output,diagonal,source,(zero(R),step);steps=1,
+                workspace=EvolutionWorkspace(diagonal,source))
+        rk4(z)=one(z)+z+z^2/R(2)+z^3/R(6)+z^4/R(24)
+        @test eltype(output)===C
+        @test output≈C[rk4(-step),R(2)*rk4(-R(2)*step)]
+    end
 
     times=range(0,t;length=5);trajectory=time_evolution(Lm,rho,times;steps_per_interval=100)
     @test length(trajectory)==length(times)
@@ -93,6 +120,8 @@ end
 
     X=randn(rng,ComplexF64,length(b),4);Y=similar(X);Y2=similar(X)
     PID.apply!(Y,plan,X,0.0,nothing,w1)
+    @test w1.batch.capacity==size(X,2)
+    @test w2.batch.capacity==0
     mul!(Y2,Lm,X)
     @test Y≈Ls*X atol=3e-12
     @test Y2≈Ls*X atol=3e-12
@@ -111,9 +140,15 @@ end
     pLs=liouvillian(pmodel;representation=:sparse)
     PID.apply_adjoint!(py,pp,px,pw)
     @test py≈adjoint(pLs)*px atol=3e-12
+    pX=randn(rng,ComplexF64,length(bp),3);pY=similar(pX)
+    PID.apply!(pY,pp,pX,0.0,nothing,pw)
+    @test pY≈pLs*pX atol=3e-12
+    PID.apply_adjoint!(pY,pp,pX,0.0,nothing,pw)
+    @test pY≈adjoint(pLs)*pX atol=3e-12
 
     cs=PID.compile(model;backend=:auto)
-    cm=PID.compile(model;backend=:auto,memory_budget=0)
+    @test_throws ArgumentError PID.compile(model;backend=:auto,memory_budget=0)
+    cm=PID.compile(model;backend=:matrixfree,memory_budget=Inf)
     @test cs.backend===:sparse
     @test cm.backend===:matrixfree
     @test cs.estimates.scalar_type===eltype(cs)
@@ -151,6 +186,13 @@ end
     @test pi_liouvillian_gap(cs)≈pi_liouvillian_gap(model) atol=2e-10
     @test_throws ArgumentError PID.compile(model;backend=:unknown)
     @test_throws ArgumentError PID.compile(model;memory_budget=-1)
+    @test_throws ArgumentError PID.compile(model;backend=:sparse,
+        memory_budget=1)
+    @test_throws ArgumentError liouvillian(model;representation=:sparse,
+        memory_budget=1)
+    @test_throws ArgumentError liouvillian(cm;representation=:sparse,
+        memory_budget=1)
+    @test PID.compile(model;backend=:sparse,memory_budget=Inf).backend===:sparse
 
     bb=PIBasis(1,2);smb=Complex{BigFloat}[0 1;0 0]
     cbig=PID.compile(PIModel(bb,[LocalJump(smb)]);backend=:matrixfree)

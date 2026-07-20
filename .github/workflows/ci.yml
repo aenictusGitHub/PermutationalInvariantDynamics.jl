@@ -15,6 +15,9 @@ concurrency:
 jobs:
   test:
     name: Julia ${{ matrix.julia-version }} / ${{ matrix.os }}
+    permissions:
+      contents: read
+      id-token: write
     strategy:
       fail-fast: false
       matrix:
@@ -57,7 +60,7 @@ jobs:
         with:
           fail_ci_if_error: true
           files: lcov.info
-          token: ${{ secrets.CODECOV_TOKEN }}
+          use_oidc: true
 
   quality:
     runs-on: ubuntu-latest

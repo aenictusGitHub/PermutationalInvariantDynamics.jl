@@ -33,6 +33,7 @@ shape
 content
 gt_entry
 triangular_shift
+OneBoxCGCache
 cgc
 partition_triangle
 three_nu_symbol

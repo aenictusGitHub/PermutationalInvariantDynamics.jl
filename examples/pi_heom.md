@@ -8,8 +8,9 @@ convergence questions:
 - the ordinary RK4 time step;
 - the HEOM hierarchy depth.
 
-The implementation follows the unscaled finite-exponential HEOM convention
-documented in [Permutationally invariant HEOM](../docs/src/heom.md). For a
+The implementation follows the finite-exponential HEOM convention documented
+in [Permutationally invariant HEOM](../docs/src/heom.md) and uses its exact
+similarity-scaled ADO coordinates. For a
 general review of HEOM and exponential bath decompositions, see Y. Tanimura,
 *J. Chem. Phys.* **153**, 020901 (2020),
 [doi:10.1063/5.0011599](https://doi.org/10.1063/5.0011599).
@@ -65,7 +66,7 @@ system = PIModel(basis, ())
 bath = HEOMBath(Jz, coefficient, frequency)
 rho0 = iid_pure_state(basis, ComplexF64[1, 1] / sqrt(2))
 
-plan = HEOMPlan(system, bath; max_depth=6)
+plan = HEOMPlan(system, bath; max_depth=6, scaling=:scaled)
 hierarchy = heom_time_evolution(
     plan, rho0, times; steps_per_interval=4)
 rho_t = heom_reduced_state(last(hierarchy))
@@ -104,7 +105,8 @@ The script also runs the stronger state-level check
 ```julia
 depth_report = heom_depth_convergence(
     system, bath, rho0, (0.0, final_time);
-    depths=(2, 4, 6), steps=240, atol=1e-7, rtol=0)
+    depths=(2, 4, 6), steps=240, scaling=:scaled,
+    atol=1e-7, rtol=0)
 ```
 
 Although the `Jx` signal is converged at depth 6, this report deliberately
@@ -113,6 +115,19 @@ Hilbert--Schmidt differences are much larger than the pointwise error of that
 single observable. This is an important practical distinction. Use an
 observable-specific study when only that observable is claimed, and use
 `heom_depth_convergence` before claiming convergence of the entire PI state.
+
+The stored scaled auxiliary is
+
+```math
+\widehat\rho_{\boldsymbol n}=\rho_{\boldsymbol n}/
+\prod_k\sqrt{n_k!a_k^{n_k}}.
+```
+
+This is a diagonal similarity transform of the truncated hierarchy, not an
+additional bath approximation. The root scale is one, and `heom_ado`
+converts a selected auxiliary back to the conventional unscaled operator.
+Passing `scaling=:scaled` to the depth study ensures every prefix uses the
+same pole factors.
 
 When CairoMakie is available in the examples environment, the script writes a
 two-panel figure showing the analytic coherence and the pointwise depth
@@ -138,6 +153,73 @@ rho_ss = heom_reduced_state(hierarchy_ss)
 performs a trace-fixed restarted-GMRES solve. Pure dephasing alone does not
 have a unique stationary state, so the executable benchmark deliberately
 uses time evolution rather than a steady-state solve.
+
+For adaptive or stiff integration, the same matrix-free right-hand side is
+available as an in-place SciML problem without choosing a solver package:
+
+```julia
+problem = heom_problem(plan, rho0, (0.0, final_time))
+```
+
+The executable also constructs a tiny uniquely damped one-spin hierarchy and
+demonstrates a reusable ADO-diagonal preconditioner:
+
+```julia
+P = heom_block_preconditioner(
+    small_plan; expected_reuses=2, warn_unamortized=false)
+stationary = heom_steady_state(
+    small_plan; preconditioner=P, return_info=true,
+    krylovdim=12, maxiter=200)
+```
+
+It extracts the normalized `n_PI`-dimensional system block once and omits only
+inter-ADO couplings. In LAPACK complex precision one guarded Schur form serves
+all well-conditioned scalar ADO shifts; unsafe shifts receive LU factors, and
+generic precisions use duplicate-aware LU throughout. Thus distinct hierarchy
+decays do not normally require one retained dense factor apiece. The
+preconditioner changes conditioning, not the equations or final residual test.
+Inspect `preconditioner_cost(P)` before a large scan; setup is intended to
+amortize over repeated solves. A shared Schur preconditioner serializes its
+scratch-protected applications, so use one instance per concurrent solve.
+
+## Physical poles, pruning, and independent local modes
+
+The executable also prepares a Drude--Lorentz Padé bath without running a
+second expensive evolution:
+
+```julia
+physical_bath = drude_lorentz_bath(
+    Jz, 0.20, 0.90, 2.0;
+    matsubara_terms=2, decomposition=:pade)
+physical_plan = HEOMPlan(
+    system, physical_bath;
+    max_depth=2, terminator=:residue,
+    importance_cutoff=1e-3)
+metadata = heom_hierarchy_metadata(physical_plan)
+```
+
+`metadata.full_ados` is exact even when the downward-closed importance filter
+retains fewer ADOs. The score is only a setup heuristic, so reduce
+`importance_cutoff` and increase both the pole count and `max_depth` in a
+production convergence study. `terminator=:residue` explicitly adds the
+physical constructor's white-noise tail correction; it is never enabled by
+default.
+
+The collective `Jz` bath above is a common environment. It must not be used as
+a surrogate for independent local baths. For one positive damped pole per
+particle, the script separately checks the finite pseudomode supersite route:
+
+```julia
+embedding = independent_local_pseudomode_model(
+    2, zeros(2, 2), ComplexF64[0 1; 0 0];
+    nmax=1, frequency=1.0,
+    coupling_strength=0.2, damping=0.4)
+```
+
+This returns a time-local PI model of identical system+mode pairs with
+`L=sigma_-`; Hermitian `L=sigma_z` is supported by the same constructor. It is
+not a global-ADO HEOM approximation, and its oscillator cutoff is a separate
+convergence parameter.
 
 ## Running
 

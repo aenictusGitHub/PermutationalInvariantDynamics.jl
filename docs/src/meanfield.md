@@ -314,7 +314,8 @@ sigma_final = last(solution)
 ```
 
 For repeated propagation into caller-owned storage, use
-`meanfield_evolve!`:
+`meanfield_evolve!`. Its classical RK4 path uses three full one-site
+integration matrices rather than retaining four derivatives simultaneously:
 
 ```julia
 workspace = MeanFieldWorkspace(plan, sigma0)

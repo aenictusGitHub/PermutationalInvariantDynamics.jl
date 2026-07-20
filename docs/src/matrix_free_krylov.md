@@ -6,10 +6,26 @@ Liouvillian matrix, compute a dense spectrum, or perform a sparse LU
 factorization. This is the preferred path when the PI Liouville dimension is
 large enough that storing the superoperator is the dominant cost.
 
-This page covers stationary and selected-eigenvalue solvers. For several
-right-hand sides, a common shift family, continuation with a recycled
-subspace, or direct exponential action, see [Block, shifted, recycled, and
-exponential Krylov methods](krylov_extensions.md).
+This page covers stationary states, selected eigenvalues, matrix-free Floquet
+maps, and response calculations. For several right-hand sides, a common shift
+family, continuation with a recycled subspace, or direct exponential action,
+see [Block, shifted, recycled, and exponential Krylov
+methods](krylov_extensions.md).
+
+Public high-level commands report canonical solver names even when a retained
+compatibility alias is supplied:
+
+| Task | Preferred spelling | Compatibility aliases |
+|---|---|---|
+| Trace-fixed GMRES | `:gmres` | `:krylov` |
+| Shift-invert stationary solve | `:shiftinvert` | `:shift_invert`, `:inverse_iteration` |
+| Ordinary Arnoldi spectrum | `:arnoldi` | `:krylov`, `:ordinary_arnoldi` |
+| Block Arnoldi spectrum | `:block_arnoldi` | `:block` |
+| Implicitly restarted Arnoldi | `:iram` | `:implicit_qr` |
+| Jacobi--Davidson | `:jd` | `:jacobi_davidson` |
+
+The low-level `steady_state(...; method=:krylov)` spelling remains supported
+because it predates the high-level `GMRESAlgorithm` interface.
 
 ## Constructing the matrix-free Liouvillian
 
@@ -19,8 +35,10 @@ From a static `PIModel`, request the matrix-free representation explicitly:
 L = liouvillian(model; representation=:matrixfree)
 ```
 
-Passing `model` directly to a public routine with `method=:krylov`,
-`:harmonic`, `:iram`, or `:jd` also selects this representation automatically:
+Passing `model` directly to a public routine with `method=:krylov` for a
+steady state, or `method=:arnoldi`, `:harmonic`, `:iram`, or `:jd` for a
+spectrum (with `:block_arnoldi` for a block start), also selects this
+representation automatically:
 
 ```julia
 rho_ss = steady_state(model; method=:krylov)
@@ -193,7 +211,7 @@ Use Arnoldi when only a few modes are needed:
 
 ```julia
 modes = pi_liouvillian_spectrum(model;
-    method=:krylov,       # :arnoldi is an alias
+    method=:arnoldi,      # :krylov remains a compatibility alias
     nev=6,
     krylovdim=40,
     sortby=:real,
@@ -232,13 +250,18 @@ stream.
 For repeated spectra, reuse the large basis and pencil arrays:
 
 ```julia
-workspace = ArnoldiWorkspace(L, 40)
+workspace = ArnoldiWorkspace(L, 40; mode=:ordinary)
 modes = krylov_liouvillian_spectrum(L;
     nev=6, krylovdim=40, workspace=workspace)
 ```
 
-The same workspace can be reused sequentially by harmonic Arnoldi, but one
-workspace must not be shared concurrently.
+`mode=:ordinary` retains only the Arnoldi basis, Hessenberg matrix, and two
+full-coordinate vectors. The ordinary solver selects this lean mode
+automatically when it constructs its own workspace. Use the default
+`mode=:full` when one workspace must also be reused sequentially by harmonic
+Arnoldi, implicit-QR Arnoldi, or Jacobi--Davidson. Those advanced solvers
+reject an ordinary-only workspace rather than allocating omitted arrays.
+No workspace may be shared concurrently.
 
 By default, failure of any requested Ritz pair raises an error. Set
 `require_convergence=false` only when inspecting the returned residuals
@@ -386,6 +409,60 @@ scans should use one explicit `SymmetryProjectorWorkspace` per task.
 Antiunitary symmetries do not define complex-linear charge sectors and cannot
 be used for this projection.
 
+### Compressed strong-symmetry coordinates
+
+A strong diagonal local symmetry can reduce the stored Krylov vectors to one
+ket/bra charge block rather than repeatedly projecting a full PI vector. For
+example, a parity-preserving model may be restricted with
+
+```julia
+Z = Diagonal(ComplexF64[1, -1])
+restriction = diagonal_symmetry_restriction(
+    model.basis, Z; ket_charge=1, bra_charge=1)
+
+L = compile(model; backend=:matrixfree)
+restricted = RestrictedLiouvillian(L, restriction)
+work = RestrictedLiouvillianWorkspace(restricted)
+rho_ss = restricted_steady_state(restricted)
+```
+
+Construction exhaustively checks leakage before accepting the restriction.
+Explicit matrices are scanned columnwise (stored nonzeros only for sparse
+matrices); a matrix-free source is probed once per retained coordinate.
+`restriction_full_residual` subsequently embeds a computed mode and evaluates
+the original generator, independently checking both the retained and omitted
+coordinates. Nothing is silently projected when leakage is nonzero.
+
+With a sparse or dense source, `RestrictedLiouvillian(...; backend=:auto)`
+stores the actual submatrix. With a prepared matrix-free source containing
+fixed Hamiltonian, collective-dissipator, or local-gain kernels, the default
+`:lowered` backend restricts the ket and bra Schur blocks and filters gain
+coordinates once. Its applications, adjoints, and Krylov vectors never touch
+ambient PI vectors. `RestrictedLiouvillianWorkspace(restricted)` returns the
+corresponding task-owned reduced scratch. `ResponseWorkspace(restricted)`
+keeps the same reduced application path for resolvents, adjoint evolution,
+and sensitivities.
+
+An explicit mask that is not a Cartesian ket-pattern by bra-pattern block, or
+an unsupported operator-valued prepared kernel, retains the certified
+`:embedded` fallback. That fallback still compresses Krylov storage but uses
+two ambient application vectors. The selected route is recorded in
+`restricted.backend`; `backend=:compressed` requires an explicit matrix and
+`backend=:lowered` can be requested to reject rather than fall back.
+
+Separate `ket_charge` and `bra_charge` values expose off-diagonal operator
+blocks. Such a block normally has a zero physical trace and is useful for
+decay modes, but `restricted_steady_state` rejects it because it cannot contain
+a normalized density operator. Plans and workspaces are safe to share only
+according to the same immutable-plan/task-owned-workspace rules as the rest of
+the matrix-free API.
+
+`restriction_full_residual` is deliberately different: it re-evaluates the
+original ambient generator to certify omitted-coordinate leakage. Repeated
+calls therefore need an ambient `RestrictedLiouvillianWorkspace` constructed
+from `restricted.source` and `restricted.restriction`, not the reduced
+workspace returned for ordinary lowered applications.
+
 ## Matrix-free Liouvillian gap
 
 The gap is obtained from Ritz values with largest real part:
@@ -433,6 +510,143 @@ was extracted; otherwise inspect the Ritz residuals directly. Use the
 largest-real Krylov route or a complete dense symmetry-block spectrum when a
 global gap is required.
 
+## Matrix-free Floquet maps
+
+Periodic problems have the same plan/workspace split. `floquet_map` prepares
+the RK grid and the underlying Liouvillian action, but does not construct the
+``n_{\mathrm{PI}}\times n_{\mathrm{PI}}`` one-period matrix:
+
+```julia
+period_map = floquet_map(prepared, period; steps=320)
+map_work = FloquetWorkspace(period_map)
+
+image = similar(rho0.data)
+apply!(image, period_map, rho0.data, map_work)
+
+multipliers = selected_floquet_multipliers(
+    period_map;
+    method=:block_arnoldi,
+    block_size=4,
+    which=:LM,
+    nev=min(6, size(period_map, 1)),
+    krylovdim=40,
+    vectors=true,
+)
+
+periodic = floquet_steady_state(
+    period_map;
+    method=:krylov,
+    krylovdim=40,
+    return_info=true,
+)
+```
+
+Ordinary Arnoldi (`method=:arnoldi`), thick-restarted block Arnoldi
+(`method=:block_arnoldi`), and IRAM select multipliers by a spectral
+criterion; `which=:LM` is the usual slow-decay choice. Block Arnoldi uses a
+fixed-capacity matrix workspace and sends each search block through one
+batched period-map application. Jacobi--Davidson
+(`method=:jd`) targets a specified multiplier, one by default, and is not a
+global spectral-radius calculation. Every selected result retains Ritz
+residuals, convergence flags, the full operator dimension, and whether its
+scope is partial. `floquet_steady_state` solves the trace-fixed equation
+``(F-I)\rho=0`` by restarted GMRES and reports the physical period residual.
+
+`floquet_gap(period_map; return_info=true)` reports residual certification for
+the selected multipliers. A partial largest-modulus window can identify a
+well-resolved candidate decay rate, but `global_gap_certified` becomes true
+only when the complete map dimension has been resolved and every required
+residual passes. Never promote a partial multiplier window to a global gap or
+stability certificate.
+
+The single-vector forward and adjoint actions reuse the same
+`FloquetWorkspace`. For blocks, construct `FloquetBatchWorkspace(map, p;
+mode=:forward)` to retain only three stage matrices beyond the destination,
+or use `mode=:full` when exact batched adjoint actions are required. Capacity
+is explicit and never grows during application. The destination is the
+low-storage RK4 accumulator and must therefore have exactly the map's scalar
+type; a representable narrower input is copied into map-precision scratch.
+The adjoint reverses the
+actual finite-step RK4 computation, so
+`apply_adjoint!` is the numerical adjoint of the discretized period map. This
+is important for response calculations and differs from independently
+discretizing a continuous adjoint equation.
+
+For a certified strong diagonal symmetry, first build a
+`SymmetryCoordinateRestriction`, then call
+`restricted_floquet_map(period_map, restriction)`. Selected multiplier and
+fixed-point Krylov vectors are stored in reduced coordinates. Period
+applications still use caller-owned ambient scratch, and the returned
+fixed-point report includes the full-space residual and leakage. The
+restriction is accepted only after exhaustive invariance checks.
+
+Converge two numerical layers separately: increase the period-map `steps`
+until the physical results are stable, then increase Krylov dimensions and
+iteration limits until the reported linear or Ritz residuals pass. The dense
+`floquet_propagator` remains useful as a small-problem reference or when the
+complete explicit channel is genuinely required.
+
+## Matrix-free response and adjoint analysis
+
+The response tools accept the same prepared matrix-free source. A
+`ResponseWorkspace` can retain restarted-GMRES storage, adaptive exponential-
+action storage, or both:
+
+```julia
+work = ResponseWorkspace(
+    prepared; krylovdim=40, expv_krylovdim=40, mode=:both)
+
+resolvent = resolvent_norm(
+    prepared, 0.2im;
+    method=:krylov,
+    workspace=work,
+    return_info=true,
+)
+
+A_t = adjoint_evolve(
+    prepared, A, 2.0;
+    method=:krylov,
+    workspace=work,
+)
+
+tau = integrated_correlation_time(
+    prepared, rho_ss, A;
+    method=:krylov,
+    workspace=work,
+    return_info=true,
+)
+
+chi = steady_state_susceptibility(
+    prepared, rho_ss, dL;
+    observable=A,
+    method=:krylov,
+    workspace=work,
+    return_info=true,
+)
+```
+
+Here `A` is a `PIOperator`, `rho_ss` is a stationary `PIState`, and `dL` is
+the autonomous derivative of the Liouvillian with respect to the parameter of
+interest. `integrated_correlation_time` and
+`steady_state_susceptibility` solve trace-fixed Poisson/tangent equations and
+return the raw physical residual and trace error. The tangent state is not
+normalized or positivity-projected.
+
+For a matrix-free source, `resolvent_norm` uses power iteration on the forward
+and adjoint resolvents, with two shifted GMRES solves per outer iteration. It
+therefore requires an explicit adjoint action. Nonconverged shifted solves or
+power iterations raise instead of returning a finite value, but a converged
+result is still a numerical estimate rather than a rigorous upper bound.
+`pseudospectral_abscissa` repeats this calculation on a supplied complex grid;
+reuse one `mode=:linear` workspace to avoid rebuilding the dominant Krylov
+arrays at every point.
+
+`adjoint_evolve` applies adaptive `krylov_expv!` to the exact prepared adjoint.
+Use `mode=:evolution` when this is the only requested operation. Use
+`mode=:linear` for resolvents and trace-fixed response solves, or `mode=:both`
+when one task will call both kinds sequentially. As with every mutable solver
+workspace, do not share a `ResponseWorkspace` between concurrent tasks.
+
 ## Choosing tolerances and Krylov dimensions
 
 Start with `krylovdim` between 30 and 60. Increase it when:
@@ -444,7 +658,8 @@ Start with `krylovdim` between 30 and 60. Increase it when:
 
 A larger Krylov basis usually improves convergence but uses more memory and
 orthogonalization time. For a fixed memory budget, increase `maxiter` to allow
-more GMRES restarts. Basic `method=:krylov` Arnoldi uses one factorization;
+more GMRES restarts. Basic `method=:arnoldi` uses one factorization;
+`:krylov` remains a compatibility alias on the spectral API.
 `method=:harmonic` supports thick restarting through `maxrestarts`.
 The lower-level implicit-QR and Jacobi--Davidson routines add bounded-memory
 restarts and, for Jacobi--Davidson, hard locking plus preconditioned correction
@@ -467,11 +682,15 @@ approximate stationary vector is a physical density operator.
 | Large matrix-free steady state | `method=:krylov` |
 | Sparse eigenvalue nearest a chosen shift | `method=:shiftinvert` |
 | Complete PI spectrum | `method=:dense` |
-| Modes with largest real part | `method=:krylov` |
+| Modes with largest real part | `method=:arnoldi` |
 | Interior modes nearest zero | `method=:harmonic` |
 | Restarted spectral-edge extraction | `method=:iram` / `implicitly_restarted_arnoldi_spectrum` |
 | Hard nonnormal/degenerate interior cluster | `method=:jd` / `jacobi_davidson_spectrum` |
 | Near-zero charge-sector decay estimate | `method=:harmonic, symmetry=..., charge=..., return_info=true` |
+| Selected Floquet multipliers | `floquet_map`, then `selected_floquet_multipliers` |
+| Matrix-free periodic state | `floquet_steady_state(floquet_map(...); method=:krylov)` |
+| Resolvent or pseudospectral estimate | `ResponseWorkspace(...; mode=:linear)`, then shifted-GMRES response tools |
+| Adjoint observable evolution | `ResponseWorkspace(...; mode=:evolution)`, then `adjoint_evolve` |
 | Diagnose a degenerate nullspace | `method=:svd` for manageable dimensions |
 
 The Krylov steady-state formulation assumes the trace constraint selects a

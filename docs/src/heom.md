@@ -7,11 +7,12 @@ physical density operator. Consequently, the method enlarges the calculation
 by the hierarchy size, but it never reconstructs a matrix of dimension
 `d^N`.
 
-The current backend is intended for bath correlations represented by finite
-sums of exponentials. It provides a precise low-level convention rather than
-silently choosing a Drude, Matsubara, Padé, temperature, or spectral-density
-decomposition. Those decompositions determine the exponential coefficients
-supplied by the user.
+The backend is intended for bath correlations represented by finite sums of
+exponentials. [`HEOMBath`](@ref) remains the exact low-level convention.
+Validated physical constructors additionally prepare Drude--Lorentz
+Matsubara/Padé and underdamped-Brownian Matsubara expansions. Their truncation
+and white-noise residue are explicit metadata; the library never silently
+changes a user-supplied decomposition.
 
 ## Convention
 
@@ -46,8 +47,8 @@ ADO and is never repaired.
 The coupling `Q_b` is a fixed Hermitian PI operator. All coefficients and
 `nu_k` may be complex, but `Re(nu_k)` must be strictly positive. Flatten all
 prepared exponentials from all baths into one index `k`, and let `b(k)`
-identify their bath. The unscaled hierarchy implemented by [`HEOMPlan`](@ref)
-is
+identify their bath. The conventional unscaled hierarchy implemented by
+[`HEOMPlan`](@ref) is
 
 ```math
 \begin{aligned}
@@ -67,10 +68,67 @@ ADO `rho_0` is the physical reduced state. Auxiliary ADOs generally have
 neither unit trace, Hermiticity, nor positivity and must not be interpreted as
 density matrices.
 
+### Exact scaled coordinates
+
+The default `scaling=:unscaled` preserves those coordinates. The opt-in
+`scaling=:scaled` route stores
+
+```math
+\widehat\rho_{\boldsymbol n}=\rho_{\boldsymbol n}/s_{\boldsymbol n},
+\qquad
+s_{\boldsymbol n}=\prod_k\sqrt{n_k!\,a_k^{n_k}}.
+```
+
+The positive per-pole factor defaults to
+`a_k=max(abs(ell_k),abs(r_k))`, with exactly one used when both coefficients
+vanish. An explicit `scaling_factors` vector may instead be supplied; every
+entry must be positive, finite, and exactly representable in the plan's real
+scalar type. The transformed upward and downward factors are respectively
+
+```math
+\sqrt{(n_k+1)a_k},\qquad \sqrt{n_k/a_k}.
+```
+
+Thus the scaled generator is exactly `S^(-1) L_HEOM S`, not a truncation or
+changed bath model. The root scale is one, and [`heom_ado`](@ref) multiplies
+an auxiliary coordinate by [`heom_coordinate_scale`](@ref) before returning
+the conventional unscaled ADO. At finite precision the constructor also
+requires each standalone `s_n` needed for public ADO extraction to remain
+positive and finite; it raises with depth/precision guidance rather than
+overflowing silently. `scaling=:unscaled` remains fully compatible with the
+original route.
+
 The hierarchy retains `sum(n_k) <= D`, where `D=max_depth`. Upward ADOs beyond
-that boundary are set to zero. This is the `terminator=:none` hard truncation;
-no Markovian or time-local terminator is currently inferred. Results must be
-converged in `max_depth`.
+that boundary are set to zero. This is the `terminator=:none` hard truncation.
+With `terminator=:residue`, each bath's explicitly stored real discrepancy
+`delta_b` adds the time-local correction
+
+```math
+2\delta_b\mathcal D[Q_b]\rho=-\delta_b[Q_b,[Q_b,\rho]]
+```
+
+to every ADO. An arbitrary [`HEOMBath`](@ref) defaults to zero residue; none is
+inferred from its poles. Physical constructors calculate the documented
+zero-frequency discrepancy. The correction is matrix-free, and the exact
+adjoint uses its self-adjoint double-commutator form. A finite-depth and
+finite-pole convergence study remains necessary even when the residue is used.
+
+An optional positive `importance_cutoff` applies an additional, explicitly
+heuristic approximation. For pole `k`, define
+
+```math
+w_k=\frac{\max(|\ell_k|,|r_k|)}{|\nu_k|^2},\qquad
+q_k=\sqrt{\frac{w_k}{1+w_k}},\qquad
+I_{\boldsymbol n}=\prod_k\frac{q_k^{n_k}}{\sqrt{n_k!}}.
+```
+
+The `:normalized_coupling_decay` policy retains `I_n >= importance_cutoff`
+and requires every immediate parent to be retained. The result is therefore a
+deterministic downward-closed order ideal; couplings to omitted upward ADOs
+are zero. This score is a ranking heuristic, not an error bound. Zero cutoff
+preserves the complete hierarchy and its original setup route. Inspect
+[`heom_hierarchy_metadata`](@ref) and [`heom_ado_importances`](@ref), and
+repeat the calculation at lower cutoffs.
 
 For `K` exponential terms, the number of retained ADOs is exactly
 
@@ -81,11 +139,20 @@ M=\binom{K+D}{D},
 and the coordinate dimension is `M * length(basis)`. Setup checks this count
 with exact integer arithmetic before allocation.
 
-The hierarchy state therefore stores `M * n_PI` complex coordinates. The plan
-also stores `O(M*K)` upward/downward topology and one dense physical coupling
-block per selected PI sector and bath. PI compression removes the system's
-`d^N` scaling; it does not remove the combinatorial hierarchy growth or the
-dense cost of a large retained Schur block.
+The hierarchy state therefore stores `M * n_PI` complex coordinates. For
+positive `K` and `D`, the number of undirected nearest-hierarchy edges is
+
+```math
+E=K\binom{K+D-1}{D-1}.
+```
+
+The plan stores each edge once, together with two compact incident-edge
+references and only `K*D` level-dependent scaling factors. It does not retain
+dense `M`-by-`K` upward/downward index and factor tables. Topology indices use
+32 bits whenever the prepared counts permit. One dense physical coupling
+block is retained per selected PI sector and bath. PI compression removes the
+system's `d^N` scaling; it does not remove the combinatorial hierarchy growth
+or the dense cost of a large retained Schur block.
 
 ## Basic workflow
 
@@ -143,11 +210,129 @@ bath = HEOMBath(Q, left, poles; right_coefficients=right)
 Here `left`, `right`, and `poles` must have the same length. This route does
 not append poles or impose a conjugacy relation.
 
+## Physical bath constructors
+
+[`drude_lorentz_bath`](@ref) uses units `hbar=k_B=1` and the convention
+
+```math
+J(\omega)=\frac{2\lambda\gamma\omega}{\gamma^2+\omega^2}.
+```
+
+For `decomposition=:matsubara`, it retains
+
+```math
+\begin{aligned}
+\nu_0&=\gamma,&
+c_0&=\lambda\gamma\left[\cot(\beta\gamma/2)-i\right],\\
+\nu_k&=2\pi k/\beta,&
+c_k&=\frac{4\lambda\gamma}{\beta}
+      \frac{\nu_k}{\nu_k^2-\gamma^2}.
+\end{aligned}
+```
+
+The Padé option uses the Hu--Xu--Yan tridiagonal-eigenvalue construction
+([J. Chem. Phys. 134, 244106 (2011)](https://doi.org/10.1063/1.3602466)). Its
+small symmetric eigensolves currently support Float32 and Float64 physical
+parameters; use Matsubara for BigFloat. A coincident Drude and thermal pole is
+rejected because the separate terms are singular and require a combined
+analytic limit. Padé setup has the package-wide 512 MiB `memory_budget`; use
+`Inf` only as an explicit opt-out after checking the quadratic eigensystem.
+
+```julia
+bath = drude_lorentz_bath(
+    Q, 0.3, 0.8, 2.0;
+    matsubara_terms=4, decomposition=:pade)
+plan = HEOMPlan(system, bath; max_depth=5, terminator=:residue)
+```
+
+[`underdamped_brownian_bath`](@ref) implements the explicitly different
+spectral-density convention
+
+```math
+J(\omega)=\frac{\lambda^2\gamma\omega}
+{(\omega_0^2-\omega^2)^2+\gamma^2\omega^2},
+```
+
+with $0 < \gamma < 2\omega_0$, its two conjugate damped-oscillator poles, and a
+finite Matsubara tail. Here `coupling_strength=lambda` enters quadratically;
+it is not the Drude reorganization-energy parameter. This distinction is
+recorded in [`heom_bath_metadata`](@ref). Both physical constructors store the
+real finite-tail discrepancy returned by [`heom_bath_residue`](@ref). The
+residue may be signed for a finite approximation and is never clipped. These
+bath and terminator conventions also follow the open-source HEOM formulation
+described by Lambert *et al.*,
+[Phys. Rev. Research 5, 013181 (2023)](https://doi.org/10.1103/PhysRevResearch.5.013181).
+
+Physical-parameter inputs preserve Float32, Float64, or BigFloat on the
+Matsubara route. Generated coefficients are rounded once in that selected
+precision. Increase the number of expansion terms independently of hierarchy
+depth and integration accuracy.
+
+## Thermal and correlated preparation
+
+[`heom_thermal_state`](@ref) starts from the bare-system Gibbs state. Its
+three preparation modes make the approximation explicit:
+
+```julia
+factorized = heom_thermal_state(plan, H, beta)
+
+relaxed = heom_thermal_state(
+    plan, H, beta;
+    preparation=:relaxation, relaxation_time=20.0, steps=4000)
+
+stationary = heom_thermal_state(
+    plan, H, beta;
+    preparation=:stationary,
+    preconditioner=:block, krylovdim=40)
+```
+
+The factorized route has zero auxiliary ADOs. Real-time relaxation produces a
+correlated hierarchy after a user-selected finite time. The stationary route
+uses the factorized hierarchy only as the initial GMRES guess. Neither route
+is imaginary-time HEOM, and a stationary root is thermal only if the supplied
+system generator and physical bath satisfy equilibrium assumptions. Known
+physical-bath inverse-temperature metadata is checked exactly, but arbitrary
+Markovian drives cannot be certified automatically.
+
+## Identical independent local environments
+
+A global [`HEOMBath`](@ref) coupled through `Q=sum_i q_i` describes a common
+bath and contains cross-correlations between different particles. It is not
+an implementation of `N` independent local baths. A true local-bath HEOM
+requires symmetry-adapted occupations carrying both site and hierarchy labels;
+those coordinates do not fit the current global-ADO `HEOMPlan`.
+
+For a physically realizable damped pole, the library instead provides the
+exact finite-cutoff supersite embedding
+[`independent_local_pseudomode_model`](@ref):
+
+```julia
+embedding = independent_local_pseudomode_model(
+    N, Hlocal, Llocal;
+    nmax=3, frequency=omega_c,
+    coupling_strength=g, damping=kappa,
+    thermal_occupation=nbar)
+
+basis = embedding.basis
+model = embedding.model
+```
+
+Every system+pseudomode pair is one identical PI supersite, while `LocalJump`
+creates independent damping on every mode. This is a time-local pseudomode
+embedding in `system ⊗ mode` local basis order, not global-ADO HEOM. At zero occupation it realizes
+`c=g^2`, `nu=kappa/2+i*frequency` through
+`g*(L*a' + L'*a)`; both `L=sigma_-` and Hermitian `L=sigma_z` are supported.
+An arbitrary fitted complex pole set need not admit this positive realization.
+Converge the explicit oscillator cutoff `nmax`. Additional all-to-all system
+interactions must be lifted to the same supersite basis before adding them to
+the returned model.
+
 ## Repeated and matrix-free calculations
 
 [`HEOMPlan`](@ref) is immutable prepared data. [`HEOMWorkspace`](@ref) owns
-only application scratch: a system-Liouvillian workspace and two PI-sized
-vectors for left/right coupling actions. Reuse one workspace per task:
+only application scratch: a system-Liouvillian workspace and three PI-sized
+vectors for left/right and residue double-commutator actions. Reuse one
+workspace per task:
 
 ```julia
 work = HEOMWorkspace(plan)
@@ -155,9 +340,18 @@ y = similar(hierarchy0.data)
 apply!(y, plan, hierarchy0.data, work)  # autonomous system
 ```
 
-[`HEOMEvolutionWorkspace`](@ref) additionally owns the five hierarchy-sized
-vectors required by fixed-step RK4. Passing it to [`heom_evolve!`](@ref)
-avoids repeated allocations across a parameter or convergence scan.
+One application views the hierarchy as an `n_PI`-by-`M` matrix and evaluates
+the prepared system Liouvillian in bounded column batches. The packed edge
+incidences are ordered by source ADO and bath. Consequently, `Q_b*rho_n` and
+`rho_n*Q_b` are computed once for each nonempty `(n,b)` group and then
+scattered to every pole edge in that group. Forward and adjoint application
+share the same packed topology and use algebraically adjoint weights; this is
+only a contraction reordering and does not alter the hierarchy equations.
+
+[`HEOMEvolutionWorkspace`](@ref) additionally owns three hierarchy-sized
+vectors for low-storage fixed-step RK4: a stage state, one derivative, and a
+weighted stage accumulator. Passing it to [`heom_evolve!`](@ref) avoids
+repeated allocations across a parameter or convergence scan.
 
 ```julia
 evolution_work = HEOMEvolutionWorkspace(plan)
@@ -177,6 +371,7 @@ Integer bath coefficients and frequencies are accepted only when their exact
 values survive conversion to that prepared scalar type. Pass a suitably
 precise `BigFloat` value (and prepare the system at matching precision) when a
 large integer is not exactly representable; it is never silently rounded.
+Explicit scaled-coordinate factors obey the same no-narrowing rule.
 
 The bath owns a detached copy of its coupling, and a raw matrix supplied as
 the system generator is copied into the plan. Subsequent mutation of either
@@ -206,6 +401,9 @@ the final `consecutive` requested depth pairs and never normalizes or repairs
 either state. Repeat the report with a finer time step before attributing its
 entire difference to hierarchy depth. The reported trace error is drift from
 the supplied initial trace, not an assumption that the input was normalized.
+Pass `scaling=:scaled` (and optional `scaling_factors`) to the source-based
+overload, or use a scaled template plan; every prefix preserves the same
+per-pole similarity transform.
 
 [`heom_liouvillian`](@ref) adapts the plan to the package's synchronized
 `MatrixFreeLiouvillian` interface. Its physical trace vector is nonzero only
@@ -217,18 +415,51 @@ on the root ADO:
 ```
 
 This enables the existing matrix-free Krylov machinery without materializing
-the full hierarchy generator. [`heom_steady_state`](@ref) is the direct
-trace-fixed GMRES convenience:
+the full hierarchy generator. Both its forward and adjoint callbacks are
+exact; explicit task-owned hot loops may call `apply!` and `apply_adjoint!`
+with one `HEOMWorkspace`.
+
+[`heom_steady_state`](@ref) is the direct trace-fixed GMRES convenience. For
+larger hierarchies, `preconditioner=:block` extracts the common system block
+once and represents every non-root ADO-diagonal `n_PI`-by-`n_PI` block by a
+scalar shift. For `ComplexF32` and `ComplexF64`, one LAPACK Schur form normally
+serves every well-conditioned shift, so retained storage is
+`O(n_PI^2 + M)` even when all hierarchy decays differ. A reciprocal-condition
+guard assigns an ordinary LU factor to any unsafe shift. Unsupported scalar
+types use the generic LU route, sharing factors for exactly repeated shifts:
 
 ```julia
 stationary_hierarchy = heom_steady_state(
-    plan; krylovdim=40, maxiter=800, atol=1e-10, rtol=1e-8)
+    plan; preconditioner=:block,
+    krylovdim=40, maxiter=800, atol=1e-10, rtol=1e-8)
 rho_ss = heom_reduced_state(stationary_hierarchy)
 ```
+
+Use [`heom_block_preconditioner`](@ref) directly when its setup will be reused
+across solves. It omits only inter-ADO couplings from the preconditioning
+approximation; it does not modify the generator or convergence test. Inspect
+[`preconditioner_cost`](@ref) for the system right-hand sides, batched setup
+calls, Schur/LU factorizations, guarded and fallback shifts, retained
+coefficients, and per-application triangular solves. Every Schur application
+checks a transformed residual and finite output. Its two scratch vectors are
+lock-protected, so sharing one Schur preconditioner across concurrent solves is
+safe but serialized; construct one per concurrent solve for parallel
+throughput. `shift_backend=:lu` retains allocation-free concurrent application
+without shared numerical scratch. No precision-narrowing shortcut is used.
 
 Stationary solving requires an autonomous system generator. As for any finite
 HEOM calculation, convergence of `rho_ss` with hierarchy depth remains the
 user's responsibility.
+
+For adaptive or stiff integration, [`heom_problem`](@ref) returns an in-place
+`SciMLBase.ODEProblem` with its own captured HEOM workspace:
+
+```julia
+problem = heom_problem(plan, hierarchy0, (0.0, 10.0))
+```
+
+Choose and import a compatible SciML solver separately. Construct independent
+problems for concurrent solves because each problem owns mutable scratch.
 
 ## Reliability checklist
 
@@ -237,47 +468,44 @@ Check separately:
 1. convergence of the bath exponential decomposition;
 2. consistency of the left/right correlation decomposition, especially when
    `right_coefficients` is explicit;
-3. convergence in `max_depth`;
-4. convergence of the time step or Krylov residual;
-5. preservation of `tr(heom_reduced_state(state))`;
-6. Hermiticity and physicality of the root ADO.
+3. convergence in physical expansion terms and the effect of
+   `terminator=:residue`;
+4. convergence in `max_depth` and, when used, `importance_cutoff`;
+5. convergence of the time step or Krylov residual;
+6. preservation of `tr(heom_reduced_state(state))`;
+7. Hermiticity and physicality of the root ADO.
 
 The implementation never normalizes the hierarchy, clips eigenvalues,
 symmetrizes invalid couplings, changes explicit bath coefficients, or inserts
-a terminator. Default conjugate-pole completion is part of the documented
+a terminator without an explicit `terminator=:residue`. Default
+conjugate-pole completion is part of the documented
 correlation representation, not a state repair. The constructor rejects nonfinite coefficients, nondecaying
 frequencies, non-Hermitian fixed couplings, incompatible PI bases, and scalar
 types that would narrow the prepared system Liouvillian.
 
 ## Current limitations
 
-- The implemented hierarchy is the unscaled bosonic Gaussian-bath HEOM for
-  fixed Hermitian system couplings. Fermionic sign hierarchies and
-  non-Hermitian coupling pairs require a different construction.
+- The implemented hierarchy is the unscaled or exactly similarity-scaled
+  bosonic Gaussian-bath HEOM for fixed Hermitian system couplings. Fermionic
+  sign hierarchies and non-Hermitian coupling pairs require a different
+  construction.
 - Each declared environment couples through one global PI operator `Q_b`.
   A common bath coupled to a collective observable is therefore supported,
-  but this is not yet the specialized PI hierarchy for `N` independent local
-  non-Markovian baths.
-- Only a factorized initial hierarchy is constructed automatically. A user
-  may supply a complete `HEOMState` for a correlated initial condition, but
-  imaginary-time thermal preparation is not implemented.
-- `terminator=:none` is the only boundary rule. Markovian residue corrections,
-  low-temperature corrections, counterterms, and bath decompositions are not
-  inferred; include the appropriate system correction explicitly when the
-  chosen physical derivation requires one.
-- The hierarchy is unscaled. Deep, strongly coupled calculations may become
-  poorly conditioned even before their storage becomes prohibitive. A future
-  dynamically scaled hierarchy could improve that regime, but silently
-  rescaling only some ADOs would change the equations and is not done here.
+  but this is not the specialized global-ADO hierarchy for `N` independent
+  local non-Markovian baths. Use the finite-cutoff pseudomode embedding for a
+  realizable damped pole.
+- Factorized, finite real-time relaxed, and stationary correlated preparation
+  routes are provided. Imaginary-time HEOM and a certificate that an arbitrary
+  driven generator thermalizes to the interacting equilibrium are not.
+- The residue terminator is a zero-frequency white-noise approximation.
+  Low-temperature corrections beyond the retained physical expansion and
+  Hamiltonian counterterms are not inferred.
 - The number of ADOs grows as `binomial(K+D,D)`. PI compression removes the
   exponential system Hilbert space, not the combinatorial hierarchy growth
   caused by many bath poles and a large depth.
-- There is currently no HEOM-specific adjoint application or block
-  preconditioner. `heom_steady_state` uses the general forward matrix-free
-  trace-fixed GMRES implementation.
-- Fixed-step RK4 is the dedicated time-domain interface. There is no
-  HEOM-specific SciML problem wrapper; time-step convergence must be assessed
-  explicitly when using this path.
+- Fixed-step RK4 remains the dependency-free dedicated time-domain solver.
+  `heom_problem` supplies a SciML problem but no adaptive/stiff algorithm; add
+  and import the solver package appropriate to the calculation.
 
 The complete executable dephasing comparison is in
 [`examples/pi_heom.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/pi_heom.jl),
@@ -288,18 +516,30 @@ with discussion in
 
 ```@docs
 HEOMBath
+drude_lorentz_bath
+underdamped_brownian_bath
+heom_bath_metadata
+heom_bath_residue
+independent_local_pseudomode_model
 HEOMPlan
 HEOMWorkspace
 HEOMEvolutionWorkspace
 HEOMState
+HEOMBlockPreconditioner
+heom_block_preconditioner
 heom_number_ados
 heom_multiindices
+heom_ado_importances
+heom_hierarchy_metadata
+heom_coordinate_scale
 heom_initial_state
+heom_thermal_state
 heom_ado
 heom_reduced_state
 heom_evolve!
 heom_evolve
 heom_time_evolution
+heom_problem
 heom_depth_convergence
 heom_liouvillian
 heom_steady_state

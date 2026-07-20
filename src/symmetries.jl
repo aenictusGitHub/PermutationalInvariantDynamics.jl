@@ -77,6 +77,8 @@ Base.propertynames(::MatrixFreeSymmetryProjector,private::Bool=false)=
 _projector_range_dimension(P::MatrixFreeSymmetryProjector,n::Integer)=
     sum(count(mask) for mask in P.masks)
 
+_projector_charges(P::MatrixFreeSymmetryProjector)=(P.charge,)
+
 function SymmetryProjectorWorkspace(P::MatrixFreeSymmetryProjector)
     T=eltype(P)
     SymmetryProjectorWorkspace{T}([(zeros(T,size(V)),zeros(T,size(V)))
@@ -194,6 +196,10 @@ Base.propertynames(::JointSymmetryProjector,private::Bool=false)=private ?
     (:basis,:projectors,:charges,:charge,:range_dimension)
 
 _projector_range_dimension(P::JointSymmetryProjector,n::Integer)=P.range_dimension
+_projector_charges(P::JointSymmetryProjector)=P.charges
+
+_projector_has_only_trivial_charges(P,tolerance::Real)=
+    all(charge->abs(charge-one(charge))<=tolerance,_projector_charges(P))
 
 function JointSymmetryProjectorWorkspace(P::JointSymmetryProjector)
     JointSymmetryProjectorWorkspace(

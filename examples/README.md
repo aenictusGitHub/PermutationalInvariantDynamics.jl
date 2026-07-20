@@ -63,9 +63,9 @@ project and does not borrow a potentially incompatible global installation.
 | `composite_quantum_trajectories.jl` | [Composite stochastic systems](composite_quantum_trajectories.md) | Density-valued cross-factor quantum jumps, online statistics, and deterministic master comparison |
 | `cumulant_bridge.jl` | [Higher-order cumulant bridge](cumulant_bridge.md) | Exact PI local moments, neutral model metadata, and closure-error comparisons |
 | `correlated_reservoirs.jl` | [Correlated Kossakowski reservoirs](correlated_reservoirs.md) | Cross-correlated local/collective one-body noise and preallocated matrix schedules |
-| `debecker2026_all_to_all_ising_pseudomodes.jl` | [All-to-all Ising spins with local pseudomodes](debecker2026_all_to_all_ising_pseudomodes.md) | Exact PI supersites, spin-only negativity, a parity-selected x-GHZ witness, and pseudomode-cutoff checks |
+| `debecker2026_all_to_all_ising_pseudomodes.jl` | [All-to-all Ising spins with local pseudomodes](debecker2026_all_to_all_ising_pseudomodes.md) | Exact PI supersites, spin-only negativity, a strong-parity-reduced x-GHZ steady solve, fitted-boundary text exports, and pseudomode-cutoff checks |
 | `driven_qubits.jl` | [Driven qubits](driven_qubits.md) | Coherent drive and local decay |
-| `floquet_periodic_decay.jl` | [Floquet decay](floquet_periodic_decay.md) | Periodic Liouvillians |
+| `floquet_periodic_decay.jl` | [Floquet decay](floquet_periodic_decay.md) | Reusable matrix-free period action, selected multipliers, symmetry restriction, and a trace-fixed periodic state |
 | `gambetta2019_dissipative_discrete_time_crystal.jl` | [Dissipative discrete time crystal](gambetta2019_dissipative_discrete_time_crystal.md) | Floquet period-doubling precursor |
 | `huelga1997_ramsey_dephasing.jl` | [Ramsey dephasing](huelga1997_ramsey_dephasing.md) | Independent dephasing |
 | `iemini2018_boundary_time_crystal.jl` | [Boundary time crystal](iemini2018_boundary_time_crystal.md) | Gap closing and oscillatory modes |
@@ -77,7 +77,7 @@ project and does not borrow a potentially incompatible global installation.
 | `paper_models.jl` | [Paper model constructors](paper_models.md) | Reusable literature models |
 | `pbody_pair_processes.jl` | [Pair processes](pbody_pair_processes.md) | Appendix-D p-body terms |
 | `parameter_scan.jl` | [Prepared parameter scans](parameter_scan.md) | Continuation, restart, tabular diagnostics, and threaded independent points |
-| `pi_heom.jl` | [PI--HEOM](pi_heom.md) | Non-Markovian exponential-bath hierarchy, analytic dephasing, and depth comparisons |
+| `pi_heom.jl` | [PI--HEOM](pi_heom.md) | Exactly scaled exponential-bath hierarchy, analytic dephasing, depth comparisons, SciML construction, and block-preconditioned GMRES |
 | `piccitto2021_interacting_time_crystal.jl` | [Interacting boundary time crystal](piccitto2021_interacting_time_crystal.md) | Nonlinear collective-spin slow modes |
 | `pra110_062208_lmg.jl` | [Dissipative LMG model](pra110_062208_lmg.md) | Exact finite PI versus finite-product and thermodynamic mean-field predictions |
 | `pra94_033838_superradiance.jl` | [Correlated superradiance](pra94_033838_superradiance.md) | Two-atom analytic benchmark, `N=30` radiated pulse, and peak-state Schur blocks |
@@ -92,7 +92,7 @@ project and does not borrow a potentially incompatible global installation.
 | `spin_phase_space.jl` | [Sector-resolved spin phase space](spin_phase_space.md) | Multi-sector Husimi-Q and spin-Wigner data with dependency-free SVG rendering |
 | `steady_state_methods.jl` | [Steady-state solvers](steady_state_methods.md) | Typed solver choices, shift-invert, matrix-free GMRES, and preconditioning |
 | `streaming_output.jl` | [Streaming output](streaming_output.md) | Observable-only dynamics and state-free online trajectory statistics |
-| `weak_pi_trajectories.jl` | [Weak-PI pseudo-ket trajectories](weak_pi_trajectories.md) | Zhang--Mølmer Schur Kraus paths versus density paths and two deterministic PI solvers, with sector and efficiency figures |
+| `weak_pi_trajectories.jl` | [Weak-PI pseudo-ket trajectories](weak_pi_trajectories.md) | Zhang--Mølmer Schur Kraus paths, event-driven confidence stopping, stationary batch diagnostics, and deterministic PI comparisons |
 | `wiseman_milburn_homodyne.jl` | [Homodyne PI trajectories](wiseman_milburn_homodyne.md) | Conditional collective fluorescence and its unconditional ensemble limit |
 | `zhang2018_superradiant_trajectories.jl` | [Zhang--Mølmer superradiant trajectories](zhang2018_superradiant_trajectories.md) | Collective/local radiated pulses: trajectory ensemble versus population master equation |
 

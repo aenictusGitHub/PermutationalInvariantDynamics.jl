@@ -61,6 +61,23 @@
 
     @testset "prepared and threaded batches" begin
         plan=@inferred TrajectoryPlan(model)
+        fixed_work=TrajectoryWorkspace(plan,excited;mode=:fixed)
+        full_work=TrajectoryWorkspace(plan,excited)
+        @test fixed_work.mode===:fixed
+        @test all(isempty,(fixed_work.k3,fixed_work.k4,
+                           fixed_work.k5,fixed_work.k6,fixed_work.k7,
+                           fixed_work.trial,fixed_work.embedded,fixed_work.start))
+        @test sum(length,(fixed_work.tmp,fixed_work.k1,fixed_work.k2))==
+              3length(excited.data)
+        @test Base.summarysize(fixed_work)<Base.summarysize(full_work)
+        @test quantum_trajectory(plan,excited,[0.0,0.02];dt=0.01,
+            rng=MersenneTwister(912),workspace=fixed_work) isa QuantumTrajectory
+        @test_throws ArgumentError quantum_trajectory(
+            plan,excited,[0.0,0.02];algorithm=:event,dt=0.01,
+            rng=MersenneTwister(912),workspace=fixed_work)
+        @test_throws ArgumentError TrajectoryWorkspace(plan,excited;mode=:invalid)
+        fixed_batch=TrajectoryBatchWorkspace(plan,excited;workers=2,mode=:fixed)
+        @test all(worker->worker.mode===:fixed,fixed_batch.workers)
         batch=TrajectoryBatchWorkspace(plan,excited;workers=max(2,Threads.nthreads()))
         @test all(worker->worker.plan===plan,batch.workers)
         @test batch.workers[1].tmp!==batch.workers[2].tmp
@@ -128,6 +145,134 @@
                   for i in eachindex(chunked_serial))
     end
 
+    @testset "streamed trajectory steady state" begin
+        steady_basis=PIBasis(1,2)
+        steady_initial=iid_pure_state(
+            steady_basis,ComplexF64[0,1])
+        steady_model=PIModel(steady_basis,
+            [LocalJump(sm;rate=3.0),
+             LocalJump(adjoint(sm);rate=2.0)])
+        steady_plan=TrajectoryPlan(steady_model)
+        steady_batch=TrajectoryBatchWorkspace(
+            steady_plan,steady_initial;workers=max(2,Threads.nthreads()))
+        steady_times=[0.0,0.1,0.2,0.3]
+        path_count=8
+        explicit_paths=quantum_trajectories(
+            steady_plan,steady_initial,steady_times,path_count;
+            seed=184,dt=0.01,workspace=steady_batch)
+        path_means=[reduce(+,
+            (path.states[index].data for index in 2:length(steady_times)))/3
+            for path in explicit_paths]
+        reference_mean=reduce(+,path_means)/path_count
+        reference_m2=sum(norm(path_mean-reference_mean)^2
+                         for path_mean in path_means)
+        reference_spread=sqrt(reference_m2/(path_count-1))
+        reference_standard_error=reference_spread/sqrt(path_count)
+        excitation=ComplexF64[0 0;0 1]
+        excitation_operator=collective_operator(steady_basis,excitation)
+        path_excitations=[real(dot(excitation_operator.data,path_mean))
+                          for path_mean in path_means]
+        mean_excitation=sum(path_excitations)/path_count
+        variance_excitation=sum(abs2(value-mean_excitation)
+            for value in path_excitations)/(path_count-1)
+
+        estimate=trajectory_steady_state(
+            steady_plan,steady_initial;
+            trajectories=path_count,settling_time=0.1,
+            samples_per_trajectory=3,sampling_interval=0.1,
+            seed=184,dt=0.01,workspace=steady_batch,
+            observables=(excitation=excitation,),return_info=true)
+        @test estimate isa TrajectorySteadyStateResult
+        @test estimate.state.data≈reference_mean atol=2e-15
+        @test estimate.trajectory_count==path_count
+        @test estimate.samples_per_trajectory==3
+        @test estimate.sampling_times≈steady_times[2:end] atol=eps(Float64)
+        @test estimate.sample_spread≈reference_spread atol=2e-15
+        @test estimate.standard_error≈reference_standard_error atol=2e-15
+        @test estimate.trace_error≈abs(trace(estimate.state)-1) atol=1e-15
+        sparse_steady=liouvillian(steady_model;representation=:sparse)
+        @test estimate.residual≈norm(sparse_steady*estimate.state.data) atol=2e-14
+        @test estimate.relative_residual≈
+            estimate.residual/max(norm(estimate.state.data),1) atol=2e-14
+        observable_estimate=estimate.observables.observables[:excitation]
+        @test observable_estimate.mean≈mean_excitation atol=2e-15
+        @test observable_estimate.variance≈variance_excitation atol=2e-15
+        @test observable_estimate.standard_error≈
+            sqrt(variance_excitation/path_count) atol=2e-15
+        @test observable_estimate.lower<=observable_estimate.mean<=
+              observable_estimate.upper
+        @test estimate.metadata.worker_count==1
+        @test estimate.metadata.sampling_interval==0.1
+        @test Base.summarysize(estimate)<Base.summarysize(explicit_paths)
+        @test occursin("HS standard error",sprint(show,estimate))
+
+        state_only=trajectory_steady_state(
+            steady_plan,steady_initial;
+            trajectories=path_count,settling_time=0.1,
+            samples_per_trajectory=3,sampling_interval=0.1,
+            seed=184,dt=0.01,workspace=steady_batch)
+        @test state_only isa PIState
+        @test state_only.data≈estimate.state.data atol=2e-15
+
+        event_estimate=trajectory_steady_state(
+            steady_plan,steady_initial;
+            trajectories=2,settling_time=0.05,dt=0.05,dtmax=0.05,
+            algorithm=:event,seed=713,return_info=true)
+        @test event_estimate.sampling_times==[0.05]
+        @test abs(trace(event_estimate.state)-1)<2e-10
+
+        if Threads.nthreads()>1
+            threaded_estimate=trajectory_steady_state(
+                steady_plan,steady_initial;
+                trajectories=path_count,settling_time=0.1,
+                samples_per_trajectory=3,sampling_interval=0.1,
+                seed=184,dt=0.01,threaded=true,workspace=steady_batch,
+                observables=(excitation=excitation,),return_info=true)
+            @test threaded_estimate.state.data≈estimate.state.data atol=2e-14
+            @test threaded_estimate.sample_spread≈
+                  estimate.sample_spread atol=2e-14
+            @test threaded_estimate.observables.observables[:excitation].mean≈
+                  observable_estimate.mean atol=2e-14
+            @test threaded_estimate.metadata.threaded
+        end
+
+        driven_steady=PIModel(steady_basis,
+            [LocalJump(sm;rate=(t,p)->one(t))])
+        @test_throws ArgumentError trajectory_steady_state(
+            driven_steady,steady_initial;
+            trajectories=2,settling_time=0.1,dt=0.01)
+        @test_throws ArgumentError trajectory_steady_state(
+            steady_plan,steady_initial;
+            trajectories=1,settling_time=0.1,dt=0.01)
+        @test_throws ArgumentError trajectory_steady_state(
+            steady_plan,steady_initial;
+            trajectories=big(typemax(Int))+1,settling_time=0.1,dt=0.01)
+        @test_throws ArgumentError trajectory_steady_state(
+            steady_plan,steady_initial;
+            trajectories=2,settling_time=0.0,dt=0.01)
+        @test_throws ArgumentError trajectory_steady_state(
+            steady_plan,steady_initial;
+            trajectories=2,settling_time=0.1,
+            samples_per_trajectory=2,dt=0.01)
+        @test_throws ArgumentError trajectory_steady_state(
+            steady_plan,steady_initial;
+            trajectories=2,settling_time=0.1,
+            samples_per_trajectory=2,sampling_interval=0.0,dt=0.01)
+        @test_throws ArgumentError trajectory_steady_state(
+            steady_plan,steady_initial;
+            trajectories=2,settling_time=1.0,
+            samples_per_trajectory=2,
+            sampling_interval=eps(Float64)/4,dt=0.01)
+        @test_throws ArgumentError trajectory_steady_state(
+            steady_plan,steady_initial;
+            trajectories=2,settling_time=0.1,dt=0.01,
+            observables=(bad=sm,),return_info=true)
+        @test_throws ArgumentError trajectory_steady_state(
+            steady_plan,steady_initial;
+            trajectories=2,settling_time=0.1,dt=0.01,
+            observables=(excitation=excitation,))
+    end
+
     @testset "adaptive event timing" begin
         b1=PIBasis(1,2);excited1=iid_pure_state(b1,ComplexF64[0,1])
         decay=PIModel(b1,[LocalJump(sm)])
@@ -148,6 +293,49 @@
             dtmax=0.6,algorithm=:adaptive,rng=MersenneTwister(seed),
             abstol=1e-11,reltol=1e-10,event_time_tolerance=1e-11)
         @test driven_event.jump_times[1]≈expected_driven atol=3e-8
+
+        # One accepted DOPRI trial evaluates every scalar channel rate once
+        # per stage. Dense event localization and root-state reconstruction
+        # reuse those seven stages and perform no additional RHS evaluation.
+        rate_calls=Ref(0)
+        counted_decay=PIModel(b1,[LocalJump(sm;rate=(t,p)->begin
+            rate_calls[]+=1
+            1+t
+        end)])
+        counted_plan=TrajectoryPlan(counted_decay)
+        counted_work=TrajectoryWorkspace(counted_plan,excited1)
+        hazard,error=PermutationalInvariantDynamics._conditional_dopri_trial!(
+            counted_work,excited1.data,b1,0.0,0.4,nothing,
+            counted_plan.liouvillian.tracevec,1e-11,1e-10)
+        @test isfinite(hazard)&&isfinite(error)
+        @test rate_calls[]==7
+        PermutationalInvariantDynamics._prepare_dopri_dense_output!(
+            counted_work)
+        root=PermutationalInvariantDynamics._dopri_dense_root(
+            counted_work,0.4,hazard/2,hazard,1e-12)
+        @test root!==nothing
+        PermutationalInvariantDynamics._dopri_dense_state!(
+            counted_work.tmp,excited1.data,counted_work,0.4,root/0.4)
+        @test rate_calls[]==7
+
+        # Combining Q=sum_c gamma_c K_c'K_c gives the same normalized
+        # no-jump RHS as the channel-by-channel reference contraction.
+        combined_model=PIModel(b1,[LocalJump(sm;rate=0.7),
+            LocalJump(adjoint(sm);rate=0.2)])
+        combined_plan=TrajectoryPlan(combined_model)
+        combined_work=TrajectoryWorkspace(combined_plan,excited1)
+        combined_rhs=similar(excited1.data)
+        combined_total=PermutationalInvariantDynamics.
+            _conditional_action_and_intensity!(combined_rhs,excited1.data,
+                combined_work,b1,0.0,nothing,
+                combined_plan.liouvillian.tracevec)
+        reference_rhs=zeros(eltype(excited1.data),length(excited1.data))
+        reference_total=PermutationalInvariantDynamics.
+            _apply_conditional_jumps!(reference_rhs,excited1.data,
+                combined_work,b1,0.0,nothing,combined_plan.jumps,1)
+        @. reference_rhs=reference_rhs+reference_total*excited1.data
+        @test combined_total≈reference_total atol=2e-14
+        @test combined_rhs≈reference_rhs atol=3e-14 rtol=3e-14
 
         nojump=quantum_trajectory(hm,excited,[0.0,0.5];dt=0.2,dtmax=0.2,
             algorithm=:event,rng=MersenneTwister(4),abstol=1e-11,reltol=1e-10)
@@ -271,6 +459,13 @@
     inferred_batch=@inferred quantum_trajectories(model32,excited32,
         Float32[0,0.02],9;seed=72,dt=0.01f0,threaded=true)
     @test length(inferred_batch)==9
+    steady32=trajectory_steady_state(plan32,excited32;
+        trajectories=2,settling_time=0.02f0,dt=0.01f0,return_info=true)
+    @test eltype(steady32.state.data)===ComplexF32
+    @test eltype(steady32.sampling_times)===Float32
+    @test steady32.sample_spread isa Float32
+    @test steady32.standard_error isa Float32
+    @test steady32.residual isa Float32
 
     # Empty models inherit the initial-state precision through the convenience
     # API, or accept it explicitly when a reusable plan is constructed.

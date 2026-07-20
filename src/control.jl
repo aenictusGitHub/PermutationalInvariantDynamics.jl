@@ -57,7 +57,7 @@ function SteadyStateGradientPlan(source,state::PIState;operator_scale=nothing,
     trace_error<=tolerance||throw(ArgumentError(
         "implicit-gradient reference state is not trace one: error=$trace_error"))
     probe=zeros(T,length(state.data));image=similar(probe)
-    work=_liouvillian_workspace(operator)
+    work=_linear_operator_workspace(operator)
     _research_apply!(image,operator,state.data,work)
     residual=norm(image)
     residual<=R(atol)+R(rtol)*max(norm(state.data),one(R))||throw(ArgumentError(
@@ -82,7 +82,7 @@ function SteadyStateGradientWorkspace(plan::SteadyStateGradientPlan;
                                       krylovdim::Integer=30)
     T=eltype(plan.trace_vector);n=length(plan.trace_vector);v=zeros(T,n)
     SteadyStateGradientWorkspace(v,similar(v),similar(v),similar(v),
-        KrylovWorkspace(T,n,krylovdim),_liouvillian_workspace(plan.operator),plan)
+        KrylovWorkspace(T,n,krylovdim),_linear_operator_workspace(plan.operator),plan)
 end
 
 """Implicit tangent states and optional observable gradients."""
@@ -125,7 +125,7 @@ function implicit_steady_state_gradient(plan::SteadyStateGradientPlan,
     for derivative in prepared
         size(derivative)==size(plan.operator)||throw(DimensionMismatch(
             "generator derivative has the wrong dimensions"))
-        derivative_work=_liouvillian_workspace(derivative)
+        derivative_work=_linear_operator_workspace(derivative)
         _research_apply!(w.rhs,derivative,plan.state.data,derivative_work)
         trace_forcing=abs(dot(plan.trace_vector,w.rhs))
         trace_forcing<=absolute+relative*max(norm(w.rhs),one(R))||throw(ArgumentError(
@@ -270,8 +270,8 @@ function checkpointed_adjoint_gradient(base,derivatives,rho0::PIState,
     ts=R.(raw_times);all(isfinite,ts)&&all(diff(ts).>zero(R))||throw(ArgumentError(
         "control times must be finite and strictly increasing"))
     control_values=Matrix{R}(controls)
-    works=(_liouvillian_workspace(prepared_base),
-           map(_liouvillian_workspace,prepared_derivatives)...)
+    works=(_linear_operator_workspace(prepared_base),
+           map(_linear_operator_workspace,prepared_derivatives)...)
     n=length(rho0.data);current=T.(rho0.data)
     temporary=zeros(T,n);k1=similar(temporary);k2=similar(temporary)
     k3=similar(temporary);k4=similar(temporary);stage=similar(temporary)

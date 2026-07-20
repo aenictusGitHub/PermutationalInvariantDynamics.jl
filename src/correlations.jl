@@ -34,13 +34,7 @@ end
 _correlation_generator(model::PIModel)=compile(model;backend=:matrixfree)
 _correlation_generator(L)=L
 
-function _correlation_basis(L)
-    L isa PIModel&&return L.basis
-    L isa CompiledPIModel&&return L.plan.basis
-    L isa LiouvillianPlan&&return L.basis
-    L isa MatrixFreeLiouvillian&&L.plan!==nothing&&return L.plan.basis
-    nothing
-end
+_correlation_basis(L)=_operator_basis(L)
 
 function _correlation_trace_vector(b::PIBasis,::Type{R}) where R<:AbstractFloat
     tau=zeros(Complex{R},length(b))
@@ -128,11 +122,19 @@ end
 Base.eltype(::CorrelationPlan{B,L,T}) where {B,L,T}=Complex{T}
 
 """
-    CorrelationWorkspace(plan; krylovdim=30)
+    CorrelationWorkspace(plan; krylovdim=30, mode=:both)
 
 Caller-owned scratch for time-domain quantum regression and matrix-free
 shifted-GMRES spectra.  A workspace is tied to one plan and may be reused
 sequentially, but must not be shared concurrently between tasks.
+
+The default `mode=:both` preserves the complete time- and frequency-domain
+workspace.  Use `mode=:time` when only [`two_time_correlation`](@ref),
+[`delayed_second_order_correlation`](@ref), or the sampled
+[`correlation_spectrum_fft`](@ref) path is required.  The time-only mode omits
+the two frequency-domain vectors and the restarted-GMRES basis; passing it to
+[`stationary_correlation_spectrum`](@ref) raises instead of allocating that
+storage lazily.
 """
 struct CorrelationWorkspace{P,V,E,K}
     plan::P
@@ -144,12 +146,17 @@ struct CorrelationWorkspace{P,V,E,K}
     krylov::K
 end
 
-function CorrelationWorkspace(plan::CorrelationPlan;krylovdim::Integer=30)
+function CorrelationWorkspace(plan::CorrelationPlan;krylovdim::Integer=30,
+                              mode::Symbol=:both)
     krylovdim>0||throw(ArgumentError("krylovdim must be positive"))
+    mode in (:both,:time)||throw(ArgumentError(
+        "correlation workspace mode must be :both or :time"))
     n=length(plan.basis);T=eltype(plan)
-    state=zeros(T,n);product=zeros(T,n);rhs=zeros(T,n);solution=zeros(T,n)
+    state=zeros(T,n);product=zeros(T,n)
+    rhs=mode===:both ? zeros(T,n) : zeros(T,0)
+    solution=mode===:both ? zeros(T,n) : zeros(T,0)
     evolution=EvolutionWorkspace(plan.generator,state)
-    krylov=KrylovWorkspace(T,n,krylovdim)
+    krylov=mode===:both ? KrylovWorkspace(T,n,krylovdim) : nothing
     CorrelationWorkspace(plan,state,product,rhs,solution,evolution,krylov)
 end
 
@@ -158,8 +165,21 @@ function _check_correlation_workspace(work::CorrelationWorkspace,
     work.plan===plan||throw(ArgumentError(
         "correlation workspace belongs to a different plan"))
     n=length(plan.basis)
-    all(v->length(v)==n,(work.state,work.product,work.rhs,work.solution))||
+    all(v->length(v)==n,(work.state,work.product))||
         throw(DimensionMismatch("correlation workspace has the wrong dimension"))
+    if work.krylov===nothing
+        isempty(work.rhs)&&isempty(work.solution)||throw(DimensionMismatch(
+            "time-only correlation workspace has unexpected frequency-domain storage"))
+    else
+        length(work.rhs)==n&&length(work.solution)==n||throw(DimensionMismatch(
+            "correlation workspace has the wrong frequency-domain dimension"))
+    end
+    work
+end
+
+function _require_correlation_spectrum_workspace(work::CorrelationWorkspace)
+    work.krylov===nothing&&throw(ArgumentError(
+        "stationary correlation spectra require a mode=:both CorrelationWorkspace"))
     work
 end
 
@@ -243,25 +263,8 @@ function _correlation_evolve_interval!(state,plan::CorrelationPlan,t0,t1,
     # QRT requires a two-time propagator with an explicit time origin and is
     # outside this stationary-delay API rather than being approximated by
     # silently freezing a schedule.
-    h=(t1-t0)/steps
-    evolution=work.evolution
-    t=t0
-    for _ in 1:steps
-        _evolution_action!(evolution.k1,plan.generator,state,t,nothing,evolution)
-        @. evolution.tmp=state+(h/2)*evolution.k1
-        _evolution_action!(evolution.k2,plan.generator,evolution.tmp,t+h/2,
-                           nothing,evolution)
-        @. evolution.tmp=state+(h/2)*evolution.k2
-        _evolution_action!(evolution.k3,plan.generator,evolution.tmp,t+h/2,
-                           nothing,evolution)
-        @. evolution.tmp=state+h*evolution.k3
-        _evolution_action!(evolution.k4,plan.generator,evolution.tmp,t+h,
-                           nothing,evolution)
-        @. state=state+(h/6)*(evolution.k1+2evolution.k2+
-                              2evolution.k3+evolution.k4)
-        t+=h
-    end
-    state
+    evolve!(state,plan.generator,state,(t0,t1);steps,
+            parameters=nothing,workspace=work.evolution)
 end
 
 """
@@ -291,7 +294,7 @@ function two_time_correlation!(destination::AbstractVector,
     promote_type(eltype(destination),eltype(plan))===eltype(destination)||
         throw(ArgumentError("correlation destination cannot represent the plan scalar type"))
     isempty(ts)&&return destination
-    work=workspace===nothing ? CorrelationWorkspace(plan) : workspace
+    work=workspace===nothing ? CorrelationWorkspace(plan;mode=:time) : workspace
     _check_correlation_workspace(work,plan)
     _correlation_seed!(work.state,plan,rho,work)
     previous=zero(first(ts))
@@ -354,7 +357,7 @@ function delayed_second_order_correlation(L,rho::PIState,c::PIOperator,delays;
         stationarity_atol=nothing,stationarity_rtol=nothing)
     number=adjoint(c)*c
     plan=CorrelationPlan(L,number,c;right=adjoint(c))
-    work=CorrelationWorkspace(plan)
+    work=CorrelationWorkspace(plan;mode=:time)
     if normalized
         R=_real_float_type(eltype(plan))
         atol=stationarity_atol===nothing ? R(100)*eps(R) :
@@ -417,6 +420,22 @@ struct _CorrelationShiftedOperator{P,W,V,R}
     omega::R
 end
 
+struct _CorrelationUnshiftedOperator{P,W,V}
+    plan::P
+    work::W
+    stationary_state::V
+end
+
+function (operator::_CorrelationUnshiftedOperator)(destination,source)
+    plan=operator.plan;work=operator.work
+    _evolution_action!(destination,plan.generator,source,
+                       zero(_real_float_type(eltype(plan))),nothing,
+                       work.evolution)
+    trace_component=dot(plan.tracevec,source)
+    @. destination=-destination+trace_component*operator.stationary_state
+    destination
+end
+
 
 function (operator::_CorrelationShiftedOperator)(destination,source)
     plan=operator.plan;work=operator.work
@@ -431,16 +450,89 @@ end
 
 function _correlation_shifted_solve!(work::CorrelationWorkspace,
         plan::CorrelationPlan,stationary_state,omega,atol,rtol,maxiter)
+    _require_correlation_spectrum_workspace(work)
     fill!(work.solution,zero(eltype(work.solution)))
     shifted=_CorrelationShiftedOperator(plan,work,stationary_state,omega)
     _gmres!(work.solution,shifted,work.rhs,work.krylov;
             atol=atol,rtol=rtol,maxiter=maxiter)
 end
 
+
+function _correlation_multishift_capacity(work::CorrelationWorkspace,count,
+        memory_budget,batchsize,supplied_workspace)
+    memory_budget isa Integer&&!(memory_budget isa Bool)&&memory_budget>0||
+        throw(ArgumentError("shared_memory_budget must be a positive integer"))
+    batchsize===nothing||(batchsize isa Integer&&!(batchsize isa Bool)&&
+        batchsize>0)||throw(ArgumentError(
+        "multishift_batchsize must be a positive integer or nothing"))
+    n=length(work.plan.basis);m=size(work.krylov.H,2);T=eltype(work.plan)
+    if supplied_workspace!==nothing
+        size(supplied_workspace.V,1)==n||throw(DimensionMismatch(
+            "multi-shift workspace has the wrong operator dimension"))
+        size(supplied_workspace.H,2)>=min(n,m)||throw(DimensionMismatch(
+            "multi-shift workspace Krylov dimension is too small"))
+        eltype(supplied_workspace.V)===T||throw(ArgumentError(
+            "multi-shift workspace has the wrong scalar type"))
+    end
+    scalar_bytes=BigInt(_scalar_retained_bytes(T))
+    # Additional live storage: the shared Arnoldi workspace plus the bounded
+    # solution block. The ordinary CorrelationWorkspace and immutable plan
+    # are caller-owned baseline storage and are not counted again.
+    if supplied_workspace!==nothing&&batchsize!==nothing&&
+       batchsize!=supplied_workspace.nshifts
+        throw(ArgumentError(
+            "multishift_batchsize must equal the supplied workspace shift count"))
+    end
+    workspace_entries=supplied_workspace===nothing ?
+        BigInt(n)*(m+3)+2BigInt(m+1)*m+BigInt(m+1) : BigInt(0)
+    available=BigInt(memory_budget)-workspace_entries*scalar_bytes
+    available<=0&&return 0
+    per_shift=BigInt(n)*scalar_bytes
+    possible=Int(min(BigInt(count),available÷max(per_shift,BigInt(1)),
+                     BigInt(typemax(Int))))
+    if supplied_workspace!==nothing
+        required=supplied_workspace.nshifts
+        return count>=required&&possible>=required ? required : 0
+    end
+    capacity=possible
+    batchsize===nothing ? capacity : min(capacity,Int(batchsize))
+end
+
+function _correlation_multishift_workspace(work,count,supplied)
+    n=length(work.plan.basis);m=size(work.krylov.H,2);T=eltype(work.plan)
+    if supplied!==nothing
+        supplied.nshifts==count||throw(DimensionMismatch(
+            "multi-shift workspace has the wrong shift count"))
+        size(supplied.V,1)==n||throw(DimensionMismatch(
+            "multi-shift workspace has the wrong operator dimension"))
+        size(supplied.H,2)>=min(n,m)||throw(DimensionMismatch(
+            "multi-shift workspace Krylov dimension is too small"))
+        eltype(supplied.V)===T||throw(ArgumentError(
+            "multi-shift workspace has the wrong scalar type"))
+        return supplied,true
+    end
+    MultiShiftGMRESWorkspace(T,n,count,m),false
+end
+
+function _correlation_sequential_diagnostic(result)
+    merge(result,(;shared_arnoldi=false,fallback=true))
+end
+
+function _correlation_multishift_diagnostic(result,column,batch)
+    (;converged=result.converged[column],iterations=result.iterations,
+      restarts=0,restart_residual=result.projected_residuals[column],
+      residual=result.residuals[column],
+      raw_residual=result.residuals[column],shared_arnoldi=true,
+      fallback=false,batch,operator_applications=result.operator_applications,
+      krylov_dimension=result.krylov_dimension)
+end
+
 """
     stationary_correlation_spectrum(plan, rho, frequencies;
         connected=true, krylovdim=nothing, maxiter=500, atol=nothing,
-        rtol=nothing, workspace=nothing)
+        rtol=nothing, workspace=nothing, solver=:auto,
+        shared_memory_budget=64*1024^2, multishift_batchsize=nothing,
+        multishift_workspace=nothing)
 
 Evaluate the one-sided stationary spectrum
 
@@ -464,13 +556,26 @@ The return value is a named tuple containing `frequencies`, complex `values`,
 GMRES diagnostics, `connected`, and `convention=:one_sided_exp_minus_iomega_t`.
 No factor `2` or real part is applied; users needing a conventional two-sided
 Hermitian spectrum may form `2real.(values)`.
+`solver=:auto` shares one Arnoldi factorization across compatible frequency
+shifts in bounded batches, then retries only unconverged columns with the
+restarted single-shift solver. `solver=:sequential` selects the historical
+path, while `solver=:multishift` requires every shared-Arnoldi solve to
+converge. `shared_memory_budget` bounds the additional shared workspace and
+solution block; an insufficient automatic budget falls back to sequential
+solves. A compatible [`MultiShiftGMRESWorkspace`](@ref) may be supplied for
+repeated calls. Its fixed `nshifts` sets the batch size: `:auto` sends a final
+short remainder through the sequential solver, while `:multishift` requires
+the frequency count to be an exact multiple.
+
 Frequencies and explicit tolerances must be representable without narrowing
 in the plan's real precision; nonrepresentable integer frequencies also
 raise.
 """
 function stationary_correlation_spectrum(plan::CorrelationPlan,rho::PIState,
         frequencies;connected::Bool=true,krylovdim=nothing,
-        maxiter::Integer=500,atol=nothing,rtol=nothing,workspace=nothing)
+        maxiter::Integer=500,atol=nothing,rtol=nothing,workspace=nothing,
+        solver::Symbol=:auto,shared_memory_budget::Integer=64*1024^2,
+        multishift_batchsize=nothing,multishift_workspace=nothing)
     _check_correlation_state(plan,rho)
     _require_autonomous(plan.generator,"stationary correlation spectra")
     omegas=frequencies isa AbstractVector ? frequencies : collect(frequencies)
@@ -486,6 +591,11 @@ function stationary_correlation_spectrum(plan::CorrelationPlan,rho::PIState,
     atolR>=zero(R)&&rtolR>=zero(R)||throw(ArgumentError(
         "spectrum tolerances must be nonnegative"))
     maxiter>0||throw(ArgumentError("maxiter must be positive"))
+    solver in (:auto,:sequential,:multishift)||throw(ArgumentError(
+        "solver must be :auto, :sequential, or :multishift"))
+    multishift_workspace===nothing||
+        multishift_workspace isa MultiShiftGMRESWorkspace||throw(ArgumentError(
+        "multishift_workspace must be a MultiShiftGMRESWorkspace or nothing"))
     if krylovdim!==nothing
         krylovdim isa Integer&&krylovdim>0||throw(ArgumentError(
             "krylovdim must be a positive integer or nothing"))
@@ -493,6 +603,7 @@ function stationary_correlation_spectrum(plan::CorrelationPlan,rho::PIState,
     work=workspace===nothing ? CorrelationWorkspace(plan;
         krylovdim=krylovdim===nothing ? 30 : krylovdim) : workspace
     _check_correlation_workspace(work,plan)
+    _require_correlation_spectrum_workspace(work)
     if workspace!==nothing&&krylovdim!==nothing
         size(work.krylov.H,2)>=min(krylovdim,length(plan.basis))||
             throw(ArgumentError("correlation workspace Krylov dimension is too small"))
@@ -502,19 +613,77 @@ function stationary_correlation_spectrum(plan::CorrelationPlan,rho::PIState,
     baseline=_stationary_correlation_seed!(work,plan,rho,connected)
     values=Vector{eltype(plan)}(undef,length(omegas))
     diagnostics=Vector{NamedTuple}(undef,length(omegas))
-    for index in eachindex(omegas)
-        omega=_correlation_real_input(R,omegas[index],"spectrum frequency")
-        result=_correlation_shifted_solve!(
-            work,plan,rho.data,omega,atolR,rtolR,maxiter)
-        result.converged||throw(ArgumentError(
-            "shifted GMRES did not converge at frequency $(omegas[index]) " *
-            "in $(result.iterations) iterations; residual=$(result.raw_residual)"))
-        values[index]=_correlation_readout(plan,work.solution)
-        diagnostics[index]=result
+    converted=R[_correlation_real_input(R,omega,"spectrum frequency")
+                for omega in omegas]
+    capacity=solver===:sequential ? 0 : _correlation_multishift_capacity(
+        work,length(omegas),shared_memory_budget,multishift_batchsize,
+        multishift_workspace)
+    if solver===:multishift&&!isempty(omegas)&&capacity<1
+        throw(ArgumentError(
+            "shared_memory_budget is too small for one multi-shift solve"))
     end
+    solver===:auto&&capacity<2&&(capacity=0)
+    if solver===:multishift&&!isempty(omegas)&&multishift_workspace!==nothing&&
+       length(omegas)%capacity!=0
+        throw(ArgumentError(
+            "frequency count must be a multiple of the supplied multi-shift workspace shift count when solver=:multishift"))
+    end
+    shared_batches=0;fallback_frequencies=Int[]
+    index=1
+    while index<=length(omegas)
+        remaining=length(omegas)-index+1
+        batch_count=capacity==0 ? 0 : min(capacity,remaining)
+        multishift_workspace!==nothing&&batch_count<capacity&&
+            (batch_count=0)
+        if batch_count==0||(solver===:auto&&batch_count==1)
+            result=_correlation_shifted_solve!(work,plan,rho.data,
+                converted[index],atolR,rtolR,maxiter)
+            result.converged||throw(ArgumentError(
+                "shifted GMRES did not converge at frequency $(omegas[index]) " *
+                "in $(result.iterations) iterations; residual=$(result.raw_residual)"))
+            values[index]=_correlation_readout(plan,work.solution)
+            diagnostics[index]=_correlation_sequential_diagnostic(result)
+            push!(fallback_frequencies,index);index+=1;continue
+        end
+        indices=index:index+batch_count-1
+        shifts=Complex{R}[-im*converted[position] for position in indices]
+        solutions=zeros(eltype(plan),length(plan.basis),batch_count)
+        multi,reused=_correlation_multishift_workspace(
+            work,batch_count,multishift_workspace)
+        operator=_CorrelationUnshiftedOperator(plan,work,rho.data)
+        result=multishift_gmres!(solutions,operator,work.rhs,shifts,multi;
+            atol=atolR,rtol=rtolR,require_convergence=false)
+        shared_batches+=1
+        for (column,position) in enumerate(indices)
+            if result.converged[column]
+                values[position]=_correlation_readout(
+                    plan,view(solutions,:,column))
+                diagnostics[position]=merge(
+                    _correlation_multishift_diagnostic(result,column,
+                                                       shared_batches),
+                    (;workspace_reused=reused))
+            elseif solver===:multishift
+                throw(ArgumentError(
+                    "shared-Arnoldi multi-shift GMRES did not converge at frequency $(omegas[position]) with krylovdim=$(result.krylov_dimension); residual=$(result.residuals[column])"))
+            else
+                fallback=_correlation_shifted_solve!(work,plan,rho.data,
+                    converted[position],atolR,rtolR,maxiter)
+                fallback.converged||throw(ArgumentError(
+                    "shifted GMRES fallback did not converge at frequency $(omegas[position]) in $(fallback.iterations) iterations; residual=$(fallback.raw_residual)"))
+                values[position]=_correlation_readout(plan,work.solution)
+                diagnostics[position]=_correlation_sequential_diagnostic(fallback)
+                push!(fallback_frequencies,position)
+            end
+        end
+        index+=batch_count
+    end
+    solver_used=shared_batches==0 ? :sequential :
+        isempty(fallback_frequencies) ? :multishift : :hybrid
     (;frequencies=omegas,values,diagnostics,connected,baseline,
       stationary_residual,convention=:one_sided_exp_minus_iomega_t,
-      method=:matrixfree_shifted_gmres)
+      method=:matrixfree_shifted_gmres,solver=solver_used,
+      shared_arnoldi=shared_batches>0,shared_batches,
+      fallback_frequencies)
 end
 
 function stationary_correlation_spectrum(L,rho::PIState,A::PIOperator,
@@ -661,7 +830,7 @@ function correlation_spectrum_fft(plan::CorrelationPlan,rho::PIState,delays;
         connected::Bool=true,workspace=nothing,steps_per_interval::Integer=64,
         stationarity_atol=nothing,stationarity_rtol=nothing,nfft=nothing)
     _check_correlation_state(plan,rho)
-    work=workspace===nothing ? CorrelationWorkspace(plan) : workspace
+    work=workspace===nothing ? CorrelationWorkspace(plan;mode=:time) : workspace
     _check_correlation_workspace(work,plan)
     R=_real_float_type(eltype(plan))
     atol=stationarity_atol===nothing ? R(100)*eps(R) :
@@ -676,9 +845,9 @@ function correlation_spectrum_fft(plan::CorrelationPlan,rho::PIState,delays;
     ts=_checked_correlation_delays(plan,delays)
     values=two_time_correlation(plan,rho,ts;
         steps_per_interval=steps_per_interval,workspace=work)
-    _correlation_seed!(work.rhs,plan,rho,work)
+    _correlation_seed!(work.state,plan,rho,work)
     offset=connected ? _correlation_readout(plan,rho.data)*
-        dot(plan.tracevec,work.rhs) : zero(eltype(plan))
+        dot(plan.tracevec,work.state) : zero(eltype(plan))
     result=correlation_spectrum_fft(ts,values;offset=offset,nfft=nfft)
     merge(result,(connected=connected,))
 end

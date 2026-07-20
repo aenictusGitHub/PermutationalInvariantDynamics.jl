@@ -43,11 +43,20 @@
     projected=diagonal_populations(PIState(b,dy))
     @test M*p≈projected atol=3e-12
     pw=PopulationWorkspace(plan,p)
+    @test sum(length,(pw.stage,pw.k1,pw.k2,pw.k3,pw.k4))==3length(p)
+    @test isempty(pw.k3)&&isempty(pw.k4)
     dp=similar(p)
     PID.apply!(dp,plan,p,0.0,nothing,pw)
     @test dp≈M*p atol=2e-12
     PID.apply!(dp,plan,p,0.0,nothing,pw)
     @test (@allocated PID.apply!(dp,plan,p,0.0,nothing,pw))<=512
+    shared_population=similar(p)
+    aliased_population=PopulationWorkspace(
+        shared_population,shared_population,similar(p),similar(p,0),
+        similar(p,0),similar(p))
+    @test_throws ArgumentError evolve_populations!(
+        shared_population,plan,p,(0.0,0.01);
+        steps=1,workspace=aliased_population)
 
     rho0=iid_pure_state(b,ComplexF64[0,1])
     p0=diagonal_populations(rho0)
@@ -60,6 +69,7 @@
     @test psol[1]≈p0 atol=1e-14
     @test psol[end]≈diagonal_populations(rsol[end]) atol=3e-12
     @test state(psol,lastindex(psol)).data≈rsol[end].data atol=3e-12
+    @test state_at(psol,last(times)).data≈rsol[end].data atol=3e-12
 
     stationary=stationary_populations(plan;method=:direct)
     @test norm(M*stationary)<2e-10

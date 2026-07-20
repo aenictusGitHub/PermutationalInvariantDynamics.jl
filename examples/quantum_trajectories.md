@@ -65,6 +65,27 @@ ordered result reproducible in serial and threaded runs. Reusing
 `trajectory_batch` avoids rebuilding either the Schur geometry or worker
 scratch in a parameter-independent repeated ensemble.
 
+For a batch that will use only the fixed-step algorithm, select the lean
+workspace explicitly:
+
+```julia
+fixed_batch = TrajectoryBatchWorkspace(
+    trajectory_plan, rho0; mode=:fixed)
+```
+
+Fixed propagation then uses only three full-vector RK4 registers and omits
+`k3`, `k4`, plus six adaptive Dormand--Prince/event-root vectors per worker.
+The default `mode=:full` used above is required by `algorithm=:event`; passing
+a fixed-only workspace to that algorithm raises instead of allocating hidden
+scratch.
+
+At each stage, the rate-weighted channel loss blocks are accumulated into one
+effective Schur operator before applying the no-jump drift. Individual channel
+intensities are evaluated only when a jump is actually selected. Event-driven
+paths retain the accepted Dormand--Prince stages and a four-scalar quartic
+hazard interpolant, so locating a continuous event does not repeat seven-stage
+trials at every bisection point.
+
 For an individual local jump the package does not resolve which identical
 particle emitted. The conditional PI state can therefore be mixed when
 ``N>1``. That is a different measurement record from a particle-resolved pure

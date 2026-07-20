@@ -3,6 +3,125 @@ struct ToyCollectiveJump{O,R} <: AbstractPITerm
     rate::R
 end
 
+@testset "Custom matrix-free callbacks" begin
+    A=ComplexF32[-1 2im 0.5; 3 -4 -im; 0 2 -0.25]
+    n=size(A,1);tracevec=ComplexF32[1,0,1]
+    forward_calls=Ref(0);adjoint_calls=Ref(0)
+    batched_calls=Ref(0);batched_adjoint_calls=Ref(0)
+    factor(t,p)=p===nothing ? one(Float32) : p.scale*(one(t)+t)
+    action! = (destination,source,time,parameters)->begin
+        forward_calls[]+=1
+        mul!(destination,factor(time,parameters)*A,source)
+    end
+    adjoint_action! = (destination,source,time,parameters)->begin
+        adjoint_calls[]+=1
+        mul!(destination,adjoint(factor(time,parameters)*A),source)
+    end
+    batched_action! = (destination,source,time,parameters)->begin
+        batched_calls[]+=1
+        mul!(destination,factor(time,parameters)*A,source)
+    end
+    batched_adjoint_action! = (destination,source,time,parameters)->begin
+        batched_adjoint_calls[]+=1
+        mul!(destination,adjoint(factor(time,parameters)*A),source)
+    end
+    custom=MatrixFreeLiouvillian(n,action!,ComplexF32,tracevec;
+        adjoint_action!,batched_action!,batched_adjoint_action!)
+    x=ComplexF32[1+im,-2,0.5im];X=hcat(x,2x,-x)
+
+    # Matrix products call the supplied batch once instead of dispatching one
+    # synchronized vector callback per right-hand side.
+    Y=similar(X);mul!(Y,custom,X)
+    @test Y≈A*X
+    @test batched_calls[]==1
+    @test forward_calls[]==0
+
+    parameters=(scale=0.75f0,);time=0.2f0
+    apply!(Y,custom,X,time,parameters)
+    @test Y≈factor(time,parameters)*A*X
+    @test batched_calls[]==2
+
+    y=similar(x)
+    apply_adjoint!(y,custom,x,time,parameters)
+    @test y≈adjoint(factor(time,parameters)*A)*x
+    @test adjoint_calls[]==1
+    @test forward_calls[]==0
+
+    apply_adjoint!(Y,custom,X,time,parameters)
+    @test Y≈adjoint(factor(time,parameters)*A)*X
+    @test batched_adjoint_calls[]==1
+    @test adjoint_calls[]==1
+
+    # Constructing and multiplying the autonomous adjoint must remain
+    # matrix-free when an explicit adjoint callback is available.
+    custom_adjoint=adjoint(custom)
+    mul!(y,custom_adjoint,x)
+    @test y≈adjoint(A)*x
+    mul!(Y,custom_adjoint,X)
+    @test Y≈adjoint(A)*X
+    @test forward_calls[]==0
+    @test adjoint_calls[]==2
+    @test batched_adjoint_calls[]==2
+
+    # A batch-only adjoint can still serve a one-vector request through a
+    # one-column wrapper, without probing and materializing the forward map.
+    batch_only_calls=Ref(0)
+    batch_only_adjoint! = (destination,source,time,parameters)->begin
+        batch_only_calls[]+=1
+        mul!(destination,adjoint(A),source)
+    end
+    batch_only=MatrixFreeLiouvillian(n,action!,ComplexF32,tracevec;
+        batched_adjoint_action! = batch_only_adjoint!)
+    apply_adjoint!(y,batch_only,x,0.3f0,nothing)
+    @test y≈adjoint(A)*x
+    @test batch_only_calls[]==1
+
+    # The original constructor and column-wise fallbacks remain valid.
+    legacy_calls=Ref(0)
+    legacy_action! = (destination,source,time,parameters)->begin
+        legacy_calls[]+=1
+        mul!(destination,A,source)
+    end
+    legacy=MatrixFreeLiouvillian(n,legacy_action!,ComplexF32,tracevec)
+    mul!(Y,legacy,X)
+    @test Y≈A*X
+    @test legacy_calls[]==size(X,2)
+
+    # A non-PI adapter may retain an opaque plan for metadata and still expose
+    # only the vector callback.  It must use the same column fallback rather
+    # than being mistaken for a compiled PI LiouvillianPlan.
+    adapter_calls=Ref(0)
+    adapter_action! = (destination,source,time,parameters)->begin
+        adapter_calls[]+=1
+        mul!(destination,A,source)
+    end
+    adapter=MatrixFreeLiouvillian(n,adapter_action!,ComplexF32,tracevec;
+        plan=(kind=:external,),workspace=nothing)
+    mul!(Y,adapter,X)
+    @test Y≈A*X
+    @test adapter_calls[]==size(X,2)
+
+    # Freezing a driven custom operator fixes all supplied callbacks, not only
+    # its forward vector action.
+    driven=MatrixFreeLiouvillian(n,action!,ComplexF32,tracevec;
+        autonomous=false,adjoint_action!,batched_action!,
+        batched_adjoint_action!)
+    @test_throws ArgumentError driven*X
+    frozen=freeze(driven;time,parameters)
+    @test isautonomous(frozen)
+    @test frozen*X≈factor(time,parameters)*A*X
+    @test adjoint(frozen)*X≈adjoint(factor(time,parameters)*A)*X
+
+    # Allocating products preserve normal matrix promotion rules.
+    wide=custom*Float64[1 2;3 4;5 6]
+    @test eltype(wide)===ComplexF64
+    @test wide≈A*Float64[1 2;3 4;5 6]
+    @test_throws DimensionMismatch mul!(zeros(ComplexF32,n,2),custom,
+                                        zeros(ComplexF32,n-1,2))
+    @test_throws DimensionMismatch apply_adjoint!(zeros(ComplexF32,n,2),custom,
+                                                   zeros(ComplexF32,n,3),0,nothing)
+end
+
 # An external term lowers through documented dispatch only.  In particular,
 # neither PIModel nor the Liouvillian compiler knows this concrete type.
 PermutationalInvariantDynamics.term_operator(t::ToyCollectiveJump)=t.operator

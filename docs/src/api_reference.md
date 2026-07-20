@@ -31,7 +31,7 @@ PermutationalInvariantDynamics
 | [Qudit Husimi phase space](qudit_phase_space.md) | Sector-wise generalized coherent-state Q data for arbitrary local dimension |
 | [Composite systems](composite_systems.md) | Multiple PI ensembles, finite auxiliary factors, preallocated tensor-product superoperators, and density-valued quantum jumps |
 | [Prepared parameter scans](parameter_scans.md) | Continuation, resumable point records, deterministic threaded scans, and tabular exports |
-| [Block, multi-shift, and recycled Krylov](krylov_extensions.md) | Multiple-right-hand-side solves, shifted families, recycled subspaces, and exponential actions |
+| [Block, multi-shift, and recycled Krylov](krylov_extensions.md) | Thick-restarted block spectra, multiple-right-hand-side solves, shifted families, recycled subspaces, and exponential actions |
 | [PI--HEOM non-Markovian dynamics](heom.md) | PI auxiliary-density hierarchies, matrix-free propagation, and stationary states |
 | [Numerical convergence reports](convergence.md) | Time-step, Krylov, HEOM-depth, and sector-cutoff refinement evidence |
 | [Optional ecosystem integrations](interoperability.md) | Tables and Makie data adapters, process-parallel scans/ensembles, symbolic cumulants, and checkpoint backends |

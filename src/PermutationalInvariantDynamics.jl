@@ -18,9 +18,11 @@ module PermutationalInvariantDynamics
 using LinearAlgebra
 using SparseArrays
 using Random
+import SciMLBase
 import LinearAlgebra: mul!, ldiv!, ishermitian
 import Base: *, +, -, adjoint, copy, eltype, getindex, length, size, show
 
+# Representation and model lowering.
 include("partitions.jl")
 include("gtpatterns.jl")
 include("cgc.jl")
@@ -34,6 +36,13 @@ include("correlated_jumps.jl")
 include("spin.jl")
 include("vectorization.jl")
 include("liouvillian.jl")
+include("threaded_apply.jl")
+include("compiled_families.jl")
+include("source_protocol.jl")
+include("result_protocol.jl")
+include("solver_algorithms.jl")
+
+# Iterative solvers, spectra, symmetries, and state analysis.
 include("krylov.jl")
 include("krylov_extensions.jl")
 include("symmetries.jl")
@@ -46,10 +55,13 @@ include("information.jl")
 include("symmetry_information.jl")
 include("phase_space.jl")
 include("qudit_phase_space.jl")
+
+# Deterministic, composite, non-Markovian, and stochastic dynamics.
 include("sciml.jl")
 include("meanfield.jl")
 include("composite.jl")
 include("evolution.jl")
+include("restricted_symmetries.jl")
 include("heom.jl")
 include("trajectories.jl")
 include("composite_trajectories.jl")
@@ -57,6 +69,8 @@ include("weak_pi_trajectories.jl")
 include("diffusive.jl")
 include("adaptive_ensembles.jl")
 include("distributed_api.jl")
+
+# Research workflows, diagnostics, and persistence.
 include("floquet.jl")
 include("response.jl")
 include("correlations.jl")
@@ -69,6 +83,8 @@ include("channels.jl")
 include("tomography.jl")
 include("checkpoints.jl")
 include("control.jl")
+
+# Dependency-free visualization data and SVG renderers.
 include("visualization.jl")
 include("spectral_visualization.jl")
 include("phase_space_visualization.jl")
@@ -78,7 +94,8 @@ export Partition, partitions, weight, length_nonzero, removable_corners,
        reachable_sectors, symmetric_group_dimension, unitary_group_dimension,
        commutant_dimension, exact_binomial, exact_multinomial,
        GTPattern, gt_patterns, isvalid, shape, content,
-       gt_entry, triangular_shift, cgc, partition_triangle, three_nu_symbol,
+       gt_entry, triangular_shift, OneBoxCGCache, cgc, partition_triangle,
+       three_nu_symbol,
        PIBasis, PIOperator, PIState, coefficient_block, physical_block,
        each_schur_block, operator_from_schur_blocks,
        state_from_schur_blocks, sector_metadata,
@@ -109,18 +126,23 @@ export Partition, partitions, weight, length_nonzero, removable_corners,
        is_pi_operator, is_pi_superoperator, is_permutationally_invariant,
        liouvillian, MatrixFreeLiouvillian, LiouvillianPlan,
        LiouvillianWorkspace, CompiledPIModel, compile, apply!, apply_adjoint!,
+       ThreadedLiouvillianWorkspace, threaded_apply!,
+       threaded_apply_adjoint!,
+       CompiledPIModelFamily, SpecializedPIModel, compile_family, specialize,
        CompositeSuperoperatorTerm, factorized_superoperator_term,
        local_superoperator_term, CompositeSuperoperator,
        CompositeSuperoperatorWorkspace, factor_left_superoperator,
        factor_right_superoperator, factor_sandwich_superoperator,
        composite_hamiltonian_superoperator,
        composite_dissipator_superoperator, composite_matrixfree,
-       isautonomous, freeze, dynamics_problem, PISolution, state,
+       isautonomous, freeze, dynamics_problem, PISolution, state, state_at,
        EvolutionWorkspace, evolve!, time_evolve, time_evolution,
        DynamicsStreamResult, QuantumTrajectory, TrajectoryEnsembleResult,
+       TrajectorySteadyStateResult,
        TrajectoryPlan, TrajectoryWorkspace,
        TrajectoryBatchWorkspace, quantum_trajectory,
-       quantum_trajectories, trajectory_average, jump_statistics,
+       quantum_trajectories, trajectory_steady_state, trajectory_average,
+       jump_statistics,
        trajectory_observable_statistics, trajectory_statistics,
        CompositeJumpChannel, CompositeTrajectoryPlan,
        CompositeTrajectoryWorkspace, CompositeTrajectoryBatchWorkspace,
@@ -131,12 +153,14 @@ export Partition, partitions, weight, length_nonzero, removable_corners,
        WeakPITrajectoryPlan, WeakPITrajectoryWorkspace,
        WeakPITrajectoryBatchWorkspace, weak_pi_quantum_trajectory,
        weak_pi_quantum_trajectories, weak_pi_trajectory_average,
-       weak_pi_trajectory_statistics,
+       weak_pi_trajectory_steady_state, weak_pi_trajectory_statistics,
+       WeakPIBatchMeansDiagnostics,
        DiffusiveMonitor, homodyne_monitor, heterodyne_monitor,
        DiffusivePlan, DiffusiveWorkspace, DiffusiveBatchPlan,
        DiffusiveBatchWorkspace, DiffusiveTrajectory,
        diffusive_trajectory, diffusive_trajectories, diffusive_average,
        AdaptiveTrajectoryResult, adaptive_quantum_trajectories,
+       adaptive_weak_pi_quantum_trajectories,
        adaptive_diffusive_trajectories,
        distributed_quantum_trajectories,
        distributed_diffusive_trajectories,
@@ -186,6 +210,7 @@ export Partition, partitions, weight, length_nonzero, removable_corners,
        littlewood_richardson_coefficient,
        steady_state, krylov_steady_state, KrylovWorkspace, ArnoldiWorkspace,
        JacobiDavidsonWorkspace,
+       BlockArnoldiWorkspace, block_arnoldi_spectrum,
        BlockGMRESWorkspace, block_gmres!, block_gmres,
        MultiShiftGMRESWorkspace, multishift_gmres!, multishift_gmres,
        RecycledGMRESWorkspace, recycled_gmres!, recycled_gmres,
@@ -204,10 +229,18 @@ export Partition, partitions, weight, length_nonzero, removable_corners,
        SymmetryProjectorWorkspace, matrixfree_symmetry_projector,
        JointSymmetryProjector, JointSymmetryProjectorWorkspace,
        joint_symmetry_projector,
+       SymmetryCoordinateRestriction, RestrictionInvarianceReport,
+       RestrictedLiouvillian, RestrictedLiouvillianWorkspace,
+       diagonal_symmetry_restriction, retained_indices,
+       restricted_trace_vector, restrict!, embed!, restriction_invariance,
+       restriction_full_residual, restricted_steady_state,
+       FloquetMap, FloquetWorkspace, FloquetBatchWorkspace,
+       floquet_map, restricted_floquet_map,
+       selected_floquet_multipliers,
        floquet_propagator, floquet_multipliers, floquet_exponents,
        floquet_gap, floquet_steady_state, stroboscopic_evolution,
        floquet_evolve,
-       liouvillian_modes, resolvent_norm, adjoint_evolve,
+       ResponseWorkspace, liouvillian_modes, resolvent_norm, adjoint_evolve,
        sensitivity_problem, sensitivity_state, classical_fisher_information,
        observable_decay_modes, integrated_correlation_time,
        steady_state_susceptibility, pseudospectral_abscissa,
@@ -220,6 +253,7 @@ export Partition, partitions, weight, length_nonzero, removable_corners,
        value_at,
        AbstractPIAlgorithm, AutoAlgorithm, DirectAlgorithm, SVDAlgorithm,
        EigenAlgorithm, ShiftInvertAlgorithm, GMRESAlgorithm,
+       RecycledGMRESAlgorithm,
        HarmonicArnoldiAlgorithm, SteadyStateResult, DynamicsResult,
        SpectrumResult, stationary_state, solve_dynamics,
        liouvillian_spectrum, diagnostics, pi_dimension,
@@ -231,10 +265,16 @@ export Partition, partitions, weight, length_nonzero, removable_corners,
        resume_parameter_scan, merge_parameter_scan_results,
        distributed_parameter_scan, parameter_scan_rows,
        parameter_scan_columns,
-       HEOMBath, HEOMPlan, HEOMWorkspace, HEOMEvolutionWorkspace, HEOMState,
-       heom_number_ados, heom_multiindices, heom_initial_state, heom_ado,
+       HEOMBath, drude_lorentz_bath, underdamped_brownian_bath,
+       heom_bath_metadata, heom_bath_residue,
+       independent_local_pseudomode_model,
+       HEOMPlan, HEOMWorkspace, HEOMEvolutionWorkspace, HEOMState,
+       HEOMBlockPreconditioner, heom_block_preconditioner,
+       heom_number_ados, heom_multiindices, heom_ado_importances,
+       heom_hierarchy_metadata, heom_coordinate_scale,
+       heom_initial_state, heom_thermal_state, heom_ado,
        heom_reduced_state, heom_evolve!, heom_evolve,
-       heom_time_evolution, heom_liouvillian, heom_steady_state,
+       heom_time_evolution, heom_problem, heom_liouvillian, heom_steady_state,
        heom_depth_convergence,
        ConvergenceStudyResult, convergence_study, convergence_estimate,
        timestep_convergence, krylov_dimension_convergence,

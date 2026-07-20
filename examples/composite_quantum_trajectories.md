@@ -55,6 +55,8 @@ Each channel hazard is integrated with the same RK4 stages as the conditional
 state. If the resulting jump probability exceeds the configured cap, the
 trial state is discarded and the step is retried at a smaller size. This is
 important for driven rates that change appreciably inside one proposed step.
+The classical RK4 update uses three full composite-vector registers; it does
+not retain four separate derivative vectors per worker.
 
 The example compares 1,024 stochastic paths with deterministic RK4 evolution
 under `composite_master_superoperator(plan)`. It also demonstrates

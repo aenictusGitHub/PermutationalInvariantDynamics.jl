@@ -541,17 +541,38 @@ end
 
 function diffusive_trajectory(batch::DiffusiveBatchPlan,rho0::PIState;
         rng=Random.default_rng(),parameters=nothing,workspace=nothing,
-        save_states::Bool=true)
+        save_states::Bool=true,
+        memory_budget=_DEFAULT_HIGHLEVEL_MEMORY_BUDGET)
+    state_entries=save_states ? BigInt(length(rho0.data))*length(batch.times) : 0
+    record_entries=2BigInt(batch.plan.record_count)*length(batch.times)
+    observable_entries=BigInt(length(batch.observables))*length(batch.times)
+    estimate=_performance_entries_bytes(state_entries,eltype(rho0.data))+
+        _performance_entries_bytes(record_entries+observable_entries,
+                                   batch.plan.real_type)+
+        _performance_entries_bytes(length(batch.times),eltype(batch.times))
+    _require_performance_budget("diffusive trajectory output",estimate,
+        memory_budget;guidance=
+        "Set save_states=false and request only required output times.")
     w=workspace===nothing ? DiffusiveWorkspace(batch.plan,rho0) : workspace
     _diffusive_trajectory_prepared(batch,rho0,w,rng;parameters,save_states)
 end
 
 function diffusive_trajectory(source,rho0::PIState,times,monitors=nothing;
         dt,rng=Random.default_rng(),parameters=nothing,workspace=nothing,
-        save_states::Bool=true,observables=nothing)
-    batch=DiffusiveBatchPlan(source,rho0,times,monitors;dt,observables)
-    w=workspace===nothing ? DiffusiveWorkspace(batch.plan,rho0) : workspace
-    _diffusive_trajectory_prepared(batch,rho0,w,rng;parameters,save_states)
+        save_states::Bool=true,observables=nothing,
+        memory_budget=_DEFAULT_HIGHLEVEL_MEMORY_BUDGET)
+    R=_real_float_type(eltype(rho0.data))
+    preview_times,_=_prepare_diffusive_times(times,R,dt)
+    preview_entries=save_states ?
+        BigInt(length(rho0.data))*length(preview_times) : big(0)
+    preview=_performance_entries_bytes(preview_entries,eltype(rho0.data))+
+        _performance_entries_bytes(length(preview_times),eltype(preview_times))
+    _require_performance_budget("diffusive trajectory output",preview,
+        memory_budget;guidance=
+        "Set save_states=false and request only required output times.")
+    batch=DiffusiveBatchPlan(source,rho0,preview_times,monitors;dt,observables)
+    diffusive_trajectory(batch,rho0;rng,parameters,workspace,save_states,
+                         memory_budget)
 end
 
 """
@@ -564,10 +585,35 @@ scheduling.  Each worker owns a reusable [`DiffusiveWorkspace`](@ref).
 """
 function diffusive_trajectories(source,rho0::PIState,times,monitors,n::Integer;
         seed::Integer=0,threaded::Bool=false,dt,parameters=nothing,
-        workspace=nothing,save_states::Bool=true,observables=nothing)
+        workspace=nothing,save_states::Bool=true,observables=nothing,
+        memory_budget=_DEFAULT_HIGHLEVEL_MEMORY_BUDGET)
     n>0||throw(ArgumentError("trajectory count must be positive"))
-    batch=DiffusiveBatchPlan(source,rho0,times,monitors;dt,observables)
+    R=_real_float_type(eltype(rho0.data))
+    preview_times,_=_prepare_diffusive_times(times,R,dt)
+    preview_entries=save_states ?
+        BigInt(n)*length(rho0.data)*length(preview_times) : big(0)
+    preview=_performance_entries_bytes(preview_entries,eltype(rho0.data))+
+        _performance_entries_bytes(BigInt(n)*length(preview_times),
+                                   eltype(preview_times))
+    _require_performance_budget("diffusive trajectory ensemble output",preview,
+        memory_budget;guidance=
+        "Set save_states=false and request only required output times.")
+    batch=DiffusiveBatchPlan(source,rho0,preview_times,monitors;dt,observables)
     if workspace isa DiffusiveWorkspace
+        state_entries=save_states ?
+            BigInt(n)*length(rho0.data)*length(batch.times) : big(0)
+        record_entries=2BigInt(n)*batch.plan.record_count*length(batch.times)
+        observable_entries=BigInt(n)*length(batch.observables)*
+                           length(batch.times)
+        estimate=_performance_entries_bytes(state_entries,
+            eltype(rho0.data))+
+            _performance_entries_bytes(record_entries+observable_entries,
+                                       batch.plan.real_type)+
+            _performance_entries_bytes(BigInt(n)*length(batch.times),
+                                       eltype(batch.times))
+        _require_performance_budget("diffusive trajectory ensemble output",
+            estimate,memory_budget;guidance=
+            "Set save_states=false and request only required output times.")
         threaded&&throw(ArgumentError(
             "threaded diffusive ensembles require a DiffusiveBatchWorkspace"))
         workspace.plan===batch.plan||throw(ArgumentError(
@@ -582,7 +628,7 @@ function diffusive_trajectories(source,rho0::PIState,times,monitors,n::Integer;
         return results
     end
     diffusive_trajectories(batch,rho0,n;seed,threaded,workspace,
-                           parameters,save_states)
+                           parameters,save_states,memory_budget)
 end
 
 
@@ -594,11 +640,27 @@ end
 Generate `n` trajectories from a [`DiffusiveBatchPlan`](@ref).  Prepared times
 and observables are reused by every path.  Random streams are derived from the
 trajectory index, so serial and threaded results agree for a fixed seed.
+`memory_budget` covers saved states, times, fixed-size measurement and
+innovation records, and requested observable series; prepared plans and
+reusable worker scratch are additional.
 """
 function diffusive_trajectories(batch::DiffusiveBatchPlan,rho0::PIState,
         n::Integer;seed::Integer=0,threaded::Bool=false,workspace=nothing,
-        parameters=nothing,save_states::Bool=true)
+        parameters=nothing,save_states::Bool=true,
+        memory_budget=_DEFAULT_HIGHLEVEL_MEMORY_BUDGET)
     n>0||throw(ArgumentError("trajectory count must be positive"))
+    state_entries=save_states ?
+        BigInt(n)*length(rho0.data)*length(batch.times) : big(0)
+    record_entries=2BigInt(n)*batch.plan.record_count*length(batch.times)
+    observable_entries=BigInt(n)*length(batch.observables)*length(batch.times)
+    time_entries=BigInt(n)*length(batch.times)
+    estimate=_performance_entries_bytes(state_entries,eltype(rho0.data))+
+        _performance_entries_bytes(record_entries+observable_entries,
+                                   batch.plan.real_type)+
+        _performance_entries_bytes(time_entries,eltype(batch.times))
+    _require_performance_budget("diffusive trajectory ensemble output",
+        estimate,memory_budget;guidance=
+        "Set save_states=false and request only required output times.")
     requested_workers=threaded ? min(Int(n),Threads.nthreads()) : 1
     work=workspace===nothing ?
         DiffusiveBatchWorkspace(batch,rho0;workers=requested_workers) :

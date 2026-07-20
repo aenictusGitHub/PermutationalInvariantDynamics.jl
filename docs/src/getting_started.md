@@ -202,7 +202,17 @@ large calculation, inspect the recommendation before compiling:
 advice = recommend_solver(model; task=:dynamics)
 ```
 
-The recommendation is a transparent heuristic, not a convergence guarantee.
+Inspect `advice.resources` to distinguish setup, retained plan, solver
+workspace, and output storage. `advice.budget_status` is `:fits`, `:exceeds`,
+`:unknown`, or `:disabled`; `safe_to_run` is intentionally `missing` when an
+estimate cannot certify a fit. The high-level stationary, spectral, and
+dynamics commands use a 512 MiB default budget, select a matrix-free route when
+an automatic dense/direct choice is too large, and reject an explicitly
+requested over-budget materialization before allocating it. Use
+`memory_budget=Inf` only to opt out deliberately.
+
+The recommendation is a transparent resource preflight, not a convergence
+guarantee.
 See [Architecture and efficient workflows](architecture.md) for explicit
 backend and workspace control.
 
@@ -238,11 +248,14 @@ stored excitation series is `sum_i <e_i|rho(t)|e_i>`:
 ```julia
 excited_fraction = real.(solution.observables[:excited]) ./ N
 rho_final = solution[end]
-rho_at_two = state(solution, 2.0)
+rho_at_two = state_at(solution, 2.0)
 ```
 
-`state(solution, t)` requires `t` to be one of the saved times. Iterating over
-`solution` iterates over the retained states when `save_states=true`.
+For a saved-grid result, physical-time lookup requires a stored time.
+Iterating over `solution` iterates over the retained states when
+`save_states=true`. Use `state(solution, i)` for a saved index and
+`state_at(solution, t)` for a physical time; this distinction remains explicit
+when `t` is an integer.
 
 ## Step 7B: retain only observables
 

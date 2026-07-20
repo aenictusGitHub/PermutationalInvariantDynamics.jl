@@ -45,6 +45,20 @@ block-product scratch, one `EvolutionWorkspace`, and shifted-GMRES storage.
 A plan may be shared between tasks; a workspace must be owned by one task and
 reused only sequentially.
 
+For time-domain work without resolvent spectra, omit the shifted-GMRES basis:
+
+```julia
+time_workspace = CorrelationWorkspace(plan; mode=:time)
+values = two_time_correlation(
+    plan, rho, delays; workspace=time_workspace)
+```
+
+The default `mode=:both` remains appropriate when the same workspace will
+also be passed to `stationary_correlation_spectrum`. A time-only workspace is
+also accepted by the sampled `correlation_spectrum_fft` route; it is rejected
+explicitly by the shifted-GMRES spectrum rather than growing behind the
+caller's back.
+
 The representation and insertion are exact within the retained PI basis. The
 default time-domain integrator is numerical fixed-step RK4. Increase
 `steps_per_interval` and verify convergence when quantitative integration
@@ -87,6 +101,18 @@ mode without changing the trace-zero connected solution. The function returns
 the complex one-sided transform: it does not apply a factor two or discard the
 imaginary part. The disconnected stationary spectrum contains a Dirac delta,
 so requesting it as an ordinary resolvent function is rejected.
+
+For a frequency grid, the default `solver=:auto` groups shifts into bounded
+batches and solves them from one shared Arnoldi factorization. Columns that do
+not meet the requested full-space residual are retried with restarted
+single-shift GMRES. Set `solver=:sequential` for the historical path or
+`solver=:multishift` to require shared-Arnoldi convergence without fallback.
+`shared_memory_budget` and `multishift_batchsize` bound live solution storage;
+the result reports `shared_batches` and `fallback_frequencies`. Repeated calls
+may pass a compatible `MultiShiftGMRESWorkspace`.
+The supplied workspace's fixed `nshifts` is the batch size. Automatic mode
+handles a final short remainder sequentially; forced multi-shift mode requires
+an exact number of full batches.
 
 `optical_spectrum(L, rho, c, frequencies)` is the convenience form with
 \(A=c^\dagger\) and \(B=c\).

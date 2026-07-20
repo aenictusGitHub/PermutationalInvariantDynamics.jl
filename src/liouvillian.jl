@@ -1,14 +1,24 @@
 """
     MatrixFreeLiouvillian(n, action!, T, trace_vector;
-                          autonomous=true, plan=nothing, workspace=nothing)
+                          autonomous=true, plan=nothing, workspace=nothing,
+                          adjoint_action! = nothing,
+                          batched_action! = nothing,
+                          batched_adjoint_action! = nothing)
 
 Matrix-free `n x n` Liouvillian whose callback implements
 `action!(destination, source, time, parameters)`. `T` is its scalar type and
-`trace_vector` encodes the physical trace functional. Compatibility calls are
-synchronized; compiled PI hot loops should use `compile`, `apply!`, and one
+`trace_vector` encodes the physical trace functional. A custom, plan-less
+operator may additionally provide callbacks with the same four-argument
+signature for its adjoint and for matrix batches. Batched callbacks receive
+`destination` and `source` matrices whose columns are independent vectors.
+Missing batched callbacks fall back to the corresponding vector callback;
+missing adjoint callbacks retain the autonomous materialization fallback.
+
+Compatibility calls are synchronized through one lock shared by all supplied
+callbacks. Compiled PI hot loops should use `compile`, `apply!`, and one
 explicit `LiouvillianWorkspace` per task.
 """
-struct MatrixFreeLiouvillian{F,T,V,P,W,K}
+struct MatrixFreeLiouvillian{F,T,V,P,W,K,A,B,C}
     n::Int
     action!::F
     Ttype::Type{T}
@@ -17,28 +27,48 @@ struct MatrixFreeLiouvillian{F,T,V,P,W,K}
     plan::P
     workspace::W
     lock::K
+    adjoint_action!::A
+    batched_action!::B
+    batched_adjoint_action!::C
+end
+
+function _synchronized_liouvillian_callback(callback,callback_lock)
+    callback===nothing&&return nothing
+    function synchronized_callback!(destination,source,time,parameters)
+        lock(callback_lock)
+        try
+            callback(destination,source,time,parameters)
+        finally
+            unlock(callback_lock)
+        end
+    end
 end
 
 function MatrixFreeLiouvillian(n::Integer, action!, ::Type{T}, tracevec;
                                autonomous::Bool=true,plan=nothing,
-                               workspace=nothing) where T
+                               workspace=nothing,
+                               adjoint_action! = nothing,
+                               batched_action! = nothing,
+                               batched_adjoint_action! = nothing) where T
     n > 0 || throw(ArgumentError("Liouvillian dimension must be positive"))
     length(tracevec) == n || throw(DimensionMismatch("trace vector has the wrong length"))
     action_lock=ReentrantLock()
     # `action!` is a compatibility surface used by older integrations.  Keep
     # it safe when one compiled Liouvillian is shared between tasks; new hot
     # loops should pass an explicit LiouvillianWorkspace to `apply!` instead.
-    safe_action! = function (y,x,t,p)
-        lock(action_lock)
-        try
-            action!(y,x,t,p)
-        finally
-            unlock(action_lock)
-        end
-    end
+    safe_action! = _synchronized_liouvillian_callback(action!,action_lock)
+    safe_adjoint_action! = _synchronized_liouvillian_callback(
+        adjoint_action!,action_lock)
+    safe_batched_action! = _synchronized_liouvillian_callback(
+        batched_action!,action_lock)
+    safe_batched_adjoint_action! = _synchronized_liouvillian_callback(
+        batched_adjoint_action!,action_lock)
     MatrixFreeLiouvillian{typeof(safe_action!),T,typeof(tracevec),
-                          typeof(plan),typeof(workspace),typeof(action_lock)}(
-        Int(n),safe_action!,T,tracevec,autonomous,plan,workspace,action_lock)
+                          typeof(plan),typeof(workspace),typeof(action_lock),
+                          typeof(safe_adjoint_action!),typeof(safe_batched_action!),
+                          typeof(safe_batched_adjoint_action!)}(
+        Int(n),safe_action!,T,tracevec,autonomous,plan,workspace,action_lock,
+        safe_adjoint_action!,safe_batched_action!,safe_batched_adjoint_action!)
 end
 
 size(L::MatrixFreeLiouvillian)=(L.n,L.n); eltype(L::MatrixFreeLiouvillian)=L.Ttype
@@ -80,18 +110,22 @@ function mul!(Y::AbstractMatrix,L::MatrixFreeLiouvillian,X::AbstractMatrix)
     _require_autonomous(L,"mul!")
     size(X,1)==L.n||throw(DimensionMismatch("matrix input has the wrong leading dimension"))
     size(Y)==(L.n,size(X,2))||throw(DimensionMismatch("matrix output has the wrong dimensions"))
-    if L.plan===nothing
-        for j in axes(X,2)
-            L.action!(view(Y,:,j),view(X,:,j),0.0,nothing)
-        end
-    else
+    if L.batched_action! !== nothing
+        L.batched_action!(Y,X,0.0,nothing)
+    elseif L.plan isa LiouvillianPlan
         lock(L.lock)
         try
-            for j in axes(X,2)
-                apply!(view(Y,:,j),L.plan,view(X,:,j),0.0,nothing,L.workspace)
-            end
+            apply!(Y,L.plan,X,0.0,nothing,L.workspace)
         finally
             unlock(L.lock)
+        end
+    else
+        # MatrixFreeLiouvillian is also used as an adapter for non-PI plans
+        # such as HEOM.  Their vector callback is the compatibility contract;
+        # only a compiled PI LiouvillianPlan implies the sectorwise batch
+        # kernel below.  Other adapters retain the documented column fallback.
+        for j in axes(X,2)
+            L.action!(view(Y,:,j),view(X,:,j),0.0,nothing)
         end
     end
     Y
@@ -140,22 +174,116 @@ function _local_kernel_triplets(b,cache,X,Y)
     (;I,J,V)
 end
 
-# The nonzero numerical pattern of a local gain map depends on the evaluated
-# jump matrix.  An in-place operator schedule therefore retains every
-# representation-theoretically allowed coordinate and fills only its values
-# in the task-local workspace.  This preserves interference between all
-# entries of L(t), including entries that vanish in the prototype.
-function _local_gain_structure(b,cache)
-    I=Int[];J=Int[]
-    for (li,l) in pairs(b.sectors),(ni,n) in pairs(b.sectors)
-        isempty(cache.connections[(li,ni)])&&continue
-        nl=length(b.patterns[li]);nn=length(b.patterns[ni])
-        for a in 1:nl,bb in 1:nl,c in 1:nn,d in 1:nn
-            push!(I,b.offsets[li]+a-1+(bb-1)*nl)
-            push!(J,b.offsets[ni]+c-1+(d-1)*nn)
+# For one common child `mu`, the local gain from input sector `nu` to output
+# sector `lambda` factorizes as
+#
+#     X_nu -> r_(lambda,mu,nu) C_(lambda,mu,nu) X_nu C'_(lambda,mu,nu),
+#
+# where every entry of the rectangular C matrix is one contraction of the
+# evaluated local operator with the read-only one-box geometry.  Retaining
+# these branches avoids the previous quartic table of all `(a,b,c,d)` PI
+# coordinates.  It also preserves interference between arbitrary entries of
+# the local operator inside each C entry, including entries that are zero in
+# the schedule prototype and become nonzero later.
+struct _LocalGainBranch{T}
+    output_sector::Int
+    input_sector::Int
+    scale::T
+    table::_PackedOneBodyContractions{T}
+end
+
+struct _LocalGainBranches{T}
+    entries::Vector{_LocalGainBranch{T}}
+    maximum_block_dimension::Int
+end
+
+struct _StaticLocalGainBranch{T}
+    output_sector::Int
+    input_sector::Int
+    scale::T
+end
+struct _StaticLocalGainBranches{T}
+    entries::Vector{_StaticLocalGainBranch{T}}
+    maximum_block_dimension::Int
+end
+
+# Fixed one-body channels often inherit exact selection-rule zeros from their
+# local operator.  For example, every Schur contraction of a qubit lowering
+# operator contains only one shifted diagonal.  Retain an exact support only
+# when a setup-time arithmetic estimate predicts less work than the dense
+# rectangular sandwich.  The dense matrix remains the canonical factor for
+# explicit materialization and for consumers which need arbitrary indexing;
+# the support is only O(nnz(C)) and never becomes a quartic gain map.
+struct _StaticOneBodyContraction{T,M<:AbstractMatrix{T}} <: AbstractMatrix{T}
+    matrix::M
+    output_rows::Vector{Int}
+    input_columns::Vector{Int}
+    values::Vector{T}
+    use_support::Bool
+end
+
+Base.size(contraction::_StaticOneBodyContraction)=size(contraction.matrix)
+Base.axes(contraction::_StaticOneBodyContraction)=axes(contraction.matrix)
+Base.IndexStyle(::Type{<:_StaticOneBodyContraction})=IndexCartesian()
+@inline Base.getindex(contraction::_StaticOneBodyContraction,row::Int,
+                      column::Int)=contraction.matrix[row,column]
+
+function _static_onebody_contraction(matrix::M) where
+        {T,M<:AbstractMatrix{T}}
+    output_rows=Int[];input_columns=Int[];values=T[]
+    @inbounds for column in axes(matrix,2),row in axes(matrix,1)
+        value=matrix[row,column]
+        iszero(value)&&continue
+        push!(output_rows,row);push!(input_columns,column);push!(values,value)
+    end
+    nonzeros=length(values)
+    output_dimension,input_dimension=size(matrix)
+    # A support pair evaluates one scalar contribution.  Give that loop a
+    # factor-two penalty relative to the usual two dense matrix products so
+    # borderline/dense contractions continue to use the tuned dense path.
+    sparse_cost=UInt128(2)*UInt128(nonzeros)*UInt128(nonzeros)
+    dense_cost=UInt128(output_dimension)*UInt128(input_dimension)*
+        UInt128(output_dimension+input_dimension)
+    use_support=sparse_cost<=dense_cost
+    if !use_support
+        empty!(output_rows);empty!(input_columns);empty!(values)
+    end
+    _StaticOneBodyContraction(matrix,output_rows,input_columns,values,
+                              use_support)
+end
+
+# Julia 1.10 does not always preserve the concrete wrapper element type
+# through `map(_static_onebody_contraction, contractions)`.  Construct the
+# vector explicitly so a fixed local channel remains fully inferred on every
+# supported Julia release.
+function _static_onebody_contractions(contractions::AbstractVector{M}) where
+        {T,M<:AbstractMatrix{T}}
+    prepared=Vector{_StaticOneBodyContraction{T,M}}(
+        undef,length(contractions))
+    @inbounds for index in eachindex(contractions)
+        prepared[index]=_static_onebody_contraction(contractions[index])
+    end
+    prepared
+end
+
+function _static_local_gain_branches(branches::_LocalGainBranches{T}) where T
+    entries=_StaticLocalGainBranch{T}[
+        _StaticLocalGainBranch(branch.output_sector,branch.input_sector,
+                               branch.scale)
+        for branch in branches.entries]
+    _StaticLocalGainBranches(entries,branches.maximum_block_dimension)
+end
+
+function _local_gain_branches(b,cache::OneBodyGeometry{T}) where T
+    entries=_LocalGainBranch{T}[]
+    for li in eachindex(b.sectors),ni in eachindex(b.sectors)
+        for mu in cache.connections[(li,ni)]
+            key=(li,mu,ni)
+            push!(entries,_LocalGainBranch(
+                li,ni,cache.scales[key],cache.contractions[key]))
         end
     end
-    (;I,J)
+    _LocalGainBranches(entries,maximum(length,b.patterns;init=1))
 end
 
 _exact_real(x)=x isa Integer||x isa Rational
@@ -219,6 +347,55 @@ struct LocalJumpPIKernel{Q,G,S} <: AbstractStaticPIKernel
     qblocks::Q; gain::G; scale::S
 end
 
+# Fixed local channels use the same rectangular Schur contractions as the
+# preallocated operator-schedule path.  Keeping the contractions themselves,
+# rather than their four-index PI-coordinate expansion, makes retained setup
+# storage quadratic in the Schur-block dimensions.  Sparse materialization
+# expands these factors only when it is explicitly requested.
+struct FactorizedLocalJumpPIKernel{Q,B,C,S} <: AbstractStaticPIKernel
+    qblocks::Q
+    branches::B
+    contractions::C
+    scale::S
+end
+
+struct FactorizedLocalPBodyJumpPIKernel{Q,G,C,P,S} <: AbstractStaticPIKernel
+    qblocks::Q
+    groups::G
+    contractions::C
+    pair_scales::P
+    scale::S
+end
+
+# Autonomous fixed kernels can share their diagonal Schur work.  Hamiltonian
+# blocks and the complete anticommutator loss are accumulated once at setup;
+# gain maps stay as independent channels so no spurious cross terms are
+# introduced.  The small gain records expose their output/input sector
+# indices through `branches` or `groups`, which also permits deterministic
+# target-sector parallel application.
+struct _FusedCollectiveGain{B,S}
+    blocks::B
+    scale::S
+end
+struct _FusedOneBodyGain{B,C,S}
+    branches::B
+    contractions::C
+    scale::S
+end
+struct _FusedPBodyGain{G,C,P,S}
+    groups::G
+    contractions::C
+    pair_scales::P
+    scale::S
+end
+struct FusedStaticPIKernel{H,Q,C,O,P} <: AbstractStaticPIKernel
+    hamiltonian_blocks::H
+    loss_blocks::Q
+    collective_gains::C
+    onebody_gains::O
+    pbody_gains::P
+end
+
 
 # In-place schedules keep all mutable evaluated data outside the plan. The
 # builders below are read-only handles to prepared representation geometry.
@@ -242,9 +419,9 @@ end
 struct InPlaceDissipatorPIKernel{S,B,R} <: AbstractDynamicPIKernel
     schedule::S;builder::B;scale::R
 end
-struct InPlaceLocalJumpPIKernel{S,G,R,I,J} <: AbstractDynamicPIKernel
+struct InPlaceLocalJumpPIKernel{S,G,R,B} <: AbstractDynamicPIKernel
     schedule::S;geometry::G;scale::R
-    I::I;J::J
+    branches::B
 end
 struct InPlaceLocalPBodyJumpPIKernel{S,B,R,G,L,U,Q} <: AbstractDynamicPIKernel
     schedule::S;builder::B;scale::R
@@ -258,13 +435,12 @@ struct InPlaceCorrelatedCollectiveJumpPIKernel{S,B,R,A,Q} <: AbstractDynamicPIKe
     atol::A
     rtol::Q
 end
-struct InPlaceCorrelatedLocalJumpPIKernel{S,O,G,R,I,J,A,Q} <: AbstractDynamicPIKernel
+struct InPlaceCorrelatedLocalJumpPIKernel{S,O,G,R,B,A,Q} <: AbstractDynamicPIKernel
     schedule::S
     operators::O
     geometry::G
     scale::R
-    I::I
-    J::J
+    branches::B
     atol::A
     rtol::Q
 end
@@ -275,11 +451,18 @@ end
 struct InPlaceDissipatorKernelWorkspace{O,B,Q}
     operator::O;blocks::B;qblocks::Q
 end
-struct InPlaceLocalJumpKernelWorkspace{O,Q,B,V}
-    operator::O;qoperator::Q;qblocks::B;values::V
+struct InPlaceLocalJumpKernelWorkspace{O,Q,B,C,S}
+    operator::O
+    qoperator::Q
+    qblocks::B
+    contractions::C
+    gain_scratch::S
 end
 struct InPlaceLocalPBodyJumpKernelWorkspace{O,Q,B,C,S}
     operator::O;qoperator::Q;qblocks::B;contractions::C;gain_scratch::S
+end
+struct StaticFactorizedGainKernelWorkspace{S}
+    gain_scratch::S
 end
 struct InPlaceCorrelatedCollectiveJumpKernelWorkspace{K,F,R,B,Q,S,N}
     kossakowski::K
@@ -290,15 +473,17 @@ struct InPlaceCorrelatedCollectiveJumpKernelWorkspace{K,F,R,B,Q,S,N}
     qscratch::S
     rank::N
 end
-struct InPlaceCorrelatedLocalJumpKernelWorkspace{K,F,R,O,Q,S,B,V}
+struct InPlaceCorrelatedLocalJumpKernelWorkspace{K,F,R,O,Q,S,B,C,G,N}
     kossakowski::K
     factor::F
     residual::R
-    effective_operator::O
+    effective_operators::O
     qoperator::Q
     qscratch::S
     qblocks::B
-    values::V
+    contractions::C
+    gain_scratch::G
+    rank::N
 end
 
 function _evaluated_dissipative_rate(rate,t,p)
@@ -380,12 +565,19 @@ function _apply_adjoint_kernel!(y,x,ker::LocalJumpPIKernel,b,t,p,work)
 end
 
 """Read-only caches supplied to `compile_term` implementations."""
-struct TermCompileContext{B,G,P,T}
+struct TermCompileContext{B,G,P,C,T}
     basis::B
     onebody::G
     pbody::P
+    coefficient_cache::C
     geometry_type::Type{T}
 end
+
+# Preserve the established internal/custom-term testing constructor.  The
+# additional field is setup-only coefficient reuse; omitting it must retain
+# the former uncached semantics.
+TermCompileContext(basis,onebody,pbody,geometry_type::Type)=
+    TermCompileContext(basis,onebody,pbody,nothing,geometry_type)
 
 _operator_real_type(::Function)=Float64
 _operator_real_type(operator::InPlaceTimeOperator)=
@@ -412,11 +604,48 @@ function _model_geometry_type(model::PIModel)
     isempty(types) ? Float64 : foldl(promote_type,types)
 end
 
-function TermCompileContext(model::PIModel{B}) where {D,L,B<:PIBasis{D,L}}
+function _model_onebox_requirements(model::PIModel)
+    needs_onebody=any(_term_requires_onebody_geometry,model.terms)
+    pbody_orders=unique(Int[body_order(term) for term in model.terms
+                            if term isa _PBodyPITerm])
+    required_depth=max(needs_onebody ? 1 : 0,maximum(pbody_orders;init=0))
+    geometry_families=(needs_onebody ? 1 : 0)+length(pbody_orders)
+    (;needs_onebody,pbody_orders,required_depth,geometry_families)
+end
+
+function _small_onebox_autocache(b::PIBasis)
+    (b.d==1&&b.N<=64)||(b.d==2&&b.N<=32)||
+        (b.d==3&&b.N<=8)||(b.d==4&&b.N<=5)
+end
+
+function _compile_coefficient_cache(model::PIModel,::Type{T},requirements,
+                                    supplied) where T<:AbstractFloat
+    if supplied!==nothing
+        _check_onebox_coefficient_cache(
+            supplied,model.basis,requirements.required_depth,T)
+        return supplied
+    end
+    requirements.geometry_families>1||return nothing
+    _small_onebox_autocache(model.basis)||return nothing
+    # This is construction scratch shared only while lowering the model.  The
+    # finished geometries retain their packed contractions/isometries, not the
+    # primitive table.  The strict cap keeps the automatic path confined to
+    # the intended small-(N,d) regime; larger studies can prepare and pass an
+    # explicit cache with a user-selected memory budget.
+    OneBoxCGCache(model.basis;max_depth=requirements.required_depth,T,
+                  memory_budget=64*1024^2)
+end
+
+function TermCompileContext(model::PIModel{B};coefficient_cache=nothing) where
+        {D,L,B<:PIBasis{D,L}}
     b=model.basis;T=_model_geometry_type(model)
-    onebody=any(_term_requires_onebody_geometry,model.terms) ? OneBodyGeometry(b,T) : nothing
+    requirements=_model_onebox_requirements(model)
+    coefficients=_compile_coefficient_cache(
+        model,T,requirements,coefficient_cache)
+    onebody=requirements.needs_onebody ?
+        OneBodyGeometry(b,T;coefficient_cache=coefficients) : nothing
     pbody=Dict{Int,PBodyGeometry{T,D,L,B}}()
-    TermCompileContext(b,onebody,pbody,T)
+    TermCompileContext(b,onebody,pbody,coefficients,T)
 end
 
 # Direct-PI and Appendix-D terms have their own lowering geometry.  Avoid the
@@ -427,7 +656,9 @@ _term_requires_onebody_geometry(::Union{DirectPIHamiltonian,DirectPIJump,
     PBodyHamiltonian,LocalPBodyJump,CollectivePBodyJump})=false
 
 function _pbody_geometry!(context::TermCompileContext,order::Integer)
-    get!(()->PBodyGeometry(context.basis,order,context.geometry_type),context.pbody,Int(order))
+    get!(()->PBodyGeometry(context.basis,order,context.geometry_type;
+                          coefficient_cache=context.coefficient_cache),
+         context.pbody,Int(order))
 end
 
 function _pbody_block_builder(context::TermCompileContext,term)
@@ -549,12 +780,8 @@ function _path_contractions!(destination,UL,UR,X)
     destination
 end
 
-function _pbody_gain_factorization(builder::CollectivePBodyBlockBuilder)
+function _pbody_gain_factorization_data(builder::CollectivePBodyBlockBuilder)
     geometry=builder.geometry;b=geometry.basis;T=geometry_scalar_type(geometry)
-    builder.cancellation_risk&&throw(ArgumentError(
-        "dynamic local p-body gain factors are cancellation-prone at scalar " *
-        "type $T, including when every individual factor is representable; " *
-        "use a wider InPlaceTimeOperator prototype scalar type"))
     groups=NTuple{4,Int}[]
     left_isometries=Array{T,3}[];right_isometries=Array{T,3}[]
     pair_scales=_PreparedExactScale{T,true}[]
@@ -574,11 +801,22 @@ function _pbody_gain_factorization(builder::CollectivePBodyBlockBuilder)
         first_pair<=last_pair||continue
         push!(groups,(li,ni,first_pair,last_pair))
     end
+    (;groups,left_isometries,right_isometries,pair_scales)
+end
+
+function _pbody_gain_factorization(builder::CollectivePBodyBlockBuilder)
+    geometry=builder.geometry;T=geometry_scalar_type(geometry)
+    builder.cancellation_risk&&throw(ArgumentError(
+        "dynamic local p-body gain factors are cancellation-prone at scalar " *
+        "type $T, including when every individual factor is representable; " *
+        "use a wider InPlaceTimeOperator prototype scalar type"))
+    result=_pbody_gain_factorization_data(builder)
+    pair_scales=result.pair_scales
     any(scale->!scale.direct,pair_scales)&&throw(ArgumentError(
         "dynamic local p-body gain factors exceed the nonzero finite range of $T; " *
         "use a wider InPlaceTimeOperator prototype scalar type so the preallocated " *
         "quadratic contraction scratch cannot underflow before exact rescaling"))
-    (;groups,left_isometries,right_isometries,pair_scales)
+    result
 end
 
 function _fill_dynamic_blocks!(blocks,builder::CollectiveOneBodyBlockBuilder,X)
@@ -668,7 +906,7 @@ _dynamic_builder(context::TermCompileContext,t::Union{PBodyHamiltonian,
     CollectivePBodyJump})=_pbody_block_builder(context,t)
 
 function _collective_blocks(operator::AbstractMatrix{O},
-        context::TermCompileContext{B,G,P,R}) where {O,B,G,P,R}
+        context::TermCompileContext{B,G,P,C,R}) where {O,B,G,P,C,R}
     S=promote_type(Complex{R},O)
     blocks=Vector{Matrix{S}}(undef,length(context.basis.sectors))
     for index in eachindex(context.basis.sectors)
@@ -725,13 +963,18 @@ function compile_term(t::LocalJump,context::TermCompileContext)
     operator=term_operator(t)
     if operator isa InPlaceTimeOperator
         _dynamic_onebody_builder(context)
-        structure=_local_gain_structure(context.basis,context.onebody)
+        branches=_local_gain_branches(context.basis,context.onebody)
         return InPlaceLocalJumpPIKernel(operator,context.onebody,term_rate(t),
-            structure.I,structure.J)
+            branches)
     end
     Q=_collective_blocks(operator'*operator,context)
-    LocalJumpPIKernel(Q,_local_kernel_triplets(context.basis,context.onebody,
-                                               operator,operator),term_rate(t))
+    prepared_branches=_local_gain_branches(context.basis,context.onebody)
+    T=promote_type(eltype(first(Q)),eltype(operator))
+    contractions=_local_gain_contraction_workspace(prepared_branches,T)
+    _fill_local_gain_contractions!(contractions,prepared_branches,operator)
+    branches=_static_local_gain_branches(prepared_branches)
+    static_contractions=_static_onebody_contractions(contractions)
+    FactorizedLocalJumpPIKernel(Q,branches,static_contractions,term_rate(t))
 end
 
 function _effective_correlated_operator(coefficients,operators,
@@ -769,10 +1012,11 @@ function compile_term(term::_CorrelatedOneBodyJumps,
             return InPlaceCorrelatedCollectiveJumpPIKernel(
                 matrix,channel_blocks,rate,term.atol,term.rtol)
         end
-        structure=_local_gain_structure(context.basis,context.onebody)
+        _dynamic_onebody_builder(context)
+        branches=_local_gain_branches(context.basis,context.onebody)
         return InPlaceCorrelatedLocalJumpPIKernel(
             matrix,term.operators,context.onebody,rate,
-            structure.I,structure.J,term.atol,term.rtol)
+            branches,term.atol,term.rtol)
     end
     matrix isa AbstractMatrix||throw(ArgumentError(
         "a raw callable Kossakowski matrix must use the freeze fallback"))
@@ -816,7 +1060,28 @@ function compile_term(t::LocalPBodyJump,context::TermCompileContext)
     geometry=_pbody_geometry!(context,body_order(t));Qop=operator'*operator
     _check_pbody_operator(geometry,Qop)
     Q=[pbody_collective_block(geometry,Qop,p;check=false) for p in context.basis.sectors]
-    LocalJumpPIKernel(Q,pbody_kernel_triplets(geometry,operator,operator),term_rate(t))
+    # The factorized fixed path deliberately retains the guarded triplet
+    # implementation as an oracle/fallback for exceptionally large path
+    # scales.  In that regime runtime accumulation through native rectangular
+    # scratch could lose a cancellation that the setup-time wide accumulator
+    # certifies.  Ordinary small and medium models take the compact path.
+    builder=_pbody_block_builder(context,t)
+    if builder.cancellation_risk
+        return LocalJumpPIKernel(Q,
+            pbody_kernel_triplets(geometry,operator,operator),term_rate(t))
+    end
+    structure=_pbody_gain_factorization_data(builder)
+    if any(scale->!scale.direct,structure.pair_scales)
+        return LocalJumpPIKernel(Q,
+            pbody_kernel_triplets(geometry,operator,operator),term_rate(t))
+    end
+    T=promote_type(eltype(first(Q)),eltype(operator))
+    contractions=Matrix{T}[
+        _path_contractions(structure.left_isometries[index],
+                           structure.right_isometries[index],operator)
+        for index in eachindex(structure.pair_scales)]
+    FactorizedLocalPBodyJumpPIKernel(Q,structure.groups,contractions,
+                                    structure.pair_scales,term_rate(t))
 end
 
 _compiled_kernel_tuple(kernel::Tuple)=kernel
@@ -826,12 +1091,188 @@ function _compile_term_sequence(terms::Tuple{T,Vararg{Any}},context) where T
     current=_compiled_kernel_tuple(compile_term(first(terms),context))
     (current...,_compile_term_sequence(Base.tail(terms),context)...)
 end
-function _static_kernels(model)
-    context=TermCompileContext(model)
-    _compile_term_sequence(model.terms,context)
+
+_fusable_fixed_kernel(::HamiltonianPIKernel{B,S}) where {B,S<:Number}=true
+_fusable_fixed_kernel(::DissipatorPIKernel{B,Q,S}) where {B,Q,S<:Real}=true
+_fusable_fixed_kernel(::FactorizedLocalJumpPIKernel{Q,B,C,S}) where
+    {Q,B,C,S<:Real}=true
+_fusable_fixed_kernel(::FactorizedLocalPBodyJumpPIKernel{Q,G,C,P,S}) where
+    {Q,G,C,P,S<:Real}=true
+_fusable_fixed_kernel(kernel)=false
+
+_partition_fusable_kernels(::Tuple{})=((),())
+function _partition_fusable_kernels(kernels::Tuple{K,Vararg{Any}}) where K
+    selected,remaining=_partition_fusable_kernels(Base.tail(kernels))
+    if _fusable_fixed_kernel(first(kernels))
+        ((first(kernels),selected...),remaining)
+    else
+        (selected,(first(kernels),remaining...))
+    end
 end
 
-"""Immutable prepared term data and geometry for a PI Liouvillian."""
+_select_kernel_type(::Tuple{},::Type{S}) where S=()
+function _select_kernel_type(kernels::Tuple{K,Vararg{Any}},
+                             ::Type{S}) where {K,S}
+    selected=_select_kernel_type(Base.tail(kernels),S)
+    K<:S ? (first(kernels),selected...) : selected
+end
+
+function _fused_zero_blocks(b,::Type{T}) where T
+    [zeros(T,length(b.patterns[index]),length(b.patterns[index]))
+     for index in eachindex(b.sectors)]
+end
+
+_fused_owned_matrix(matrix::Matrix{T},::Type{T}) where T=matrix
+_fused_owned_matrix(matrix,::Type{T}) where T=Matrix{T}(matrix)
+_fused_owned_matrix(contraction::_StaticOneBodyContraction{T},
+                    ::Type{T}) where T=contraction
+function _fused_owned_matrix(contraction::_StaticOneBodyContraction,
+                             ::Type{T}) where T
+    _static_onebody_contraction(Matrix{T}(contraction.matrix))
+end
+
+function _fused_owned_blocks(blocks::AbstractVector,::Type{T}) where T
+    prepared=Vector{Matrix{T}}(undef,length(blocks))
+    @inbounds for index in eachindex(blocks)
+        prepared[index]=_fused_owned_matrix(blocks[index],T)
+    end
+    prepared
+end
+
+function _fused_owned_onebody_contractions(contractions::V,::Type{T}) where
+        {T,M,C<:_StaticOneBodyContraction{T,M},V<:AbstractVector{C}}
+    contractions
+end
+function _fused_owned_onebody_contractions(contractions::AbstractVector,
+                                            ::Type{T}) where T
+    prepared=Vector{_StaticOneBodyContraction{T,Matrix{T}}}(
+        undef,length(contractions))
+    @inbounds for index in eachindex(contractions)
+        prepared[index]=_fused_owned_matrix(contractions[index],T)
+    end
+    prepared
+end
+
+_fused_collective_gains(::Tuple{},::Type{T}) where T=()
+function _fused_collective_gains(kernels::Tuple{K,Vararg{Any}},
+                                 ::Type{T}) where {K,T}
+    kernel=first(kernels)
+    gain=_FusedCollectiveGain(_fused_owned_blocks(kernel.blocks,T),
+                              convert(T,kernel.scale))
+    (gain,_fused_collective_gains(Base.tail(kernels),T)...)
+end
+
+_fused_onebody_gains(::Tuple{},::Type{T}) where T=()
+function _fused_onebody_gains(kernels::Tuple{K,Vararg{Any}},
+                              ::Type{T}) where {K,T}
+    kernel=first(kernels)
+    gain=_FusedOneBodyGain(kernel.branches,
+        _fused_owned_onebody_contractions(kernel.contractions,T),
+        convert(T,kernel.scale))
+    (gain,_fused_onebody_gains(Base.tail(kernels),T)...)
+end
+
+_fused_pbody_gains(::Tuple{},::Type{T}) where T=()
+function _fused_pbody_gains(kernels::Tuple{K,Vararg{Any}},
+                            ::Type{T}) where {K,T}
+    kernel=first(kernels)
+    gain=_FusedPBodyGain(kernel.groups,
+        _fused_owned_blocks(kernel.contractions,T),kernel.pair_scales,
+        convert(T,kernel.scale))
+    (gain,_fused_pbody_gains(Base.tail(kernels),T)...)
+end
+
+function _fuse_fixed_kernels(kernels::Tuple,b)
+    selected,remaining=_partition_fusable_kernels(kernels)
+    _fuse_selected_fixed_kernels(selected,remaining,kernels,b)
+end
+
+# Dispatch on tuple length rather than branching on `length(selected)`.  This
+# keeps Julia 1.10 from inferring a union of the fused and unfused plan types.
+_fuse_selected_fixed_kernels(::Tuple{},remaining,kernels,b)=kernels
+_fuse_selected_fixed_kernels(::Tuple{K},remaining,kernels,b) where K=kernels
+function _fuse_selected_fixed_kernels(
+        selected::Tuple{K1,K2,Vararg{Any}},remaining,kernels,b) where {K1,K2}
+    T=foldl(promote_type,map(_kernel_scalar_type,selected))
+
+    hamiltonians=_select_kernel_type(selected,HamiltonianPIKernel)
+    hamiltonian_blocks=if isempty(hamiltonians)
+        nothing
+    else
+        blocks=_fused_zero_blocks(b,T)
+        for kernel in hamiltonians
+            scale=convert(T,kernel.scale)
+            for sector in eachindex(blocks),index in eachindex(blocks[sector])
+                blocks[sector][index]+=scale*kernel.blocks[sector][index]
+            end
+        end
+        blocks
+    end
+
+    DissipativeKernel=Union{DissipatorPIKernel,FactorizedLocalJumpPIKernel,
+                            FactorizedLocalPBodyJumpPIKernel}
+    dissipative=_select_kernel_type(selected,DissipativeKernel)
+    # Type-based partitioning keeps plan construction fully inferred. Validate
+    # the values before absorbing their rates so nonfinite fixed inputs cannot
+    # evade the ordinary dissipative application check.
+    foreach(kernel->_evaluated_dissipative_rate(kernel.scale,0.0,nothing),
+            dissipative)
+    loss_blocks=if isempty(dissipative)
+        nothing
+    else
+        blocks=_fused_zero_blocks(b,T)
+        for kernel in dissipative
+            scale=convert(T,kernel.scale)
+            for sector in eachindex(blocks),index in eachindex(blocks[sector])
+                blocks[sector][index]+=scale*kernel.qblocks[sector][index]
+            end
+        end
+        blocks
+    end
+
+    collective=_select_kernel_type(selected,DissipatorPIKernel)
+    onebody=_select_kernel_type(selected,FactorizedLocalJumpPIKernel)
+    pbody=_select_kernel_type(selected,FactorizedLocalPBodyJumpPIKernel)
+    collective_gains=_fused_collective_gains(collective,T)
+    onebody_gains=_fused_onebody_gains(onebody,T)
+    pbody_gains=_fused_pbody_gains(pbody,T)
+
+    fused=FusedStaticPIKernel(hamiltonian_blocks,loss_blocks,
+                              collective_gains,onebody_gains,pbody_gains)
+    (fused,remaining...)
+end
+
+function _static_kernels_unfused(model;coefficient_cache=nothing)
+    context=TermCompileContext(model;coefficient_cache)
+    _compile_term_sequence(model.terms,context)
+end
+_static_fusion_flag(flag::Val{F}) where F=Val(F)
+_static_fusion_flag(flag::Bool)=Val(flag)
+_apply_static_fusion(kernels,b,::Val{true})=
+    _fuse_fixed_kernels(kernels,b)
+_apply_static_fusion(kernels,b,::Val{false})=kernels
+
+function _static_kernels(model;coefficient_cache=nothing,
+                         fuse_static=Val(true))
+    kernels=_static_kernels_unfused(model;coefficient_cache)
+    _apply_static_fusion(
+        kernels,model.basis,_static_fusion_flag(fuse_static))
+end
+
+"""
+    LiouvillianPlan(model; coefficient_cache=nothing)
+
+Immutable prepared term data and geometry for a PI Liouvillian. A supplied
+[`OneBoxCGCache`](@ref) is shared by every compatible one- and `p`-body
+geometry built for the model; it must belong to the exact basis and cover the
+required body-order depth and scalar type. When it is omitted, compilation
+automatically prepares a bounded temporary cache for small models that need
+more than one geometry family. Fixed local gains retain rectangular Schur
+factors, and compatible autonomous numeric kernels share one effective
+Hamiltonian and anticommutator loss. Gain channels remain separate. The
+internal `fuse_static=false` diagnostic route retains one kernel sequence per
+model term for reference and channel-resolved consumers.
+"""
 struct LiouvillianPlan{B,K,V,M,T}
     basis::B
     kernels::K
@@ -847,6 +1288,22 @@ _kernel_scalar_type(kernel::HamiltonianPIKernel)=_scale_promoted_type(eltype(fir
 _kernel_scalar_type(kernel::DissipatorPIKernel)=_scale_promoted_type(eltype(first(kernel.blocks)),kernel.scale)
 _kernel_scalar_type(kernel::LocalJumpPIKernel)=_scale_promoted_type(
     promote_type(eltype(kernel.gain.V),eltype(first(kernel.qblocks))),kernel.scale)
+_kernel_scalar_type(kernel::FactorizedLocalJumpPIKernel)=_scale_promoted_type(
+    promote_type(eltype(first(kernel.contractions)),
+                 eltype(first(kernel.qblocks))),kernel.scale)
+_kernel_scalar_type(kernel::FactorizedLocalPBodyJumpPIKernel)=_scale_promoted_type(
+    promote_type(eltype(first(kernel.contractions)),
+                 eltype(first(kernel.qblocks))),kernel.scale)
+function _kernel_scalar_type(kernel::FusedStaticPIKernel)
+    kernel.hamiltonian_blocks!==nothing&&
+        return eltype(first(kernel.hamiltonian_blocks))
+    kernel.loss_blocks!==nothing&&return eltype(first(kernel.loss_blocks))
+    !isempty(kernel.collective_gains)&&
+        return eltype(first(first(kernel.collective_gains).blocks))
+    !isempty(kernel.onebody_gains)&&
+        return eltype(first(first(kernel.onebody_gains).contractions))
+    eltype(first(first(kernel.pbody_gains).contractions))
+end
 _schedule_scalar_type(::InPlaceTimeOperator{O}) where
     {T,O<:AbstractMatrix{T}}=Complex{_real_float_type(T)}
 _schedule_scalar_type(::InPlaceTimeOperator{O}) where
@@ -876,11 +1333,8 @@ function _kernel_scalar_type(kernel::InPlaceCorrelatedLocalJumpPIKernel)
                                       geometry_type),kernel.scale)
 end
 
-function LiouvillianPlan(model::PIModel)
+function _liouvillian_plan_from_kernels(model,kernels)
     fixed_operators=all(term_has_fixed_operator,model.terms)
-    prepared_operators=all(t->term_has_fixed_operator(t)||term_has_preallocated_operator(t),
-                           model.terms)
-    kernels=prepared_operators ? _static_kernels(model) : nothing
     fallback=fixed_operators ? nothing : model
     T = kernels===nothing||isempty(kernels) ? ComplexF64 :
         foldl(promote_type,(_kernel_scalar_type(k) for k in kernels))
@@ -888,17 +1342,72 @@ function LiouvillianPlan(model::PIModel)
                     fallback,T,isautonomous(model))
 end
 
+function LiouvillianPlan(model::PIModel;coefficient_cache=nothing,
+                         fuse_static=Val(true))
+    prepared_operators=all(t->term_has_fixed_operator(t)||term_has_preallocated_operator(t),
+                           model.terms)
+    kernels=prepared_operators ?
+        _static_kernels(model;coefficient_cache,fuse_static) : nothing
+    _liouvillian_plan_from_kernels(model,kernels)
+end
+
+# Term-resolved consumers (quantum trajectories, population certificates,
+# and channel metadata) require a one-to-one model-term/kernel sequence.  A
+# separate branch-free helper keeps their constructors fully inferred while
+# ordinary deterministic plans retain autonomous fusion by default.
+function _term_resolved_liouvillian_plan(model::PIModel;
+                                         coefficient_cache=nothing)
+    prepared_operators=all(t->term_has_fixed_operator(t)||term_has_preallocated_operator(t),
+                           model.terms)
+    kernels=prepared_operators ?
+        _static_kernels_unfused(model;coefficient_cache) : nothing
+    _liouvillian_plan_from_kernels(model,kernels)
+end
+
 size(plan::LiouvillianPlan)=(length(plan.basis),length(plan.basis))
 size(plan::LiouvillianPlan,i::Integer)=i in (1,2) ? length(plan.basis) : 1
 eltype(plan::LiouvillianPlan)=plan.Ttype
 isautonomous(plan::LiouvillianPlan)=plan.autonomous
 
-"""Per-task mutable scratch for applying a `LiouvillianPlan`."""
-struct LiouvillianWorkspace{B,W,K,T}
+mutable struct _LiouvillianBatchScratch{T}
+    maximum_block_dimension::Int
+    capacity::Int
+    input::Matrix{T}
+    left::Matrix{T}
+    right::Matrix{T}
+end
+
+function _LiouvillianBatchScratch(::Type{T},maximum_block_dimension::Int) where T
+    empty=zeros(T,maximum_block_dimension,0)
+    _LiouvillianBatchScratch{T}(maximum_block_dimension,0,empty,
+        similar(empty),similar(empty))
+end
+
+function _ensure_batch_capacity!(scratch::_LiouvillianBatchScratch{T},
+                                 columns::Int) where T
+    columns<=scratch.capacity&&return scratch
+    width=Base.checked_mul(scratch.maximum_block_dimension,columns)
+    scratch.input=zeros(T,scratch.maximum_block_dimension,width)
+    scratch.left=similar(scratch.input)
+    scratch.right=similar(scratch.input)
+    scratch.capacity=columns
+    scratch
+end
+
+"""
+Per-task mutable scratch for applying a `LiouvillianPlan`.
+
+Vector application retains three matrices per Schur sector. Batched
+application grows an additional three largest-sector buffers on first use and
+then reuses them. This keeps ordinary vector workspaces lean while allowing
+sectorwise matrix--matrix kernels for multiple right-hand sides.
+"""
+struct LiouvillianWorkspace{B,W,K,T,S}
     basis::B
     blocks::W
     kernel_workspaces::K
     Ttype::Type{T}
+    batch::S
 end
 
 _operator_workspace(prototype::AbstractMatrix)=Matrix(prototype)
@@ -908,6 +1417,16 @@ function _dynamic_block_workspace(b,T)
      for s in eachindex(b.sectors)]
 end
 _kernel_workspace(::AbstractStaticPIKernel,b,T)=nothing
+function _kernel_workspace(kernel::Union{FactorizedLocalJumpPIKernel,
+        FactorizedLocalPBodyJumpPIKernel},b,T)
+    largest=maximum(length,b.patterns;init=1)
+    StaticFactorizedGainKernelWorkspace(zeros(T,largest,largest))
+end
+function _kernel_workspace(kernel::FusedStaticPIKernel,b,T)
+    has_rectangular=!isempty(kernel.onebody_gains)||!isempty(kernel.pbody_gains)
+    largest=has_rectangular ? maximum(length,b.patterns;init=1) : 0
+    StaticFactorizedGainKernelWorkspace(zeros(T,largest,largest))
+end
 function _kernel_workspace(kernel::InPlaceHamiltonianPIKernel,b,T)
     InPlaceHamiltonianKernelWorkspace(_operator_workspace(kernel.schedule.prototype),
                                       _dynamic_block_workspace(b,T))
@@ -917,11 +1436,25 @@ function _kernel_workspace(kernel::InPlaceDissipatorPIKernel,b,T)
     InPlaceDissipatorKernelWorkspace(_operator_workspace(kernel.schedule.prototype),
                                      blocks,_dynamic_block_workspace(b,T))
 end
+function _local_gain_contraction_workspace(branches,::Type{T},
+                                           channels::Int=1) where T
+    count=Base.checked_mul(channels,length(branches.entries))
+    contractions=Vector{Matrix{T}}(undef,count)
+    index=0
+    for _ in 1:channels,branch in branches.entries
+        index+=1
+        contractions[index]=zeros(T,size(branch.table))
+    end
+    contractions
+end
 function _kernel_workspace(kernel::InPlaceLocalJumpPIKernel,b,T)
     operator=_operator_workspace(kernel.schedule.prototype)
     qoperator=similar(operator,size(operator))
     InPlaceLocalJumpKernelWorkspace(operator,qoperator,
-        _dynamic_block_workspace(b,T),zeros(T,length(kernel.I)))
+        _dynamic_block_workspace(b,T),
+        _local_gain_contraction_workspace(kernel.branches,T),
+        zeros(T,kernel.branches.maximum_block_dimension,
+                kernel.branches.maximum_block_dimension))
 end
 function _kernel_workspace(kernel::InPlaceLocalPBodyJumpPIKernel,b,T)
     operator=_operator_workspace(kernel.schedule.prototype)
@@ -945,8 +1478,11 @@ function _kernel_workspace(kernel::InPlaceCorrelatedLocalJumpPIKernel,b,T)
     m=length(kernel.operators);d=size(first(kernel.operators),1)
     InPlaceCorrelatedLocalJumpKernelWorkspace(
         _operator_workspace(kernel.schedule.prototype),zeros(T,m,m),zeros(T,m,m),
-        zeros(T,d,d),zeros(T,d,d),zeros(T,d,d),
-        _dynamic_block_workspace(b,T),zeros(T,length(kernel.I)))
+        [zeros(T,d,d) for _ in 1:m],zeros(T,d,d),zeros(T,d,d),
+        _dynamic_block_workspace(b,T),
+        _local_gain_contraction_workspace(kernel.branches,T,m),
+        zeros(T,kernel.branches.maximum_block_dimension,
+                kernel.branches.maximum_block_dimension),Ref(0))
 end
 
 function LiouvillianWorkspace(plan::LiouvillianPlan)
@@ -957,13 +1493,283 @@ function LiouvillianWorkspace(plan::LiouvillianPlan)
           for s in eachindex(plan.basis.sectors)]
     kernel_workspaces=plan.kernels===nothing ? nothing :
         map(kernel->_kernel_workspace(kernel,plan.basis,T),plan.kernels)
-    LiouvillianWorkspace(plan.basis,work,kernel_workspaces,T)
+    maximum_block=maximum(length,plan.basis.patterns;init=1)
+    batch=_LiouvillianBatchScratch(T,maximum_block)
+    LiouvillianWorkspace(plan.basis,work,kernel_workspaces,T,batch)
 end
 
 function _check_liouvillian_workspace(work::LiouvillianWorkspace,plan::LiouvillianPlan)
     work.basis===plan.basis||throw(ArgumentError("Liouvillian workspace belongs to a different PI basis"))
     work.Ttype===plan.Ttype||throw(ArgumentError("Liouvillian workspace has an incompatible scalar type"))
     work
+end
+
+@inline function _pack_batch_blocks!(packed,X,offset::Int,dimension::Int,
+                                     columns::Int)
+    @inbounds for rhs in 1:columns,column in 1:dimension,row in 1:dimension
+        packed[row,(rhs-1)*dimension+column]=
+            X[offset+row-1+(column-1)*dimension,rhs]
+    end
+    packed
+end
+
+@inline function _pack_adjoint_batch_blocks!(packed,X,offset::Int,
+                                             dimension::Int,columns::Int)
+    @inbounds for rhs in 1:columns,column in 1:dimension,row in 1:dimension
+        packed[row,(rhs-1)*dimension+column]=conj(
+            X[offset+column-1+(row-1)*dimension,rhs])
+    end
+    packed
+end
+
+
+@inline function _pack_adjoint_contiguous_blocks!(packed,source,
+        dimension::Int,columns::Int)
+    @inbounds for rhs in 1:columns,column in 1:dimension,row in 1:dimension
+        packed[row,(rhs-1)*dimension+column]=conj(
+            source[column,(rhs-1)*dimension+row])
+    end
+    packed
+end
+
+
+function _batch_add_left_right!(Y,X,offset::Int,dimension::Int,
+        left_operator,right_operator,left_scale,right_scale,
+        scratch::_LiouvillianBatchScratch)
+    columns=size(X,2);columns==0&&return Y
+    width=dimension*columns
+    input=@view scratch.input[1:dimension,1:width]
+    left=@view scratch.left[1:dimension,1:width]
+    right=@view scratch.right[1:dimension,1:width]
+    _pack_batch_blocks!(input,X,offset,dimension,columns)
+    mul!(left,left_operator,input)
+    _pack_adjoint_batch_blocks!(input,X,offset,dimension,columns)
+    mul!(right,adjoint(right_operator),input)
+    @inbounds for rhs in 1:columns,column in 1:dimension,row in 1:dimension
+        coordinate=offset+row-1+(column-1)*dimension
+        Y[coordinate,rhs]+=left_scale*left[row,(rhs-1)*dimension+column]+
+            right_scale*conj(right[column,(rhs-1)*dimension+row])
+    end
+    Y
+end
+
+
+function _batch_add_sandwich!(Y,X,offset::Int,dimension::Int,
+        left_operator,right_operator,scale,
+        scratch::_LiouvillianBatchScratch)
+    columns=size(X,2);columns==0&&return Y
+    width=dimension*columns
+    input=@view scratch.input[1:dimension,1:width]
+    left=@view scratch.left[1:dimension,1:width]
+    right=@view scratch.right[1:dimension,1:width]
+    _pack_batch_blocks!(input,X,offset,dimension,columns)
+    mul!(left,left_operator,input)
+    _pack_adjoint_contiguous_blocks!(input,left,dimension,columns)
+    mul!(right,adjoint(right_operator),input)
+    @inbounds for rhs in 1:columns,column in 1:dimension,row in 1:dimension
+        coordinate=offset+row-1+(column-1)*dimension
+        Y[coordinate,rhs]+=scale*conj(
+            right[column,(rhs-1)*dimension+row])
+    end
+    Y
+end
+
+
+@inline function _pack_adjoint_rectangular_blocks!(packed,source,
+        output_dimension::Int,input_dimension::Int,columns::Int)
+    @inbounds for rhs in 1:columns,column in 1:output_dimension,
+                  row in 1:input_dimension
+        packed[row,(rhs-1)*output_dimension+column]=conj(
+            source[column,(rhs-1)*input_dimension+row])
+    end
+    packed
+end
+
+
+function _batch_add_rectangular_sandwich!(Y,X,output_offset::Int,
+        input_offset::Int,output_dimension::Int,input_dimension::Int,
+        operator,scale,scratch::_LiouvillianBatchScratch)
+    columns=size(X,2);columns==0&&return Y
+    input_width=input_dimension*columns
+    input=@view scratch.input[1:input_dimension,1:input_width]
+    left=@view scratch.left[1:output_dimension,1:input_width]
+    _pack_batch_blocks!(input,X,input_offset,input_dimension,columns)
+    mul!(left,operator,input)
+
+    output_width=output_dimension*columns
+    adjoint_input=@view scratch.input[1:input_dimension,1:output_width]
+    right=@view scratch.right[1:output_dimension,1:output_width]
+    _pack_adjoint_rectangular_blocks!(
+        adjoint_input,left,output_dimension,input_dimension,columns)
+    mul!(right,operator,adjoint_input)
+    @inbounds for rhs in 1:columns,column in 1:output_dimension,
+                  row in 1:output_dimension
+        coordinate=output_offset+row-1+(column-1)*output_dimension
+        Y[coordinate,rhs]+=scale*conj(
+            right[column,(rhs-1)*output_dimension+row])
+    end
+    Y
+end
+
+function _batch_add_supported_onebody_sandwich!(Y,X,output_offset::Int,
+        input_offset::Int,contraction::_StaticOneBodyContraction,scale;
+        adjoint::Bool=false)
+    rows=contraction.output_rows;columns=contraction.input_columns
+    values=contraction.values;right_hand_sides=size(X,2)
+    if adjoint
+        output_dimension=size(contraction,2)
+        input_dimension=size(contraction,1)
+        @inbounds for rhs in 1:right_hand_sides,right in eachindex(values)
+            output_column=columns[right]
+            input_column=rows[right]
+            right_value=values[right]
+            for left in eachindex(values)
+                output_row=columns[left]
+                input_row=rows[left]
+                output_coordinate=output_offset+output_row-1+
+                    (output_column-1)*output_dimension
+                input_coordinate=input_offset+input_row-1+
+                    (input_column-1)*input_dimension
+                Y[output_coordinate,rhs]+=scale*conj(values[left])*
+                    right_value*X[input_coordinate,rhs]
+            end
+        end
+    else
+        output_dimension=size(contraction,1)
+        input_dimension=size(contraction,2)
+        @inbounds for rhs in 1:right_hand_sides,right in eachindex(values)
+            output_column=rows[right]
+            input_column=columns[right]
+            right_value=values[right]
+            for left in eachindex(values)
+                output_row=rows[left]
+                input_row=columns[left]
+                output_coordinate=output_offset+output_row-1+
+                    (output_column-1)*output_dimension
+                input_coordinate=input_offset+input_row-1+
+                    (input_column-1)*input_dimension
+                Y[output_coordinate,rhs]+=scale*values[left]*
+                    conj(right_value)*X[input_coordinate,rhs]
+            end
+        end
+    end
+    Y
+end
+
+function _batch_add_rectangular_sandwich!(Y,X,output_offset::Int,
+        input_offset::Int,output_dimension::Int,input_dimension::Int,
+        contraction::_StaticOneBodyContraction,scale,
+        scratch::_LiouvillianBatchScratch)
+    contraction.use_support&&return _batch_add_supported_onebody_sandwich!(
+        Y,X,output_offset,input_offset,contraction,scale)
+    _batch_add_rectangular_sandwich!(Y,X,output_offset,input_offset,
+        output_dimension,input_dimension,contraction.matrix,scale,scratch)
+end
+
+function _batch_add_rectangular_sandwich!(Y,X,output_offset::Int,
+        input_offset::Int,output_dimension::Int,input_dimension::Int,
+        contraction::LinearAlgebra.Adjoint{T,S},scale,
+        scratch::_LiouvillianBatchScratch) where
+        {T,S<:_StaticOneBodyContraction}
+    parent_contraction=parent(contraction)
+    if parent_contraction.use_support
+        return _batch_add_supported_onebody_sandwich!(Y,X,output_offset,
+            input_offset,parent_contraction,scale;adjoint=true)
+    end
+    _batch_add_rectangular_sandwich!(Y,X,output_offset,input_offset,
+        output_dimension,input_dimension,
+        LinearAlgebra.adjoint(parent_contraction.matrix),scale,scratch)
+end
+
+
+function _apply_kernel_batch!(Y,X,kernel::HamiltonianPIKernel,b,t,p,scratch)
+    scale=convert(eltype(scratch.input),value_at(kernel.scale,t,p))
+    for sector in eachindex(b.sectors)
+        dimension=length(b.patterns[sector]);offset=b.offsets[sector]
+        block=kernel.blocks[sector]
+        _batch_add_left_right!(Y,X,offset,dimension,block,block,
+            -1im*scale,1im*scale,scratch)
+    end
+    Y
+end
+
+
+function _apply_adjoint_kernel_batch!(Y,X,kernel::HamiltonianPIKernel,b,t,p,
+                                      scratch)
+    scale=conj(convert(eltype(scratch.input),value_at(kernel.scale,t,p)))
+    for sector in eachindex(b.sectors)
+        dimension=length(b.patterns[sector]);offset=b.offsets[sector]
+        block=adjoint(kernel.blocks[sector])
+        _batch_add_left_right!(Y,X,offset,dimension,block,block,
+            1im*scale,-1im*scale,scratch)
+    end
+    Y
+end
+
+
+function _apply_kernel_batch!(Y,X,kernel::DissipatorPIKernel,b,t,p,scratch)
+    scale=convert(eltype(scratch.input),
+        _evaluated_dissipative_rate(kernel.scale,t,p))
+    for sector in eachindex(b.sectors)
+        dimension=length(b.patterns[sector]);offset=b.offsets[sector]
+        block=kernel.blocks[sector];qblock=kernel.qblocks[sector]
+        _batch_add_sandwich!(Y,X,offset,dimension,block,adjoint(block),
+            scale,scratch)
+        _batch_add_left_right!(Y,X,offset,dimension,qblock,qblock,
+            -scale/2,-scale/2,scratch)
+    end
+    Y
+end
+
+
+function _apply_adjoint_kernel_batch!(Y,X,kernel::DissipatorPIKernel,b,t,p,
+                                      scratch)
+    scale=conj(convert(eltype(scratch.input),
+        _evaluated_dissipative_rate(kernel.scale,t,p)))
+    for sector in eachindex(b.sectors)
+        dimension=length(b.patterns[sector]);offset=b.offsets[sector]
+        block=kernel.blocks[sector];qblock=adjoint(kernel.qblocks[sector])
+        _batch_add_sandwich!(Y,X,offset,dimension,adjoint(block),block,
+            scale,scratch)
+        _batch_add_left_right!(Y,X,offset,dimension,qblock,qblock,
+            -scale/2,-scale/2,scratch)
+    end
+    Y
+end
+
+
+function _apply_kernel_batch!(Y,X,kernel::LocalJumpPIKernel,b,t,p,scratch)
+    scale=convert(eltype(scratch.input),
+        _evaluated_dissipative_rate(kernel.scale,t,p))
+    @inbounds for rhs in axes(X,2),index in eachindex(kernel.gain.V)
+        Y[kernel.gain.I[index],rhs]+=scale*kernel.gain.V[index]*
+            X[kernel.gain.J[index],rhs]
+    end
+    for sector in eachindex(b.sectors)
+        dimension=length(b.patterns[sector]);offset=b.offsets[sector]
+        qblock=kernel.qblocks[sector]
+        _batch_add_left_right!(Y,X,offset,dimension,qblock,qblock,
+            -scale/2,-scale/2,scratch)
+    end
+    Y
+end
+
+
+function _apply_adjoint_kernel_batch!(Y,X,kernel::LocalJumpPIKernel,b,t,p,
+                                      scratch)
+    scale=conj(convert(eltype(scratch.input),
+        _evaluated_dissipative_rate(kernel.scale,t,p)))
+    @inbounds for rhs in axes(X,2),index in eachindex(kernel.gain.V)
+        Y[kernel.gain.J[index],rhs]+=scale*conj(kernel.gain.V[index])*
+            X[kernel.gain.I[index],rhs]
+    end
+    for sector in eachindex(b.sectors)
+        dimension=length(b.patterns[sector]);offset=b.offsets[sector]
+        qblock=adjoint(kernel.qblocks[sector])
+        _batch_add_left_right!(Y,X,offset,dimension,qblock,qblock,
+            -scale/2,-scale/2,scratch)
+    end
+    Y
 end
 
 function _fixed_liouvillian_scalar_type(L)
@@ -991,6 +1797,10 @@ function _check_liouvillian_apply_types(destination,source,plan::LiouvillianPlan
 end
 
 _prepare_kernel!(::AbstractStaticPIKernel,::Nothing,b,t,p)=nothing
+_prepare_kernel!(::Union{FactorizedLocalJumpPIKernel,
+                         FactorizedLocalPBodyJumpPIKernel,
+                         FusedStaticPIKernel},
+                 ::StaticFactorizedGainKernelWorkspace,b,t,p)=nothing
 _dynamic_ishermitian(operator::AbstractMatrix)=ishermitian(operator)
 function _dynamic_ishermitian(operator::AbstractPIOperator)
     for sector in operator.basis.sectors
@@ -1032,22 +1842,30 @@ function _prepare_kernel!(kernel::InPlaceLocalPBodyJumpPIKernel,
     end
     nothing
 end
+
+function _fill_local_gain_contractions!(destination,branches,operator,
+                                        channel::Int=1)
+    branch_count=length(branches.entries)
+    first_index=(channel-1)*branch_count
+    @inbounds for branch_index in 1:branch_count
+        branch=branches.entries[branch_index]
+        contraction=destination[first_index+branch_index]
+        table=branch.table
+        for column in axes(contraction,2),row in axes(contraction,1)
+            contraction[row,column]=_contract(table[row,column],operator)
+        end
+    end
+    destination
+end
+
 function _prepare_kernel!(kernel::InPlaceLocalJumpPIKernel,
                           work::InPlaceLocalJumpKernelWorkspace,b,t,p)
     _evaluate_time_operator!(work.operator,kernel.schedule,t,p)
     mul!(work.qoperator,adjoint(work.operator),work.operator)
     _fill_dynamic_blocks!(work.qblocks,
         CollectiveOneBodyBlockBuilder(kernel.geometry),work.qoperator)
-    index=0
-    @inbounds for (li,l) in pairs(b.sectors),(ni,n) in pairs(b.sectors)
-        isempty(kernel.geometry.connections[(li,ni)])&&continue
-        nl=length(b.patterns[li]);nn=length(b.patterns[ni])
-        for a in 1:nl,bb in 1:nl,c in 1:nn,d in 1:nn
-            index+=1
-            work.values[index]=local_kernel_element(kernel.geometry,
-                work.operator,work.operator,l,a,bb,n,c,d)
-        end
-    end
+    _fill_local_gain_contractions!(
+        work.contractions,kernel.branches,work.operator)
     nothing
 end
 function _prepare_kernel!(kernel::InPlaceCorrelatedCollectiveJumpPIKernel,
@@ -1085,10 +1903,10 @@ function _prepare_kernel!(kernel::InPlaceCorrelatedLocalJumpPIKernel,
     _evaluate_time_operator!(work.kossakowski,kernel.schedule,t,p)
     rank=_factor_kossakowski!(work.factor,work.residual,work.kossakowski,
                               kernel.atol,kernel.rtol)
+    work.rank[]=rank
     fill!(work.qoperator,zero(eltype(work.qoperator)))
-    fill!(work.values,zero(eltype(work.values)))
     for channel in 1:rank
-        effective=work.effective_operator
+        effective=work.effective_operators[channel]
         fill!(effective,zero(eltype(effective)))
         @inbounds for operator_index in eachindex(kernel.operators)
             coefficient=work.factor[operator_index,channel]
@@ -1101,20 +1919,175 @@ function _prepare_kernel!(kernel::InPlaceCorrelatedLocalJumpPIKernel,
         @inbounds for index in eachindex(work.qoperator,work.qscratch)
             work.qoperator[index]+=work.qscratch[index]
         end
-        index=0
-        @inbounds for (li,left_sector) in pairs(b.sectors),
-                      (ni,right_sector) in pairs(b.sectors)
-            isempty(kernel.geometry.connections[(li,ni)])&&continue
-            nl=length(b.patterns[li]);nn=length(b.patterns[ni])
-            for a in 1:nl,bb in 1:nl,c in 1:nn,d in 1:nn
-                index+=1
-                work.values[index]+=local_kernel_element(kernel.geometry,
-                    effective,effective,left_sector,a,bb,right_sector,c,d)
-            end
-        end
+        _fill_local_gain_contractions!(
+            work.contractions,kernel.branches,effective,channel)
     end
     _fill_dynamic_blocks!(work.qblocks,
         CollectiveOneBodyBlockBuilder(kernel.geometry),work.qoperator)
+    nothing
+end
+
+# BLAS dispatch dominates the arithmetic for the small rectangular Schur
+# blocks common at modest N and d.  This fixed-loop sandwich preserves the
+# compact factors and O(n^3) arithmetic without retaining a quartic map.  Once
+# either dimension is larger, the ordinary two-GEMM route wins and remains the
+# default.
+const _RECTANGULAR_GAIN_MICROKERNEL_DIMENSION=8
+function _rectangular_sandwich!(target,scratch,operator,source)
+    output_dimension,input_dimension=size(operator)
+    if max(output_dimension,input_dimension)<=
+            _RECTANGULAR_GAIN_MICROKERNEL_DIMENSION
+        @inbounds for column in 1:input_dimension,row in 1:output_dimension
+            value=zero(eltype(scratch))
+            for inner in 1:input_dimension
+                value+=operator[row,inner]*source[inner,column]
+            end
+            scratch[row,column]=value
+        end
+        @inbounds for column in 1:output_dimension,row in 1:output_dimension
+            value=zero(eltype(target))
+            for inner in 1:input_dimension
+                value+=scratch[row,inner]*conj(operator[column,inner])
+            end
+            target[row,column]=value
+        end
+    else
+        mul!(scratch,operator,source)
+        mul!(target,scratch,LinearAlgebra.adjoint(operator))
+    end
+    target
+end
+
+function _add_rectangular_sandwich!(destination,output_offset,target,scratch,
+        operator,source,scale;adjoint::Bool=false)
+    effective=adjoint ? LinearAlgebra.adjoint(operator) : operator
+    _rectangular_sandwich!(target,scratch,effective,source)
+    @inbounds for index in eachindex(target)
+        destination[output_offset+index-1]+=scale*target[index]
+    end
+    destination
+end
+
+function _add_rectangular_sandwich!(destination,output_offset,target,scratch,
+        contraction::_StaticOneBodyContraction,source,scale;
+        adjoint::Bool=false)
+    if !contraction.use_support
+        return _add_rectangular_sandwich!(destination,output_offset,target,
+            scratch,contraction.matrix,source,scale;adjoint)
+    end
+    rows=contraction.output_rows;columns=contraction.input_columns
+    values=contraction.values
+    if adjoint
+        output_dimension=size(contraction,2)
+        @inbounds for right in eachindex(values)
+            output_column=columns[right]
+            input_column=rows[right]
+            right_value=values[right]
+            for left in eachindex(values)
+                output_row=columns[left]
+                input_row=rows[left]
+                coordinate=output_offset+output_row-1+
+                    (output_column-1)*output_dimension
+                destination[coordinate]+=scale*conj(values[left])*
+                    right_value*source[input_row,input_column]
+            end
+        end
+    else
+        output_dimension=size(contraction,1)
+        @inbounds for right in eachindex(values)
+            output_column=rows[right]
+            input_column=columns[right]
+            right_value=values[right]
+            for left in eachindex(values)
+                output_row=rows[left]
+                input_row=columns[left]
+                coordinate=output_offset+output_row-1+
+                    (output_column-1)*output_dimension
+                destination[coordinate]+=scale*values[left]*
+                    conj(right_value)*source[input_row,input_column]
+            end
+        end
+    end
+    destination
+end
+
+function _apply_factorized_onebody_gain!(y,branches,contractions,
+        gain_scratch,b,scale,work,channels::Int;adjoint::Bool=false)
+    branch_count=length(branches.entries)
+    @inbounds for branch_index in 1:branch_count
+        branch=branches.entries[branch_index]
+        li=branch.output_sector;ni=branch.input_sector
+        nl=length(b.patterns[li]);nn=length(b.patterns[ni])
+        source_sector=adjoint ? li : ni
+        target_sector=adjoint ? ni : li
+        source=work[source_sector][3]
+        target=work[target_sector][1]
+        target_offset=b.offsets[target_sector]
+        scratch=adjoint ? @view(gain_scratch[1:nn,1:nl]) :
+                          @view(gain_scratch[1:nl,1:nn])
+        branch_scale=scale*branch.scale
+        for channel in 1:channels
+            contraction=contractions[(channel-1)*branch_count+branch_index]
+            _add_rectangular_sandwich!(y,target_offset,target,scratch,
+                contraction,source,branch_scale;adjoint)
+        end
+    end
+    nothing
+end
+
+function _apply_factorized_onebody_gain_batch!(Y,X,branches,contractions,
+        b,scale,scratch,channels::Int;adjoint::Bool=false)
+    branch_count=length(branches.entries)
+    @inbounds for branch_index in 1:branch_count
+        branch=branches.entries[branch_index]
+        li=branch.output_sector;ni=branch.input_sector
+        nl=length(b.patterns[li]);nn=length(b.patterns[ni])
+        output_sector=adjoint ? ni : li
+        input_sector=adjoint ? li : ni
+        output_dimension=adjoint ? nn : nl
+        input_dimension=adjoint ? nl : nn
+        branch_scale=scale*branch.scale
+        for channel in 1:channels
+            contraction=contractions[(channel-1)*branch_count+branch_index]
+            operator=adjoint ? LinearAlgebra.adjoint(contraction) : contraction
+            _batch_add_rectangular_sandwich!(Y,X,
+                b.offsets[output_sector],b.offsets[input_sector],
+                output_dimension,input_dimension,operator,branch_scale,scratch)
+        end
+    end
+    nothing
+end
+
+function _apply_factorized_pbody_gain_batch!(Y,X,groups,contractions,
+        pair_scales,b,scale,scratch;adjoint::Bool=false)
+    @inbounds for (li,ni,first_pair,last_pair) in groups
+        output_sector=adjoint ? ni : li
+        input_sector=adjoint ? li : ni
+        output_dimension=length(b.patterns[output_sector])
+        input_dimension=length(b.patterns[input_sector])
+        for pair in first_pair:last_pair
+            contraction=contractions[pair]
+            operator=adjoint ? LinearAlgebra.adjoint(contraction) : contraction
+            exact_scale=pair_scales[pair]
+            pair_scale=exact_scale.direct ? scale*exact_scale.factor :
+                _apply_prepared_exact_scale(scale,exact_scale;
+                    context="batched local p-body gain contribution")
+            _batch_add_rectangular_sandwich!(Y,X,
+                b.offsets[output_sector],b.offsets[input_sector],
+                output_dimension,input_dimension,operator,pair_scale,scratch)
+        end
+    end
+    nothing
+end
+
+function _apply_local_jump_anticommutator_batch!(Y,X,qblocks,b,scale,scratch;
+                                                 adjoint::Bool=false)
+    for sector in eachindex(b.sectors)
+        dimension=length(b.patterns[sector]);offset=b.offsets[sector]
+        qblock=adjoint ? LinearAlgebra.adjoint(qblocks[sector]) : qblocks[sector]
+        _batch_add_left_right!(Y,X,offset,dimension,qblock,qblock,
+            -scale/2,-scale/2,scratch)
+    end
     nothing
 end
 
@@ -1148,15 +2121,24 @@ end
 function _apply_prepared_kernel!(y,x,kernel::InPlaceLocalJumpPIKernel,
                                  prepared::InPlaceLocalJumpKernelWorkspace,
                                  b,t,p,work)
-    gain=(I=kernel.I,J=kernel.J,V=prepared.values)
-    _apply_kernel!(y,x,LocalJumpPIKernel(prepared.qblocks,gain,kernel.scale),b,t,p,work)
+    scale=convert(eltype(work[1][1]),
+                  _evaluated_dissipative_rate(kernel.scale,t,p))
+    _copy_input_blocks!(work,x,b)
+    _apply_factorized_onebody_gain!(y,kernel.branches,prepared.contractions,
+        prepared.gain_scratch,b,scale,work,1)
+    _apply_local_jump_anticommutator!(
+        y,prepared.qblocks,b,scale,work)
 end
 function _apply_adjoint_prepared_kernel!(y,x,kernel::InPlaceLocalJumpPIKernel,
                                          prepared::InPlaceLocalJumpKernelWorkspace,
                                          b,t,p,work)
-    gain=(I=kernel.I,J=kernel.J,V=prepared.values)
-    _apply_adjoint_kernel!(y,x,LocalJumpPIKernel(prepared.qblocks,gain,kernel.scale),
-                           b,t,p,work)
+    scale=conj(convert(eltype(work[1][1]),
+                       _evaluated_dissipative_rate(kernel.scale,t,p)))
+    _copy_input_blocks!(work,x,b)
+    _apply_factorized_onebody_gain!(y,kernel.branches,prepared.contractions,
+        prepared.gain_scratch,b,scale,work,1;adjoint=true)
+    _apply_local_jump_anticommutator!(
+        y,prepared.qblocks,b,scale,work;adjoint=true)
 end
 function _apply_prepared_kernel!(y,x,
         kernel::InPlaceCorrelatedCollectiveJumpPIKernel,
@@ -1208,16 +2190,219 @@ function _apply_adjoint_prepared_kernel!(y,x,
 end
 function _apply_prepared_kernel!(y,x,kernel::InPlaceCorrelatedLocalJumpPIKernel,
         prepared::InPlaceCorrelatedLocalJumpKernelWorkspace,b,t,p,work)
-    gain=(I=kernel.I,J=kernel.J,V=prepared.values)
-    _apply_kernel!(y,x,LocalJumpPIKernel(prepared.qblocks,gain,kernel.scale),
-                   b,t,p,work)
+    scale=convert(eltype(work[1][1]),
+                  _evaluated_dissipative_rate(kernel.scale,t,p))
+    _copy_input_blocks!(work,x,b)
+    _apply_factorized_onebody_gain!(y,kernel.branches,prepared.contractions,
+        prepared.gain_scratch,b,scale,work,prepared.rank[])
+    _apply_local_jump_anticommutator!(
+        y,prepared.qblocks,b,scale,work)
 end
 function _apply_adjoint_prepared_kernel!(y,x,
         kernel::InPlaceCorrelatedLocalJumpPIKernel,
         prepared::InPlaceCorrelatedLocalJumpKernelWorkspace,b,t,p,work)
-    gain=(I=kernel.I,J=kernel.J,V=prepared.values)
-    _apply_adjoint_kernel!(y,x,
-        LocalJumpPIKernel(prepared.qblocks,gain,kernel.scale),b,t,p,work)
+    scale=conj(convert(eltype(work[1][1]),
+                       _evaluated_dissipative_rate(kernel.scale,t,p)))
+    _copy_input_blocks!(work,x,b)
+    _apply_factorized_onebody_gain!(y,kernel.branches,prepared.contractions,
+        prepared.gain_scratch,b,scale,work,prepared.rank[];adjoint=true)
+    _apply_local_jump_anticommutator!(
+        y,prepared.qblocks,b,scale,work;adjoint=true)
+end
+
+# Batched prepared paths reuse the dynamic data evaluated above, but contract
+# all right-hand sides sectorwise. Rare specialized kernels without a batch
+# contraction retain a correctness-preserving column fallback; they still
+# prepare operator schedules only once per batch.
+_apply_prepared_batch_kernel!(Y,X,kernel::AbstractStaticPIKernel,::Nothing,
+        b,t,p,work::LiouvillianWorkspace)=
+    _apply_kernel_batch!(Y,X,kernel,b,t,p,work.batch)
+_apply_adjoint_prepared_batch_kernel!(Y,X,kernel::AbstractStaticPIKernel,
+        ::Nothing,b,t,p,work::LiouvillianWorkspace)=
+    _apply_adjoint_kernel_batch!(Y,X,kernel,b,t,p,work.batch)
+
+function _apply_prepared_batch_kernel!(Y,X,kernel::InPlaceHamiltonianPIKernel,
+        prepared::InPlaceHamiltonianKernelWorkspace,b,t,p,work)
+    _apply_kernel_batch!(Y,X,
+        HamiltonianPIKernel(prepared.blocks,kernel.scale),b,t,p,work.batch)
+end
+function _apply_adjoint_prepared_batch_kernel!(Y,X,
+        kernel::InPlaceHamiltonianPIKernel,
+        prepared::InPlaceHamiltonianKernelWorkspace,b,t,p,work)
+    _apply_adjoint_kernel_batch!(Y,X,
+        HamiltonianPIKernel(prepared.blocks,kernel.scale),b,t,p,work.batch)
+end
+function _apply_prepared_batch_kernel!(Y,X,kernel::InPlaceDissipatorPIKernel,
+        prepared::InPlaceDissipatorKernelWorkspace,b,t,p,work)
+    _apply_kernel_batch!(Y,X,DissipatorPIKernel(
+        prepared.blocks,prepared.qblocks,kernel.scale),b,t,p,work.batch)
+end
+function _apply_adjoint_prepared_batch_kernel!(Y,X,
+        kernel::InPlaceDissipatorPIKernel,
+        prepared::InPlaceDissipatorKernelWorkspace,b,t,p,work)
+    _apply_adjoint_kernel_batch!(Y,X,DissipatorPIKernel(
+        prepared.blocks,prepared.qblocks,kernel.scale),b,t,p,work.batch)
+end
+function _apply_prepared_batch_kernel!(Y,X,kernel::InPlaceLocalJumpPIKernel,
+        prepared::InPlaceLocalJumpKernelWorkspace,b,t,p,work)
+    scale=convert(eltype(work.batch.input),
+                  _evaluated_dissipative_rate(kernel.scale,t,p))
+    _apply_factorized_onebody_gain_batch!(Y,X,kernel.branches,
+        prepared.contractions,b,scale,work.batch,1)
+    _apply_local_jump_anticommutator_batch!(
+        Y,X,prepared.qblocks,b,scale,work.batch)
+end
+function _apply_adjoint_prepared_batch_kernel!(Y,X,
+        kernel::InPlaceLocalJumpPIKernel,
+        prepared::InPlaceLocalJumpKernelWorkspace,b,t,p,work)
+    scale=conj(convert(eltype(work.batch.input),
+                       _evaluated_dissipative_rate(kernel.scale,t,p)))
+    _apply_factorized_onebody_gain_batch!(Y,X,kernel.branches,
+        prepared.contractions,b,scale,work.batch,1;adjoint=true)
+    _apply_local_jump_anticommutator_batch!(
+        Y,X,prepared.qblocks,b,scale,work.batch;adjoint=true)
+end
+function _apply_prepared_batch_kernel!(Y,X,
+        kernel::InPlaceCorrelatedLocalJumpPIKernel,
+        prepared::InPlaceCorrelatedLocalJumpKernelWorkspace,b,t,p,work)
+    scale=convert(eltype(work.batch.input),
+                  _evaluated_dissipative_rate(kernel.scale,t,p))
+    _apply_factorized_onebody_gain_batch!(Y,X,kernel.branches,
+        prepared.contractions,b,scale,work.batch,prepared.rank[])
+    _apply_local_jump_anticommutator_batch!(
+        Y,X,prepared.qblocks,b,scale,work.batch)
+end
+function _apply_adjoint_prepared_batch_kernel!(Y,X,
+        kernel::InPlaceCorrelatedLocalJumpPIKernel,
+        prepared::InPlaceCorrelatedLocalJumpKernelWorkspace,b,t,p,work)
+    scale=conj(convert(eltype(work.batch.input),
+                       _evaluated_dissipative_rate(kernel.scale,t,p)))
+    _apply_factorized_onebody_gain_batch!(Y,X,kernel.branches,
+        prepared.contractions,b,scale,work.batch,prepared.rank[];adjoint=true)
+    _apply_local_jump_anticommutator_batch!(
+        Y,X,prepared.qblocks,b,scale,work.batch;adjoint=true)
+end
+
+function _apply_prepared_batch_kernel!(Y,X,
+        kernel::FactorizedLocalJumpPIKernel,
+        prepared::StaticFactorizedGainKernelWorkspace,b,t,p,work)
+    scale=convert(eltype(work.batch.input),
+                  _evaluated_dissipative_rate(kernel.scale,t,p))
+    _apply_factorized_onebody_gain_batch!(Y,X,kernel.branches,
+        kernel.contractions,b,scale,work.batch,1)
+    _apply_local_jump_anticommutator_batch!(
+        Y,X,kernel.qblocks,b,scale,work.batch)
+end
+function _apply_adjoint_prepared_batch_kernel!(Y,X,
+        kernel::FactorizedLocalJumpPIKernel,
+        prepared::StaticFactorizedGainKernelWorkspace,b,t,p,work)
+    scale=conj(convert(eltype(work.batch.input),
+                       _evaluated_dissipative_rate(kernel.scale,t,p)))
+    _apply_factorized_onebody_gain_batch!(Y,X,kernel.branches,
+        kernel.contractions,b,scale,work.batch,1;adjoint=true)
+    _apply_local_jump_anticommutator_batch!(
+        Y,X,kernel.qblocks,b,scale,work.batch;adjoint=true)
+end
+
+function _apply_prepared_batch_kernel!(Y,X,
+        kernel::FactorizedLocalPBodyJumpPIKernel,
+        prepared::StaticFactorizedGainKernelWorkspace,b,t,p,work)
+    scale=convert(eltype(work.batch.input),
+                  _evaluated_dissipative_rate(kernel.scale,t,p))
+    _apply_factorized_pbody_gain_batch!(Y,X,kernel.groups,
+        kernel.contractions,kernel.pair_scales,b,scale,work.batch)
+    _apply_local_jump_anticommutator_batch!(
+        Y,X,kernel.qblocks,b,scale,work.batch)
+end
+function _apply_adjoint_prepared_batch_kernel!(Y,X,
+        kernel::FactorizedLocalPBodyJumpPIKernel,
+        prepared::StaticFactorizedGainKernelWorkspace,b,t,p,work)
+    scale=conj(convert(eltype(work.batch.input),
+                       _evaluated_dissipative_rate(kernel.scale,t,p)))
+    _apply_factorized_pbody_gain_batch!(Y,X,kernel.groups,
+        kernel.contractions,kernel.pair_scales,b,scale,work.batch;adjoint=true)
+    _apply_local_jump_anticommutator_batch!(
+        Y,X,kernel.qblocks,b,scale,work.batch;adjoint=true)
+end
+
+function _apply_prepared_batch_kernel!(Y,X,kernel::FusedStaticPIKernel,
+        prepared::StaticFactorizedGainKernelWorkspace,b,t,p,work)
+    if kernel.hamiltonian_blocks!==nothing
+        for sector in eachindex(b.sectors)
+            dimension=length(b.patterns[sector]);offset=b.offsets[sector]
+            block=kernel.hamiltonian_blocks[sector]
+            _batch_add_left_right!(Y,X,offset,dimension,block,block,
+                -1im,1im,work.batch)
+        end
+    end
+    for gain in kernel.collective_gains,sector in eachindex(b.sectors)
+        dimension=length(b.patterns[sector]);offset=b.offsets[sector]
+        block=gain.blocks[sector]
+        _batch_add_sandwich!(Y,X,offset,dimension,block,adjoint(block),
+                             gain.scale,work.batch)
+    end
+    if kernel.loss_blocks!==nothing
+        _apply_local_jump_anticommutator_batch!(
+            Y,X,kernel.loss_blocks,b,one(eltype(work.batch.input)),work.batch)
+    end
+    for gain in kernel.onebody_gains
+        _apply_factorized_onebody_gain_batch!(Y,X,gain.branches,
+            gain.contractions,b,gain.scale,work.batch,1)
+    end
+    for gain in kernel.pbody_gains
+        _apply_factorized_pbody_gain_batch!(Y,X,gain.groups,
+            gain.contractions,gain.pair_scales,b,gain.scale,work.batch)
+    end
+    Y
+end
+
+function _apply_adjoint_prepared_batch_kernel!(Y,X,
+        kernel::FusedStaticPIKernel,
+        prepared::StaticFactorizedGainKernelWorkspace,b,t,p,work)
+    if kernel.hamiltonian_blocks!==nothing
+        for sector in eachindex(b.sectors)
+            dimension=length(b.patterns[sector]);offset=b.offsets[sector]
+            block=adjoint(kernel.hamiltonian_blocks[sector])
+            _batch_add_left_right!(Y,X,offset,dimension,block,block,
+                1im,-1im,work.batch)
+        end
+    end
+    for gain in kernel.collective_gains,sector in eachindex(b.sectors)
+        dimension=length(b.patterns[sector]);offset=b.offsets[sector]
+        block=gain.blocks[sector]
+        _batch_add_sandwich!(Y,X,offset,dimension,adjoint(block),block,
+                             conj(gain.scale),work.batch)
+    end
+    if kernel.loss_blocks!==nothing
+        _apply_local_jump_anticommutator_batch!(
+            Y,X,kernel.loss_blocks,b,one(eltype(work.batch.input)),work.batch;
+            adjoint=true)
+    end
+    for gain in kernel.onebody_gains
+        _apply_factorized_onebody_gain_batch!(Y,X,gain.branches,
+            gain.contractions,b,conj(gain.scale),work.batch,1;adjoint=true)
+    end
+    for gain in kernel.pbody_gains
+        _apply_factorized_pbody_gain_batch!(Y,X,gain.groups,
+            gain.contractions,gain.pair_scales,b,conj(gain.scale),work.batch;
+            adjoint=true)
+    end
+    Y
+end
+
+function _apply_prepared_batch_kernel!(Y,X,kernel,prepared,b,t,p,work)
+    for column in axes(X,2)
+        _apply_prepared_kernel!(view(Y,:,column),view(X,:,column),kernel,
+            prepared,b,t,p,work.blocks)
+    end
+    Y
+end
+function _apply_adjoint_prepared_batch_kernel!(Y,X,kernel,prepared,b,t,p,work)
+    for column in axes(X,2)
+        _apply_adjoint_prepared_kernel!(view(Y,:,column),view(X,:,column),
+            kernel,prepared,b,t,p,work.blocks)
+    end
+    Y
 end
 
 # Appendix-D local gain maps have a Kraus-like factorization for every
@@ -1239,17 +2424,17 @@ function _copy_input_blocks!(work,x,b)
     nothing
 end
 
-function _apply_factorized_pbody_gain!(y,kernel,prepared,b,scale,work)
-    @inbounds for (li,ni,first_pair,last_pair) in kernel.groups
+function _apply_factorized_pbody_gain!(y,groups,contractions,pair_scales,
+        gain_scratch,b,scale,work)
+    @inbounds for (li,ni,first_pair,last_pair) in groups
         nl=length(b.patterns[li]);nn=length(b.patterns[ni])
         input=work[ni][3];output=work[li][1]
-        scratch=@view prepared.gain_scratch[1:nl,1:nn]
+        scratch=@view gain_scratch[1:nl,1:nn]
         output_offset=b.offsets[li]
         for pair in first_pair:last_pair
-            contraction=prepared.contractions[pair]
-            mul!(scratch,contraction,input)
-            mul!(output,scratch,adjoint(contraction))
-            exact_scale=kernel.pair_scales[pair]
+            contraction=contractions[pair]
+            _rectangular_sandwich!(output,scratch,contraction,input)
+            exact_scale=pair_scales[pair]
             if exact_scale.direct
                 pair_scale=scale*exact_scale.factor
                 for index in eachindex(output)
@@ -1268,17 +2453,17 @@ function _apply_factorized_pbody_gain!(y,kernel,prepared,b,scale,work)
     nothing
 end
 
-function _apply_adjoint_factorized_pbody_gain!(y,kernel,prepared,b,scale,work)
-    @inbounds for (li,ni,first_pair,last_pair) in kernel.groups
+function _apply_adjoint_factorized_pbody_gain!(y,groups,contractions,
+        pair_scales,gain_scratch,b,scale,work)
+    @inbounds for (li,ni,first_pair,last_pair) in groups
         nl=length(b.patterns[li]);nn=length(b.patterns[ni])
         input=work[li][3];output=work[ni][1]
-        scratch=@view prepared.gain_scratch[1:nn,1:nl]
+        scratch=@view gain_scratch[1:nn,1:nl]
         output_offset=b.offsets[ni]
         for pair in first_pair:last_pair
-            contraction=prepared.contractions[pair]
-            mul!(scratch,adjoint(contraction),input)
-            mul!(output,scratch,contraction)
-            exact_scale=kernel.pair_scales[pair]
+            contraction=contractions[pair]
+            _rectangular_sandwich!(output,scratch,adjoint(contraction),input)
+            exact_scale=pair_scales[pair]
             if exact_scale.direct
                 pair_scale=scale*exact_scale.factor
                 for index in eachindex(output)
@@ -1309,12 +2494,134 @@ function _apply_local_jump_anticommutator!(y,qblocks,b,scale,work;adjoint=false)
     nothing
 end
 
+function _apply_prepared_kernel!(y,x,kernel::FactorizedLocalJumpPIKernel,
+        prepared::StaticFactorizedGainKernelWorkspace,b,t,p,work)
+    scale=convert(eltype(work[1][1]),
+                  _evaluated_dissipative_rate(kernel.scale,t,p))
+    _copy_input_blocks!(work,x,b)
+    _apply_factorized_onebody_gain!(y,kernel.branches,kernel.contractions,
+        prepared.gain_scratch,b,scale,work,1)
+    _apply_local_jump_anticommutator!(y,kernel.qblocks,b,scale,work)
+end
+
+function _apply_adjoint_prepared_kernel!(y,x,
+        kernel::FactorizedLocalJumpPIKernel,
+        prepared::StaticFactorizedGainKernelWorkspace,b,t,p,work)
+    scale=conj(convert(eltype(work[1][1]),
+                       _evaluated_dissipative_rate(kernel.scale,t,p)))
+    _copy_input_blocks!(work,x,b)
+    _apply_factorized_onebody_gain!(y,kernel.branches,kernel.contractions,
+        prepared.gain_scratch,b,scale,work,1;adjoint=true)
+    _apply_local_jump_anticommutator!(
+        y,kernel.qblocks,b,scale,work;adjoint=true)
+end
+
+function _apply_prepared_kernel!(y,x,kernel::FactorizedLocalPBodyJumpPIKernel,
+        prepared::StaticFactorizedGainKernelWorkspace,b,t,p,work)
+    scale=convert(eltype(work[1][1]),
+                  _evaluated_dissipative_rate(kernel.scale,t,p))
+    _copy_input_blocks!(work,x,b)
+    _apply_factorized_pbody_gain!(y,kernel.groups,kernel.contractions,
+        kernel.pair_scales,prepared.gain_scratch,b,scale,work)
+    _apply_local_jump_anticommutator!(y,kernel.qblocks,b,scale,work)
+end
+
+function _apply_adjoint_prepared_kernel!(y,x,
+        kernel::FactorizedLocalPBodyJumpPIKernel,
+        prepared::StaticFactorizedGainKernelWorkspace,b,t,p,work)
+    scale=conj(convert(eltype(work[1][1]),
+                       _evaluated_dissipative_rate(kernel.scale,t,p)))
+    _copy_input_blocks!(work,x,b)
+    _apply_adjoint_factorized_pbody_gain!(y,kernel.groups,kernel.contractions,
+        kernel.pair_scales,prepared.gain_scratch,b,scale,work)
+    _apply_local_jump_anticommutator!(
+        y,kernel.qblocks,b,scale,work;adjoint=true)
+end
+
+function _apply_prepared_kernel!(y,x,kernel::FusedStaticPIKernel,
+        prepared::StaticFactorizedGainKernelWorkspace,b,t,p,work)
+    _copy_input_blocks!(work,x,b)
+    if kernel.hamiltonian_blocks!==nothing
+        for sector in eachindex(b.sectors)
+            offset=b.offsets[sector];left,right,input=work[sector]
+            block=kernel.hamiltonian_blocks[sector]
+            mul!(left,block,input);mul!(right,input,block)
+            @inbounds for index in eachindex(left)
+                y[offset+index-1]+=-1im*(left[index]-right[index])
+            end
+        end
+    end
+    for gain in kernel.collective_gains
+        for sector in eachindex(b.sectors)
+            offset=b.offsets[sector];left,right,input=work[sector]
+            block=gain.blocks[sector]
+            mul!(left,block,input);mul!(right,left,adjoint(block))
+            @inbounds for index in eachindex(right)
+                y[offset+index-1]+=gain.scale*right[index]
+            end
+        end
+    end
+    if kernel.loss_blocks!==nothing
+        _apply_local_jump_anticommutator!(
+            y,kernel.loss_blocks,b,one(eltype(work[1][1])),work)
+    end
+    for gain in kernel.onebody_gains
+        _apply_factorized_onebody_gain!(y,gain.branches,gain.contractions,
+            prepared.gain_scratch,b,gain.scale,work,1)
+    end
+    for gain in kernel.pbody_gains
+        _apply_factorized_pbody_gain!(y,gain.groups,gain.contractions,
+            gain.pair_scales,prepared.gain_scratch,b,gain.scale,work)
+    end
+    nothing
+end
+
+function _apply_adjoint_prepared_kernel!(y,x,kernel::FusedStaticPIKernel,
+        prepared::StaticFactorizedGainKernelWorkspace,b,t,p,work)
+    _copy_input_blocks!(work,x,b)
+    if kernel.hamiltonian_blocks!==nothing
+        for sector in eachindex(b.sectors)
+            offset=b.offsets[sector];left,right,input=work[sector]
+            block=adjoint(kernel.hamiltonian_blocks[sector])
+            mul!(left,block,input);mul!(right,input,block)
+            @inbounds for index in eachindex(left)
+                y[offset+index-1]+=1im*(left[index]-right[index])
+            end
+        end
+    end
+    for gain in kernel.collective_gains
+        scale=conj(gain.scale)
+        for sector in eachindex(b.sectors)
+            offset=b.offsets[sector];left,right,input=work[sector]
+            block=gain.blocks[sector]
+            mul!(left,adjoint(block),input);mul!(right,left,block)
+            @inbounds for index in eachindex(right)
+                y[offset+index-1]+=scale*right[index]
+            end
+        end
+    end
+    if kernel.loss_blocks!==nothing
+        _apply_local_jump_anticommutator!(y,kernel.loss_blocks,b,
+            one(eltype(work[1][1])),work;adjoint=true)
+    end
+    for gain in kernel.onebody_gains
+        _apply_factorized_onebody_gain!(y,gain.branches,gain.contractions,
+            prepared.gain_scratch,b,conj(gain.scale),work,1;adjoint=true)
+    end
+    for gain in kernel.pbody_gains
+        _apply_adjoint_factorized_pbody_gain!(y,gain.groups,gain.contractions,
+            gain.pair_scales,prepared.gain_scratch,b,conj(gain.scale),work)
+    end
+    nothing
+end
+
 function _apply_prepared_kernel!(y,x,kernel::InPlaceLocalPBodyJumpPIKernel,
         prepared::InPlaceLocalPBodyJumpKernelWorkspace,b,t,p,work)
     scale=convert(eltype(work[1][1]),
                   _evaluated_dissipative_rate(kernel.scale,t,p))
     _copy_input_blocks!(work,x,b)
-    _apply_factorized_pbody_gain!(y,kernel,prepared,b,scale,work)
+    _apply_factorized_pbody_gain!(y,kernel.groups,prepared.contractions,
+        kernel.pair_scales,prepared.gain_scratch,b,scale,work)
     _apply_local_jump_anticommutator!(y,prepared.qblocks,b,scale,work)
 end
 function _apply_adjoint_prepared_kernel!(y,x,kernel::InPlaceLocalPBodyJumpPIKernel,
@@ -1322,7 +2629,8 @@ function _apply_adjoint_prepared_kernel!(y,x,kernel::InPlaceLocalPBodyJumpPIKern
     scale=conj(convert(eltype(work[1][1]),
                        _evaluated_dissipative_rate(kernel.scale,t,p)))
     _copy_input_blocks!(work,x,b)
-    _apply_adjoint_factorized_pbody_gain!(y,kernel,prepared,b,scale,work)
+    _apply_adjoint_factorized_pbody_gain!(y,kernel.groups,prepared.contractions,
+        kernel.pair_scales,prepared.gain_scratch,b,scale,work)
     _apply_local_jump_anticommutator!(y,prepared.qblocks,b,scale,work;adjoint=true)
 end
 
@@ -1347,6 +2655,25 @@ end
         prepared::Tuple{W,Vararg{Any}},b,t,p,work) where {K,W}
     _apply_adjoint_prepared_kernel!(y,x,first(kernels),first(prepared),b,t,p,work)
     _apply_adjoint_kernels!(y,x,Base.tail(kernels),Base.tail(prepared),b,t,p,work)
+end
+
+@inline _apply_batch_kernels!(Y,X,::Tuple{},::Tuple{},b,t,p,work)=nothing
+@inline function _apply_batch_kernels!(Y,X,kernels::Tuple{K,Vararg{Any}},
+        prepared::Tuple{W,Vararg{Any}},b,t,p,work) where {K,W}
+    _apply_prepared_batch_kernel!(Y,X,first(kernels),first(prepared),
+                                  b,t,p,work)
+    _apply_batch_kernels!(Y,X,Base.tail(kernels),Base.tail(prepared),
+                          b,t,p,work)
+end
+
+@inline _apply_adjoint_batch_kernels!(Y,X,::Tuple{},::Tuple{},b,t,p,work)=nothing
+@inline function _apply_adjoint_batch_kernels!(Y,X,
+        kernels::Tuple{K,Vararg{Any}},prepared::Tuple{W,Vararg{Any}},
+        b,t,p,work) where {K,W}
+    _apply_adjoint_prepared_batch_kernel!(Y,X,first(kernels),first(prepared),
+                                          b,t,p,work)
+    _apply_adjoint_batch_kernels!(Y,X,Base.tail(kernels),Base.tail(prepared),
+                                  b,t,p,work)
 end
 
 """Apply a compiled Liouvillian using caller-owned scratch."""
@@ -1384,9 +2711,10 @@ function apply!(Y::AbstractMatrix,plan::LiouvillianPlan,X::AbstractMatrix,t,p,
         return mul!(Y,_matrix_at(plan.fallback_model,t,p),X)
     end
     _prepare_kernels!(plan.kernels,work.kernel_workspaces,plan.basis,t,p)
-    for j in axes(X,2)
-        _apply_prepared_vector!(view(Y,:,j),plan,view(X,:,j),t,p,work)
-    end
+    fill!(Y,zero(eltype(Y)))
+    _ensure_batch_capacity!(work.batch,size(X,2))
+    _apply_batch_kernels!(Y,X,plan.kernels,work.kernel_workspaces,
+                          plan.basis,t,p,work)
     Y
 end
 
@@ -1442,12 +2770,10 @@ function apply_adjoint!(Y::AbstractMatrix,plan::LiouvillianPlan,X::AbstractMatri
         return mul!(Y,adjoint(M),X)
     end
     _prepare_kernels!(plan.kernels,work.kernel_workspaces,plan.basis,t,p)
-    for j in axes(X,2)
-        output=view(Y,:,j);input=view(X,:,j)
-        fill!(output,zero(eltype(output)))
-        _apply_adjoint_kernels!(output,input,plan.kernels,work.kernel_workspaces,
-                                plan.basis,t,p,work.blocks)
-    end
+    fill!(Y,zero(eltype(Y)))
+    _ensure_batch_capacity!(work.batch,size(X,2))
+    _apply_adjoint_batch_kernels!(Y,X,plan.kernels,work.kernel_workspaces,
+                                  plan.basis,t,p,work)
     Y
 end
 
@@ -1469,13 +2795,68 @@ end
 
 function _local_jump_matrix(plan,ker,scale)
     n=length(plan.basis);gain=sparse(ker.gain.I,ker.gain.J,scale.*ker.gain.V,n,n)
-    anti=spzeros(plan.Ttype,n,n)
+    gain-_loss_matrix(plan,ker.qblocks,scale)
+end
+
+function _loss_matrix(plan,qblocks,scale)
+    n=length(plan.basis);anti=spzeros(plan.Ttype,n,n)
     for s in eachindex(plan.basis.sectors)
-        off=plan.basis.offsets[s]-1;Q=ker.qblocks[s]
+        off=plan.basis.offsets[s]-1;Q=qblocks[s]
         M=(left_superoperator(Q)+right_superoperator(Q))/2
         ii,jj,vv=findnz(sparse(M));anti+=sparse(ii.+off,jj.+off,scale.*vv,n,n)
     end
-    gain-anti
+    anti
+end
+
+function _factorized_onebody_gain_matrix(plan,branches,contractions,scale)
+    b=plan.basis;T=plan.Ttype;I=Int[];J=Int[];V=T[]
+    @inbounds for branch_index in eachindex(branches.entries)
+        branch=branches.entries[branch_index]
+        li=branch.output_sector;ni=branch.input_sector
+        nl=length(b.patterns[li]);nn=length(b.patterns[ni])
+        contraction=contractions[branch_index]
+        factor=scale*branch.scale
+        for bb in 1:nl,a in 1:nl,d in 1:nn,c in 1:nn
+            value=factor*contraction[a,c]*conj(contraction[bb,d])
+            iszero(value)&&continue
+            push!(I,b.offsets[li]+a-1+(bb-1)*nl)
+            push!(J,b.offsets[ni]+c-1+(d-1)*nn)
+            push!(V,convert(T,value))
+        end
+    end
+    sparse(I,J,V,length(b),length(b))
+end
+
+function _factorized_pbody_gain_matrix(plan,groups,contractions,pair_scales,scale)
+    b=plan.basis;T=plan.Ttype;I=Int[];J=Int[];V=T[]
+    @inbounds for (li,ni,first_pair,last_pair) in groups
+        nl=length(b.patterns[li]);nn=length(b.patterns[ni])
+        for pair in first_pair:last_pair
+            contraction=contractions[pair];exact_scale=pair_scales[pair]
+            for bb in 1:nl,a in 1:nl,d in 1:nn,c in 1:nn
+                primitive=contraction[a,c]*conj(contraction[bb,d])
+                value=scale*(exact_scale.direct ? exact_scale.factor*primitive :
+                    _apply_prepared_exact_scale(primitive,exact_scale;
+                        context="sparse local p-body gain materialization"))
+                iszero(value)&&continue
+                push!(I,b.offsets[li]+a-1+(bb-1)*nl)
+                push!(J,b.offsets[ni]+c-1+(d-1)*nn)
+                push!(V,convert(T,value))
+            end
+        end
+    end
+    sparse(I,J,V,length(b),length(b))
+end
+
+function _collective_gain_matrix(plan,blocks,scale)
+    b=plan.basis;n=length(b);M=spzeros(plan.Ttype,n,n)
+    for sector in eachindex(b.sectors)
+        off=b.offsets[sector]-1
+        sector_map=scale*sandwich_superoperator(blocks[sector])
+        ii,jj,vv=findnz(sparse(sector_map))
+        M+=sparse(ii.+off,jj.+off,vv,n,n)
+    end
+    M
 end
 
 _kernel_matrix(plan,kernel::HamiltonianPIKernel,scale)=
@@ -1484,10 +2865,40 @@ _kernel_matrix(plan,kernel::DissipatorPIKernel,scale)=
     scale*_block_superop(plan.basis,kernel.blocks,:dissipator)
 _kernel_matrix(plan,kernel::LocalJumpPIKernel,scale)=
     _local_jump_matrix(plan,kernel,scale)
+_kernel_matrix(plan,kernel::FactorizedLocalJumpPIKernel,scale)=
+    _factorized_onebody_gain_matrix(plan,kernel.branches,kernel.contractions,scale)-
+    _loss_matrix(plan,kernel.qblocks,scale)
+_kernel_matrix(plan,kernel::FactorizedLocalPBodyJumpPIKernel,scale)=
+    _factorized_pbody_gain_matrix(plan,kernel.groups,kernel.contractions,
+                                  kernel.pair_scales,scale)-
+    _loss_matrix(plan,kernel.qblocks,scale)
+function _kernel_matrix(plan,kernel::FusedStaticPIKernel,scale)
+    n=length(plan.basis);M=spzeros(plan.Ttype,n,n)
+    if kernel.hamiltonian_blocks!==nothing
+        M+=_block_superop(plan.basis,kernel.hamiltonian_blocks,:commutator)
+    end
+    if kernel.loss_blocks!==nothing
+        M-=_loss_matrix(plan,kernel.loss_blocks,one(plan.Ttype))
+    end
+    for gain in kernel.collective_gains
+        M+=_collective_gain_matrix(plan,gain.blocks,gain.scale)
+    end
+    for gain in kernel.onebody_gains
+        M+=_factorized_onebody_gain_matrix(plan,gain.branches,
+                                            gain.contractions,gain.scale)
+    end
+    for gain in kernel.pbody_gains
+        M+=_factorized_pbody_gain_matrix(plan,gain.groups,gain.contractions,
+            gain.pair_scales,gain.scale)
+    end
+    scale*M
+end
 
 _materialized_kernel_scale(kernel::HamiltonianPIKernel)=value_at(kernel.scale,0.0,nothing)
-_materialized_kernel_scale(kernel::Union{DissipatorPIKernel,LocalJumpPIKernel})=
+_materialized_kernel_scale(kernel::Union{DissipatorPIKernel,LocalJumpPIKernel,
+        FactorizedLocalJumpPIKernel,FactorizedLocalPBodyJumpPIKernel})=
     _evaluated_dissipative_rate(kernel.scale,0.0,nothing)
+_materialized_kernel_scale(::FusedStaticPIKernel)=1
 
 _add_kernel_matrices(M,plan,::Tuple{})=M
 function _add_kernel_matrices(M,plan,kernels::Tuple{K,Vararg{Any}}) where K
@@ -1503,19 +2914,42 @@ function _matrix_from_plan(plan::LiouvillianPlan)
 end
 
 """
-    liouvillian(model; representation=:matrixfree)
+    liouvillian(model; representation=:matrixfree,
+                memory_budget=512*1024^2, coefficient_cache=nothing)
     liouvillian(compiled; representation=compiled.backend)
 
 Return a PI-coordinate Liouvillian as either a sparse matrix or a
 `MatrixFreeLiouvillian`. Model construction lowers from the same prepared
 term plan in both representations. Sparse materialization requires an
 autonomous model; use `freeze` at an explicit time or the matrix-free backend
-for driven dynamics. Prefer `compile` when the generator will be reused.
+for driven dynamics. Its conservative live sparse-assembly bound is checked
+before the coordinate matrix is allocated. Pass `memory_budget=Inf` only as
+an explicit opt-out. Pass a compatible [`OneBoxCGCache`](@ref) to reuse
+one-box coefficients across model preparations; otherwise small mixed
+one-/`p`-body models prepare and share one automatically. Prefer `compile`
+when the generator will be reused.
 """
-function liouvillian(model::PIModel;representation=:matrixfree)
+function liouvillian(model::PIModel;representation=:matrixfree,
+                     memory_budget=_DEFAULT_HIGHLEVEL_MEMORY_BUDGET,
+                     coefficient_cache=nothing)
     representation in (:sparse,:matrixfree)||throw(ArgumentError("representation must be :sparse or :matrixfree"))
-    plan=LiouvillianPlan(model)
-    representation===:sparse ? _matrix_from_plan(plan) : _matrixfree_liouvillian(plan)
+    _require_model_preparation_budget(model,memory_budget;
+        operation="PI Liouvillian preparation",coefficient_cache)
+    plan=LiouvillianPlan(model;coefficient_cache)
+    if representation===:sparse
+        n=length(plan.basis);scalar_bytes=_scalar_retained_bytes(plan.Ttype)
+        sparse_operator=BigInt(n)^2*(scalar_bytes+2sizeof(Int))+
+                        (BigInt(n)+1)*sizeof(Int)
+        estimate=BigInt(Base.summarysize(plan))+3sparse_operator
+        _require_performance_budget("sparse Liouvillian materialization",
+            estimate,memory_budget;guidance="Use representation=:matrixfree.")
+        return _matrix_from_plan(plan)
+    end
+    estimate=BigInt(Base.summarysize(plan))+
+        _performance_liouvillian_workspace_bytes(plan)
+    _require_performance_budget("matrix-free Liouvillian workspace",estimate,
+        memory_budget;guidance="Reduce the retained basis/model size.")
+    _matrixfree_liouvillian(plan)
 end
 
 """A model, its reusable Liouvillian plan, and an automatically selected backend."""
@@ -1533,40 +2967,343 @@ eltype(compiled::CompiledPIModel)=eltype(compiled.operator)
 isautonomous(compiled::CompiledPIModel)=isautonomous(compiled.plan)
 
 function _memory_budget_bytes(memory_budget)
-    memory_budget isa Real||throw(ArgumentError("memory_budget must be a number of bytes"))
+    memory_budget isa Real&&!(memory_budget isa Bool)||throw(ArgumentError(
+        "memory_budget must be a real number of bytes, not a Bool"))
+    isnan(memory_budget)&&throw(ArgumentError("memory_budget cannot be NaN"))
     memory_budget>=0||throw(ArgumentError("memory_budget must be nonnegative"))
     isfinite(memory_budget) ? Int(min(floor(BigInt,memory_budget),BigInt(typemax(Int)))) : typemax(Int)
 end
 
+# High-level routines that may retain dense PI-coordinate arrays share one
+# conservative default.  `Inf` is the explicit opt-out: unlike conversion to
+# `typemax(Int)`, it must also permit estimates larger than the addressable
+# integer range so the guard itself never becomes the artificial limit.
+const _DEFAULT_HIGHLEVEL_MEMORY_BUDGET=512*1024^2
+
+function _performance_memory_limit(memory_budget)
+    _memory_budget_bytes(memory_budget) # common type/sign validation
+    isfinite(memory_budget) ? BigInt(floor(BigInt,memory_budget)) : nothing
+end
+
+function _performance_array_bytes(dimension::Integer,::Type{T},
+        square_arrays::Integer;linear_arrays::Integer=0,
+        bigfloat_precision::Integer=precision(BigFloat)) where T
+    dimension>=0||throw(ArgumentError("dimension must be nonnegative"))
+    square_arrays>=0&&linear_arrays>=0||throw(ArgumentError(
+        "performance array counts must be nonnegative"))
+    entries=BigInt(square_arrays)*BigInt(dimension)^2+
+            BigInt(linear_arrays)*BigInt(dimension)
+    entries*_scalar_retained_bytes(T;bigfloat_precision)
+end
+
+function _performance_entries_bytes(entries::Integer,::Type{T};
+        bigfloat_precision::Integer=precision(BigFloat)) where T
+    entries>=0||throw(ArgumentError("storage entry count must be nonnegative"))
+    BigInt(entries)*_scalar_retained_bytes(T;bigfloat_precision)
+end
+
+function _performance_gmres_bytes(dimension::Integer,::Type{T},
+        krylovdim::Integer;recycle_dim::Integer=0,
+        bigfloat_precision::Integer=precision(BigFloat)) where T
+    dimension>0&&krylovdim>0&&recycle_dim>=0||throw(ArgumentError(
+        "GMRES dimensions must be positive and recycle_dim nonnegative"))
+    n=BigInt(dimension);m=min(n,BigInt(krylovdim));r=min(n,BigInt(recycle_dim))
+    # Ordinary GMRES owns one basis/Hessenberg plus six full vectors. GCRO
+    # additionally retains U, C, candidate, and AU (four n-by-r blocks), its
+    # r-by-m coupling, and projected dense factors.
+    complex_entries=n*(m+6)+(m+1)*m+2m+1+
+                    4n*r+r*m+2r*r
+    _performance_entries_bytes(complex_entries,T;bigfloat_precision)+
+        _performance_entries_bytes(m,_real_float_type(T);bigfloat_precision)
+end
+
+function _performance_arnoldi_bytes(dimension::Integer,::Type{T},
+        krylovdim::Integer;mode::Symbol=:full,
+        bigfloat_precision::Integer=precision(BigFloat)) where T
+    dimension>0&&krylovdim>0||throw(ArgumentError(
+        "Arnoldi dimensions must be positive"))
+    mode in (:ordinary,:full)||throw(ArgumentError(
+        "Arnoldi performance mode must be :ordinary or :full"))
+    n=BigInt(dimension);m=min(n,BigInt(krylovdim))
+    entries=mode===:ordinary ? n*(m+3)+(m+1)*m :
+        n*(5m+3)+3m*m+m
+    _performance_entries_bytes(entries,T;bigfloat_precision)
+end
+
+_performance_source_action_bytes(source::AbstractMatrix,::Type{T}) where T=big(0)
+
+function _performance_operator_workspace_bytes(prototype;
+        bigfloat_precision::Integer=precision(BigFloat))
+    storage=prototype isa AbstractPIOperator ? prototype.data : prototype
+    _performance_entries_bytes(length(storage),eltype(storage);
+                               bigfloat_precision)
+end
+
+_performance_kernel_workspace_bytes(::AbstractStaticPIKernel,basis,::Type{T};
+    bigfloat_precision::Integer=precision(BigFloat)) where T=big(0)
+
+function _performance_kernel_workspace_bytes(
+        ::Union{FactorizedLocalJumpPIKernel,FactorizedLocalPBodyJumpPIKernel},
+        basis,::Type{T};bigfloat_precision::Integer=precision(BigFloat)) where T
+    largest=maximum(length,basis.patterns;init=1)
+    _performance_entries_bytes(BigInt(largest)^2,T;bigfloat_precision)
+end
+
+function _performance_kernel_workspace_bytes(kernel::FusedStaticPIKernel,
+        basis,::Type{T};bigfloat_precision::Integer=precision(BigFloat)) where T
+    isempty(kernel.onebody_gains)&&isempty(kernel.pbody_gains)&&return big(0)
+    largest=maximum(length,basis.patterns;init=1)
+    _performance_entries_bytes(BigInt(largest)^2,T;bigfloat_precision)
+end
+
+function _performance_kernel_workspace_bytes(kernel::InPlaceHamiltonianPIKernel,
+        basis,::Type{T};bigfloat_precision::Integer=precision(BigFloat)) where T
+    _performance_operator_workspace_bytes(kernel.schedule.prototype;
+        bigfloat_precision)+
+        _performance_entries_bytes(length(basis),T;bigfloat_precision)
+end
+
+function _performance_kernel_workspace_bytes(kernel::InPlaceDissipatorPIKernel,
+        basis,::Type{T};bigfloat_precision::Integer=precision(BigFloat)) where T
+    _performance_operator_workspace_bytes(kernel.schedule.prototype;
+        bigfloat_precision)+
+        _performance_entries_bytes(2BigInt(length(basis)),T;
+                                   bigfloat_precision)
+end
+
+function _performance_branch_contraction_entries(branches)
+    sum((BigInt(length(branch.table)) for branch in branches.entries);
+        init=big(0))
+end
+
+function _performance_kernel_workspace_bytes(kernel::InPlaceLocalJumpPIKernel,
+        basis,::Type{T};bigfloat_precision::Integer=precision(BigFloat)) where T
+    operator_bytes=_performance_operator_workspace_bytes(
+        kernel.schedule.prototype;bigfloat_precision)
+    entries=BigInt(length(basis))+
+        _performance_branch_contraction_entries(kernel.branches)+
+        BigInt(kernel.branches.maximum_block_dimension)^2
+    2operator_bytes+_performance_entries_bytes(entries,T;bigfloat_precision)
+end
+
+function _performance_kernel_workspace_bytes(
+        kernel::InPlaceLocalPBodyJumpPIKernel,basis,::Type{T};
+        bigfloat_precision::Integer=precision(BigFloat)) where T
+    operator_bytes=_performance_operator_workspace_bytes(
+        kernel.schedule.prototype;bigfloat_precision)
+    contractions=sum((BigInt(size(kernel.left_isometries[index],1))*
+                      BigInt(size(kernel.right_isometries[index],1))
+                      for index in eachindex(kernel.pair_scales));init=big(0))
+    largest=maximum(length,basis.patterns;init=0)
+    entries=BigInt(length(basis))+contractions+BigInt(largest)^2
+    2operator_bytes+_performance_entries_bytes(entries,T;bigfloat_precision)
+end
+
+function _performance_kernel_workspace_bytes(
+        kernel::InPlaceCorrelatedCollectiveJumpPIKernel,basis,::Type{T};
+        bigfloat_precision::Integer=precision(BigFloat)) where T
+    m=BigInt(length(kernel.channel_blocks));n=BigInt(length(basis))
+    _performance_operator_workspace_bytes(kernel.schedule.prototype;
+        bigfloat_precision)+
+        _performance_entries_bytes(2m^2+(m+2)n,T;bigfloat_precision)
+end
+
+function _performance_kernel_workspace_bytes(
+        kernel::InPlaceCorrelatedLocalJumpPIKernel,basis,::Type{T};
+        bigfloat_precision::Integer=precision(BigFloat)) where T
+    m=BigInt(length(kernel.operators));d=BigInt(size(first(kernel.operators),1))
+    n=BigInt(length(basis));contractions=_performance_branch_contraction_entries(
+        kernel.branches)
+    entries=2m^2+(m+2)d^2+n+m*contractions+
+        BigInt(kernel.branches.maximum_block_dimension)^2
+    _performance_operator_workspace_bytes(kernel.schedule.prototype;
+        bigfloat_precision)+
+        _performance_entries_bytes(entries,T;bigfloat_precision)
+end
+
+function _performance_liouvillian_workspace_bytes(plan::LiouvillianPlan;
+        batch_columns::Integer=0,
+        bigfloat_precision::Integer=precision(BigFloat))
+    batch_columns>=0||throw(ArgumentError(
+        "batch_columns must be nonnegative"))
+    n=BigInt(length(plan.basis))
+    largest=BigInt(maximum(length,plan.basis.patterns;init=1))
+    bytes=_performance_entries_bytes(
+        3n+3largest^2*BigInt(batch_columns),plan.Ttype;
+        bigfloat_precision)
+    plan.kernels===nothing&&return bytes
+    for kernel in plan.kernels
+        bytes+=_performance_kernel_workspace_bytes(
+            kernel,plan.basis,plan.Ttype;bigfloat_precision)
+    end
+    bytes
+end
+
+function _performance_liouvillian_batch_payload_bytes(basis::PIBasis,
+        ::Type{T},batch_columns::Integer;
+        bigfloat_precision::Integer=precision(BigFloat)) where T
+    batch_columns>=0||throw(ArgumentError(
+        "batch_columns must be nonnegative"))
+    largest=BigInt(maximum(length,basis.patterns;init=1))
+    _performance_entries_bytes(
+        3largest^2*BigInt(batch_columns),T;bigfloat_precision)
+end
+
+_performance_liouvillian_batch_payload_bytes(plan::LiouvillianPlan,
+        batch_columns::Integer;
+        bigfloat_precision::Integer=precision(BigFloat))=
+    _performance_liouvillian_batch_payload_bytes(
+        plan.basis,plan.Ttype,batch_columns;bigfloat_precision)
+
+function _performance_liouvillian_fallback_bytes(plan::LiouvillianPlan;
+        bigfloat_precision::Integer=precision(BigFloat))
+    plan.kernels===nothing||return big(0)
+    n=BigInt(length(plan.basis))
+    scalar_bytes=_scalar_retained_bytes(plan.Ttype;bigfloat_precision)
+    sparse=n^2*(scalar_bytes+2sizeof(Int))+(n+1)*sizeof(Int)
+    _model_preparation_bytes(plan.fallback_model;bigfloat_precision)+3sparse
+end
+
+function _performance_source_action_bytes(plan::LiouvillianPlan,
+        ::Type{T}) where T
+    _performance_liouvillian_fallback_bytes(plan)
+end
+
+function _performance_source_action_bytes(source::CompiledPIModel,
+        ::Type{T}) where T
+    source.backend===:sparse ? big(0) :
+        _performance_liouvillian_fallback_bytes(source.plan)
+end
+function _performance_source_action_bytes(source::MatrixFreeLiouvillian,
+        ::Type{T}) where T
+    # Package-prepared adapters retain their explicit application workspace in
+    # the operator itself.  Callers (and scan resource reports) already count
+    # that retained object, so charging another generic 16-vector action bound
+    # here would double count it.  Plan-less callbacks without an exposed
+    # workspace keep the conservative fallback below.
+    if source.workspace isa LiouvillianWorkspace
+        return source.plan isa LiouvillianPlan ?
+            _performance_liouvillian_fallback_bytes(source.plan) : big(0)
+    end
+    n=size(source,1)
+    _performance_array_bytes(n,T,0;linear_arrays=16)
+end
+function _performance_source_action_bytes(source,::Type{T}) where T
+    n=size(source,1)
+    _performance_array_bytes(n,T,0;linear_arrays=16)
+end
+
+function _performance_budget_fits(estimated_bytes::Integer,memory_budget)
+    estimated_bytes>=0||throw(ArgumentError(
+        "estimated memory must be nonnegative"))
+    limit=_performance_memory_limit(memory_budget)
+    limit===nothing||BigInt(estimated_bytes)<=limit
+end
+
+
+function _require_performance_budget(operation::AbstractString,
+        estimated_bytes::Integer,memory_budget;guidance::AbstractString="")
+    _performance_budget_fits(estimated_bytes,memory_budget)&&return nothing
+    limit=_performance_memory_limit(memory_budget)
+    suffix=isempty(guidance) ? "" : " $guidance"
+    throw(ArgumentError(
+        "$operation requires an estimated peak of at least $estimated_bytes bytes, "*
+        "which exceeds memory_budget=$limit bytes.$suffix Pass memory_budget=Inf "*
+        "to opt in explicitly after checking available RAM."))
+end
+
+function _model_preparation_bytes(model::PIModel;
+        linear_arrays::Integer=16,
+        bigfloat_precision::Integer=precision(BigFloat),
+        coefficient_cache=nothing)
+    n=length(model.basis);R=_model_geometry_type(model)
+    T=Complex{R}
+    geometry=if any(_term_requires_onebody_geometry,model.terms)
+        _estimate_onebody_geometry(model.basis,R;bigfloat_precision).setup_bytes
+    else
+        big(0)
+    end
+    requirements=_model_onebox_requirements(model)
+    automatic_coefficients=coefficient_cache===nothing&&
+        requirements.geometry_families>1&&_small_onebox_autocache(model.basis) ?
+        _estimate_onebox_cache_upper(model.basis,requirements.required_depth,R;
+            precision_bits=bigfloat_precision) : big(0)
+    geometry+automatic_coefficients+
+        _performance_array_bytes(n,T,0;linear_arrays,bigfloat_precision)
+end
+
+function _require_model_preparation_budget(model::PIModel,memory_budget;
+        operation::AbstractString="PI model preparation",
+        bigfloat_precision::Integer=precision(BigFloat),
+        coefficient_cache=nothing)
+    estimate=_model_preparation_bytes(
+        model;bigfloat_precision,coefficient_cache)
+    _require_performance_budget(operation,estimate,memory_budget;guidance=
+        "Reduce the retained basis/model size or increase the budget.")
+end
+
 """
     compile(model; backend=:auto, memory_budget=512*1024^2,
-            bigfloat_precision=precision(BigFloat))
+            bigfloat_precision=precision(BigFloat), coefficient_cache=nothing)
 
 Prepare all fixed Schur geometry once and choose a sparse or matrix-free
 backend. `backend=:auto` uses a conservative sparse-storage upper bound and
 always keeps driven models matrix-free. The returned `CompiledPIModel` can be
 passed directly to `apply!`, `evolve!`, and `dynamics_problem`.
 
+The sparse bound includes the prepared plan and simultaneous sparse assembly
+temporaries. Matrix-free preparation separately bounds its retained plan and
+compatibility action scratch. Automatic selection uses matrix-free work when
+the sparse route does not fit, and raises if that bounded alternative also
+exceeds the budget. Pass `memory_budget=Inf` as an explicit opt-out.
+
 For fixed-size isbits scalar types, storage bounds retain the exact inline
 `sizeof(T)` accounting. `BigFloat` and `Complex{BigFloat}` use an explicitly
 conservative retained-storage bound at `bigfloat_precision`; pass the maximum
 precision intended for generated matrix entries when it differs from the
 active process precision.
+
+Pass a compatible [`OneBoxCGCache`](@ref) to share one-box Clebsch--Gordan
+coefficients across one- and `p`-body geometry construction and across calls.
+An explicit cache is caller-owned and is therefore excluded from the
+preparation memory estimate. If it is omitted, a small model with multiple
+geometry families may build one bounded temporary cache automatically; its
+storage is included in the estimate.
 """
 function compile(model::PIModel;backend=:auto,memory_budget=512*1024^2,
-                 bigfloat_precision::Integer=precision(BigFloat))
+                 bigfloat_precision::Integer=precision(BigFloat),
+                 coefficient_cache=nothing)
     backend in (:auto,:sparse,:matrixfree)||throw(ArgumentError("backend must be :auto, :sparse, or :matrixfree"))
-    budget=_memory_budget_bytes(memory_budget);plan=LiouvillianPlan(model);n=length(model.basis)
+    _require_model_preparation_budget(model,memory_budget;
+        operation="compiled PI model preparation",bigfloat_precision,
+        coefficient_cache)
+    budget=_memory_budget_bytes(memory_budget)
+    plan=LiouvillianPlan(model;coefficient_cache)
+    n=length(model.basis)
     T=plan.Ttype
     scalar_bytes=_scalar_retained_bytes(T;bigfloat_precision)
     dense_entries=BigInt(n)^2
-    sparse_upper_big=dense_entries*(scalar_bytes+2sizeof(Int))
+    sparse_upper_big=dense_entries*(scalar_bytes+2sizeof(Int))+
+                     (BigInt(n)+1)*sizeof(Int)
     sparse_upper=Int(min(sparse_upper_big,BigInt(typemax(Int))))
     plan_bytes=Base.summarysize(plan)
     sparse_total=Int(min(BigInt(plan_bytes)+sparse_upper_big,BigInt(typemax(Int))))
-    matrixfree_total=Int(min(BigInt(plan_bytes)+3BigInt(n)*scalar_bytes,BigInt(typemax(Int))))
-    chosen = backend===:auto ? (plan.autonomous&&sparse_total<=budget ? :sparse : :matrixfree) : backend
+    sparse_peak_big=BigInt(plan_bytes)+3sparse_upper_big
+    sparse_peak=Int(min(sparse_peak_big,BigInt(typemax(Int))))
+    matrixfree_workspace_big=_performance_liouvillian_workspace_bytes(
+        plan;bigfloat_precision)
+    matrixfree_total_big=BigInt(plan_bytes)+matrixfree_workspace_big
+    matrixfree_total=Int(min(matrixfree_total_big,BigInt(typemax(Int))))
+    chosen = backend===:auto ?
+        (plan.autonomous&&_performance_budget_fits(sparse_peak_big,memory_budget) ?
+            :sparse : :matrixfree) : backend
     chosen===:sparse&&!plan.autonomous&&throw(ArgumentError("a time-dependent model cannot use the sparse backend; freeze it at an explicit time or use backend=:matrixfree"))
+    chosen===:sparse&&_require_performance_budget(
+        "sparse compiled Liouvillian materialization",sparse_peak_big,
+        memory_budget;guidance="Use backend=:matrixfree.")
+    chosen===:matrixfree&&_require_performance_budget(
+        "matrix-free compiled Liouvillian workspace",matrixfree_total_big,
+        memory_budget;guidance="Reduce the retained basis/model size.")
     operator=chosen===:sparse ? _matrix_from_plan(plan) : _matrixfree_liouvillian(plan)
     estimates=(scalar_type=T,dimension=n,plan_bytes=plan_bytes,
                scalar_retained_bytes=scalar_bytes,
@@ -1575,30 +3312,66 @@ function compile(model::PIModel;backend=:auto,memory_budget=512*1024^2,
                    _scalar_precision_assumption(T,bigfloat_precision),
                sparse_upper_bound=sparse_upper,sparse_operator_upper_bound=sparse_upper,
                sparse_compiled_upper_bound=sparse_total,
+               sparse_materialization_peak_upper_bound=sparse_peak,
+               matrixfree_workspace_upper_bound=Int(min(
+                   matrixfree_workspace_big,BigInt(typemax(Int)))),
                matrixfree_compiled_estimate=matrixfree_total,memory_budget=budget,
                requested_backend=backend,chosen_backend=chosen)
     CompiledPIModel(model,plan,operator,chosen,estimates)
 end
 
-function liouvillian(compiled::CompiledPIModel;representation=compiled.backend)
+function liouvillian(compiled::CompiledPIModel;representation=compiled.backend,
+                     memory_budget=_DEFAULT_HIGHLEVEL_MEMORY_BUDGET)
     representation in (:sparse,:matrixfree)||throw(ArgumentError("representation must be :sparse or :matrixfree"))
     representation===compiled.backend&&return compiled.operator
-    representation===:sparse ? _matrix_from_plan(compiled.plan) : _matrixfree_liouvillian(compiled.plan)
+    if representation===:sparse
+        estimate=3BigInt(compiled.estimates.sparse_operator_upper_bound)
+        _require_performance_budget("sparse Liouvillian materialization",
+            estimate,memory_budget;guidance="Keep representation=:matrixfree.")
+        return _matrix_from_plan(compiled.plan)
+    end
+    estimate=BigInt(compiled.estimates.plan_bytes)+
+        _performance_liouvillian_workspace_bytes(compiled.plan)
+    _require_performance_budget("matrix-free Liouvillian compatibility workspace",
+        estimate,memory_budget;guidance="Keep representation=:sparse or use a caller-owned plan workspace.")
+    _matrixfree_liouvillian(compiled.plan)
 end
 
 LiouvillianWorkspace(compiled::CompiledPIModel)=LiouvillianWorkspace(compiled.plan)
 function LiouvillianWorkspace(L::MatrixFreeLiouvillian)
-    L.plan===nothing&&throw(ArgumentError("this custom MatrixFreeLiouvillian has no compiled plan workspace"))
+    L.plan isa LiouvillianPlan||throw(ArgumentError(
+        "this MatrixFreeLiouvillian does not wrap a compiled PI LiouvillianPlan"))
     LiouvillianWorkspace(L.plan)
 end
 
 function apply!(y,L::MatrixFreeLiouvillian,x,t,p,work::LiouvillianWorkspace)
-    L.plan===nothing ? L.action!(y,x,t,p) : apply!(y,L.plan,x,t,p,work)
+    L.plan isa LiouvillianPlan ? apply!(y,L.plan,x,t,p,work) :
+        L.action!(y,x,t,p)
 end
 function apply!(Y::AbstractMatrix,L::MatrixFreeLiouvillian,X::AbstractMatrix,t,p,
                 work::LiouvillianWorkspace)
-    L.plan===nothing ? error("a custom MatrixFreeLiouvillian does not support explicit batched workspaces") :
-        apply!(Y,L.plan,X,t,p,work)
+    L.plan isa LiouvillianPlan ? apply!(Y,L.plan,X,t,p,work) :
+        throw(ArgumentError(
+            "only a compiled PI MatrixFreeLiouvillian supports a LiouvillianWorkspace batch"))
+end
+function apply!(Y::AbstractMatrix,L::MatrixFreeLiouvillian,X::AbstractMatrix,t,p)
+    size(X,1)==L.n||throw(DimensionMismatch("matrix input has the wrong leading dimension"))
+    size(Y)==(L.n,size(X,2))||throw(DimensionMismatch("matrix output has the wrong dimensions"))
+    if L.batched_action! !== nothing
+        L.batched_action!(Y,X,t,p)
+    elseif L.plan isa LiouvillianPlan
+        lock(L.lock)
+        try
+            apply!(Y,L.plan,X,t,p,L.workspace)
+        finally
+            unlock(L.lock)
+        end
+    else
+        for j in axes(X,2)
+            L.action!(view(Y,:,j),view(X,:,j),t,p)
+        end
+    end
+    Y
 end
 apply!(y,L::MatrixFreeLiouvillian,x,t,p)=L.action!(y,x,t,p)
 apply!(y,L::MatrixFreeLiouvillian,x)=mul!(y,L,x)
@@ -1647,14 +3420,58 @@ function apply_adjoint!(Y::AbstractMatrix,L::MatrixFreeLiouvillian,X::AbstractMa
     apply_adjoint!(Y,L.plan,X,t,p,work)
 end
 
-function apply_adjoint!(y,L::MatrixFreeLiouvillian,x,t,p)
-    if L.plan===nothing
+function _apply_custom_adjoint!(y::AbstractVector,L::MatrixFreeLiouvillian,
+                                x::AbstractVector,t,p)
+    length(x)==L.n&&length(y)==L.n||
+        throw(DimensionMismatch("Liouvillian vector has the wrong length"))
+    if L.adjoint_action! !== nothing
+        L.adjoint_action!(y,x,t,p)
+    elseif L.batched_adjoint_action! !== nothing
+        L.batched_adjoint_action!(reshape(y,L.n,1),reshape(x,L.n,1),t,p)
+    else
         _require_autonomous(L,"apply_adjoint!")
-        return mul!(y,adjoint(Matrix(_materialize(L))),x)
+        mul!(y,adjoint(Matrix(_materialize(L))),x)
+    end
+    y
+end
+
+function _apply_custom_adjoint!(Y::AbstractMatrix,L::MatrixFreeLiouvillian,
+                                X::AbstractMatrix,t,p)
+    size(X,1)==L.n||throw(DimensionMismatch("matrix input has the wrong leading dimension"))
+    size(Y)==(L.n,size(X,2))||throw(DimensionMismatch("matrix output has the wrong dimensions"))
+    if L.batched_adjoint_action! !== nothing
+        L.batched_adjoint_action!(Y,X,t,p)
+    elseif L.adjoint_action! !== nothing
+        for j in axes(X,2)
+            L.adjoint_action!(view(Y,:,j),view(X,:,j),t,p)
+        end
+    else
+        _require_autonomous(L,"apply_adjoint!")
+        mul!(Y,adjoint(Matrix(_materialize(L))),X)
+    end
+    Y
+end
+
+function apply_adjoint!(y::AbstractVector,L::MatrixFreeLiouvillian,
+                        x::AbstractVector,t,p)
+    if L.plan===nothing
+        return _apply_custom_adjoint!(y,L,x,t,p)
     end
     lock(L.lock)
     try
         apply_adjoint!(y,L.plan,x,t,p,L.workspace)
+    finally
+        unlock(L.lock)
+    end
+end
+function apply_adjoint!(Y::AbstractMatrix,L::MatrixFreeLiouvillian,
+                        X::AbstractMatrix,t,p)
+    if L.plan===nothing
+        return _apply_custom_adjoint!(Y,L,X,t,p)
+    end
+    lock(L.lock)
+    try
+        apply_adjoint!(Y,L.plan,X,t,p,L.workspace)
     finally
         unlock(L.lock)
     end
@@ -1697,7 +3514,10 @@ isautonomous(A::AdjointMatrixFreeLiouvillian)=isautonomous(A.parent)
 
 function adjoint(L::MatrixFreeLiouvillian)
     _require_autonomous(L,"adjoint")
-    fallback=L.plan===nothing ? adjoint(Matrix(_materialize(L))) : nothing
+    explicit_adjoint=L.adjoint_action! !== nothing ||
+                     L.batched_adjoint_action! !== nothing
+    fallback=L.plan===nothing&&!explicit_adjoint ?
+        adjoint(Matrix(_materialize(L))) : nothing
     AdjointMatrixFreeLiouvillian(L,fallback)
 end
 adjoint(A::AdjointMatrixFreeLiouvillian)=A.parent
@@ -1718,8 +3538,10 @@ end
 function mul!(Y::AbstractMatrix,A::AdjointMatrixFreeLiouvillian,X::AbstractMatrix)
     size(X,1)==size(A,2)||throw(DimensionMismatch("matrix input has the wrong leading dimension"))
     size(Y)==(size(A,1),size(X,2))||throw(DimensionMismatch("matrix output has the wrong dimensions"))
-    for j in axes(X,2)
-        mul!(view(Y,:,j),A,view(X,:,j))
+    if A.fallback===nothing
+        apply_adjoint!(Y,A.parent,X,0.0,nothing)
+    else
+        mul!(Y,A.fallback,X)
     end
     Y
 end
@@ -1732,17 +3554,27 @@ end
 # These typed forwarding methods are defined before spectra.jl is included;
 # its general methods extend the same generic functions later in module load.
 function pi_liouvillian_spectrum(compiled::CompiledPIModel;method=:dense,
-                                 basis=compiled.plan.basis,kwargs...)
-    representation=method in (:krylov,:arnoldi,:harmonic) ? :matrixfree : compiled.backend
-    source=liouvillian(compiled;representation=representation)
-    pi_liouvillian_spectrum(source;method=method,basis=basis,kwargs...)
+        basis=compiled.plan.basis,
+        memory_budget=_DEFAULT_HIGHLEVEL_MEMORY_BUDGET,kwargs...)
+    method isa Symbol||throw(ArgumentError("method must be a Symbol"))
+    method=_canonical_spectrum_algorithm(method)
+    representation=method in (:arnoldi,:block_arnoldi,:harmonic,:iram,:jd) ?
+        :matrixfree : compiled.backend
+    source=liouvillian(compiled;representation=representation,memory_budget)
+    pi_liouvillian_spectrum(source;method=method,basis=basis,memory_budget,
+                            kwargs...)
 end
 
 function pi_liouvillian_gap(compiled::CompiledPIModel;method=:dense,
-                            basis=compiled.plan.basis,kwargs...)
-    representation=method in (:krylov,:arnoldi,:harmonic) ? :matrixfree : compiled.backend
-    source=liouvillian(compiled;representation=representation)
-    pi_liouvillian_gap(source;method=method,basis=basis,kwargs...)
+        basis=compiled.plan.basis,
+        memory_budget=_DEFAULT_HIGHLEVEL_MEMORY_BUDGET,kwargs...)
+    method isa Symbol||throw(ArgumentError("method must be a Symbol"))
+    method=_canonical_spectrum_algorithm(method)
+    representation=method in (:arnoldi,:block_arnoldi,:harmonic,:iram,:jd) ?
+        :matrixfree : compiled.backend
+    source=liouvillian(compiled;representation=representation,memory_budget)
+    pi_liouvillian_gap(source;method=method,basis=basis,memory_budget,
+                       kwargs...)
 end
 
 """
@@ -1768,7 +3600,15 @@ function freeze(L::MatrixFreeLiouvillian; time, parameters=nothing,
         L
     else
         action! = (y,x,t,p)->L.action!(y,x,time,parameters)
-        MatrixFreeLiouvillian(L.n,action!,L.Ttype,copy(L.tracevec);autonomous=true)
+        adjoint_action! = L.adjoint_action! === nothing ? nothing :
+            (y,x,t,p)->L.adjoint_action!(y,x,time,parameters)
+        batched_action! = L.batched_action! === nothing ? nothing :
+            (Y,X,t,p)->L.batched_action!(Y,X,time,parameters)
+        batched_adjoint_action! = L.batched_adjoint_action! === nothing ? nothing :
+            (Y,X,t,p)->L.batched_adjoint_action!(Y,X,time,parameters)
+        MatrixFreeLiouvillian(L.n,action!,L.Ttype,copy(L.tracevec);
+            autonomous=true,adjoint_action!,batched_action!,
+            batched_adjoint_action!)
     end
     representation===:matrixfree ? frozen : sparse(_materialize(frozen))
 end
@@ -1804,8 +3644,8 @@ end
     steady_state(L; basis=nothing, trace_vector=nothing, method=:auto,
                  shift=nothing, maxiter=200, initial_state=nothing,
                  atol=1e-10, rtol=1e-8, return_info=false,
-                 diagnostics=:basic, krylovdim=30, workspace=nothing,
-                 preconditioner=nothing)
+                 diagnostics=:basic, krylovdim=30, recycle_dim=0, workspace=nothing,
+                 preconditioner=nothing, memory_budget=512*1024^2)
 
 Solve `L*rho = 0` subject to the physical trace constraint. Passing a
 `PIModel`, a `basis`, or a matrix-free Liouvillian supplies the exact
@@ -1814,42 +3654,117 @@ equation-(7) trace functional. `method=:direct` uses a bordered sparse solve;
 manifold; `:eigen` selects the dense eigenvector closest to zero; and
 `:shiftinvert` performs sparse inverse iteration near `shift`. `:krylov`
 (`:gmres`) applies a restarted matrix-free GMRES solve with a rank-one trace
-constraint and never assembles the Liouvillian.
+constraint and never assembles the Liouvillian. Set `recycle_dim>0` to retain
+an augmentation space in a compatible `RecycledGMRESWorkspace` across a
+sequence of related solves.
 `:auto` validates the direct solve before falling back to SVD.
 `diagnostics=:basic` reports residual and trace checks without an extra dense
 factorization. Request `diagnostics=:nullity` only when the numerical
 stationary-space dimension is needed; this performs an SVD for methods that
 do not already require one.
+
+Dense/factorizing routes are preflighted against `memory_budget` using a
+conservative PI-coordinate work-array estimate. When `method=:auto` and basic
+diagnostics do not fit, the routine selects matrix-free Krylov instead of
+starting a dense fallback. An explicitly requested factorizing method raises
+before materialization; pass `memory_budget=Inf` only to opt in after checking
+available RAM.
+For `preconditioner=:schur`, the preflight also includes the block extraction
+and LU-factor setup peak. Storage owned by an arbitrary caller-supplied
+preconditioner is not introspectable and remains the caller's responsibility.
+
+For the `steady_state(model::PIModel; ...)` route, `coefficient_cache` may be
+a compatible [`OneBoxCGCache`](@ref). It accelerates preparation only and
+does not change the stationary solve or its numerical tolerances.
 """
 function steady_state(L; basis=nothing, trace_vector=nothing, method=:auto,
                       shift=nothing,maxiter::Integer=200,initial_state=nothing,
                       atol=1e-10,rtol=1e-8,return_info=false,
                       diagnostics=:basic,
-                      krylovdim::Integer=30,workspace=nothing,preconditioner=nothing,
-                      preconditioner_regularization::Real=0)
-    method in (:shift_invert,:inverse_iteration)&&(method=:shiftinvert)
-    method===:gmres&&(method=:krylov)
-    method in (:auto,:direct,:svd,:eigen,:shiftinvert,:krylov) || throw(ArgumentError("method must be :auto, :direct, :svd, :eigen, :shiftinvert, or :krylov"))
+                      krylovdim::Integer=30,recycle_dim::Integer=0,
+                      workspace=nothing,preconditioner=nothing,
+                      preconditioner_regularization::Real=0,
+                      memory_budget=_DEFAULT_HIGHLEVEL_MEMORY_BUDGET)
+    method isa Symbol||throw(ArgumentError("method must be a Symbol"))
+    method=_stationary_solver_method(method)
     diagnostics in (:basic,:nullity) || throw(ArgumentError("diagnostics must be :basic or :nullity"))
     maxiter>0||throw(ArgumentError("maxiter must be positive"))
     L isa MatrixFreeLiouvillian && _require_autonomous(L, "steady_state")
+    n=size(L,1);size(L,2)==n||throw(DimensionMismatch("L must be square"))
+    source_type=_complex_float_type(eltype(L))
+    dense_scalar=promote_type(source_type,ComplexF64)
+    dense_arrays=diagnostics===:nullity ? 10 :
+        method in (:svd,:eigen,:auto) ? 8 : 6
+    dense_estimate=_performance_array_bytes(n,dense_scalar,dense_arrays;
+                                             linear_arrays=8)
+    if method===:auto&&diagnostics===:basic&&
+            !_performance_budget_fits(dense_estimate,memory_budget)
+        method=:krylov
+    elseif method!==:krylov
+        _require_performance_budget("steady-state factorization",dense_estimate,
+            memory_budget;guidance=
+            "Use method=:krylov for a bounded matrix-free solve.")
+    end
     if method===:krylov
+        trace_type=trace_vector!==nothing ? eltype(trace_vector) :
+            L isa MatrixFreeLiouvillian ? eltype(L.tracevec) : source_type
+        initial_type=initial_state isa PIState ? eltype(initial_state.data) :
+            initial_state===nothing ? trace_type : eltype(initial_state)
+        solver_type=promote_type(source_type,trace_type,initial_type)
+        solver_type=_promote_krylov_scalar_type(solver_type,
+                                                 preconditioner_regularization)
+        if preconditioner!==nothing&&!(preconditioner isa Symbol)
+            solver_type=_promote_krylov_operator_type(solver_type,
+                                                       preconditioner)
+        end
+        if workspace!==nothing
+            solver_type=promote_type(solver_type,eltype(workspace.V))
+        end
+        effective_krylovdim=workspace===nothing ? krylovdim :
+            size(workspace.H,2)
+        effective_recycle_dim=workspace isa RecycledGMRESWorkspace ?
+            size(workspace.U,2) : recycle_dim
+        krylov_estimate=_performance_gmres_bytes(n,solver_type,
+            effective_krylovdim;recycle_dim=effective_recycle_dim)+
+            _performance_source_action_bytes(L,solver_type)+
+            (L isa LiouvillianPlan ?
+                _performance_linear_operator_workspace_bytes(L) : big(0))
+        if preconditioner===:schur
+            basis===nothing&&throw(ArgumentError(
+                "preconditioner=:schur requires basis=... or a PIModel"))
+            coefficients=sum(BigInt(basis.offsets[index+1]-
+                basis.offsets[index])^2 for index in eachindex(basis.sectors);
+                init=big(0))
+            krylov_estimate+=_performance_entries_bytes(
+                3BigInt(coefficients)+4BigInt(n),solver_type)
+        end
+        _require_performance_budget("matrix-free steady-state Krylov workspace",
+            krylov_estimate,memory_budget;guidance=
+            "Reduce krylovdim/recycle_dim or increase the budget.")
         diagnostics===:nullity && throw(ArgumentError("diagnostics=:nullity is not available for the matrix-free Krylov steady-state solve; use method=:svd on a manageable problem"))
+        # A LiouvillianPlan deliberately exposes explicit-workspace `apply!`
+        # rather than synchronized `mul!`.  Construct its bounded compatibility
+        # adapter only after the common Krylov/action-workspace preflight; dense
+        # model routes therefore continue to avoid this allocation entirely.
+        krylov_source=L isa LiouvillianPlan ? _matrixfree_liouvillian(L) : L
         P = if preconditioner===:schur
             basis===nothing&&throw(ArgumentError("preconditioner=:schur requires basis=... or a PIModel"))
-            schur_sector_preconditioner(L,basis;trace_vector=trace_vector,
+            schur_sector_preconditioner(krylov_source,basis;
+                trace_vector=trace_vector,
                 regularization=preconditioner_regularization)
         elseif preconditioner isa Symbol
             throw(ArgumentError("unknown Krylov preconditioner $preconditioner"))
         else
             preconditioner
         end
-        return krylov_steady_state(L;basis=basis,trace_vector=trace_vector,
-            initial_state=initial_state,krylovdim=krylovdim,workspace=workspace,
+        return krylov_steady_state(krylov_source;basis=basis,
+            trace_vector=trace_vector,
+            initial_state=initial_state,krylovdim=krylovdim,recycle_dim=recycle_dim,
+            workspace=workspace,
             preconditioner=P,maxiter=maxiter,atol=atol,rtol=rtol,
             return_info=return_info)
     end
-    M=_materialize(L); n=size(M,1); size(M,2)==n||throw(DimensionMismatch("L must be square"))
+    M=_materialize(L)
     t = trace_vector !== nothing ? collect(trace_vector) :
         basis !== nothing ? _trace_vector(basis,promote_type(eltype(M),ComplexF64)) :
         L isa MatrixFreeLiouvillian ? collect(L.tracevec) : nothing
@@ -1913,24 +3828,42 @@ function steady_state(L; basis=nothing, trace_vector=nothing, method=:auto,
           diagnostics=diagnostics)
     return_info ? info : x
 end
-function steady_state(model::PIModel;method=:auto,kwargs...)
+function steady_state(model::PIModel;method=:auto,
+        memory_budget=_DEFAULT_HIGHLEVEL_MEMORY_BUDGET,
+        coefficient_cache=nothing,kwargs...)
     _require_autonomous(model, "steady_state")
-    representation=method in (:krylov,:gmres) ? :matrixfree : :sparse
-    steady_state(liouvillian(model;representation=representation);basis=model.basis,method=method,kwargs...)
+    _require_model_preparation_budget(model,memory_budget;
+        operation="steady-state model preparation",coefficient_cache)
+    # Keep preparation matrix free until the common budget guard has selected
+    # a route. This prevents `method=:auto` from allocating the sparse PI
+    # matrix before it has a chance to choose bounded GMRES.
+    plan=LiouvillianPlan(model;coefficient_cache)
+    steady_state(plan;basis=model.basis,trace_vector=plan.tracevec,
+                 method=method,memory_budget,kwargs...)
 end
 
-function steady_state(compiled::CompiledPIModel;method=:auto,kwargs...)
+function steady_state(compiled::CompiledPIModel;method=:auto,
+        memory_budget=_DEFAULT_HIGHLEVEL_MEMORY_BUDGET,kwargs...)
     _require_autonomous(compiled,"steady_state")
-    representation=method in (:krylov,:gmres) ? :matrixfree : compiled.backend
-    L=liouvillian(compiled;representation=representation)
+    method isa Symbol||throw(ArgumentError("method must be a Symbol"))
+    method=_stationary_solver_method(method)
+    representation=method===:krylov ? :matrixfree : compiled.backend
+    L=liouvillian(compiled;representation=representation,memory_budget)
     steady_state(L;basis=compiled.plan.basis,trace_vector=compiled.plan.tracevec,
-                 method=method,kwargs...)
+                 method=method,memory_budget,kwargs...)
 end
 
 """Return selected Liouvillian eigenvalues according to `:LR`, `:LM`, or `:SM`."""
-function liouvillian_eigenvalues(L,k::Integer;which=:LR)
+function liouvillian_eigenvalues(L,k::Integer;which=:LR,
+        memory_budget=_DEFAULT_HIGHLEVEL_MEMORY_BUDGET)
     k >= 0 || throw(ArgumentError("k must be nonnegative"))
     which in (:LR,:LM,:SM) || throw(ArgumentError("which must be :LR, :LM, or :SM"))
+    n=size(L,1);size(L,2)==n||throw(DimensionMismatch("L must be square"))
+    T=promote_type(_complex_float_type(eltype(L)),ComplexF64)
+    estimate=_performance_array_bytes(n,T,5;linear_arrays=4)
+    _require_performance_budget("complete Liouvillian eigendecomposition",
+        estimate,memory_budget;guidance=
+        "Use krylov_liouvillian_spectrum for selected eigenvalues.")
     values=eigvals(Matrix(_materialize(L)))
     order = which===:LR ? sortperm(values;by=real,rev=true) :
             which===:LM ? sortperm(values;by=abs,rev=true) :

@@ -15,6 +15,10 @@ PIBasis → PIModel → compile → CompiledPIModel
                               ├─ sparse or matrix-free backend
                               └─ LiouvillianWorkspace per task
 
+fixed operators, varying scalar rates → compile_family
+                                      → CompiledPIModelFamily
+                                      → specialize per parameter point
+
 (N, d, terms) → MeanFieldPlan → one-site nonlinear RHS
                                 └─ MeanFieldWorkspace per task
 
@@ -31,6 +35,7 @@ invariant PIModel → PopulationPlan → reduced sparse action
 
 (parameter grid, builder) → ParameterScanPlan
                            → ParameterScanWorkspace per serial caller/worker
+                             (continuation, Liouvillian, and Krylov scratch)
 
 (PI system, HEOMBath...) → HEOMPlan
                          ├─ HEOMWorkspace per application task
@@ -39,8 +44,14 @@ invariant PIModel → PopulationPlan → reduced sparse action
 
 `PIBasis` stores only polynomial-size Schur data. `PIModel` is an immutable
 tuple of physical terms. `LiouvillianPlan` lowers fixed operators to prepared
-sector blocks and local gain maps. It never contains mutable application
-scratch. A `LiouvillianWorkspace` contains the multiplication matrices needed
+sector blocks and local gain maps. Fixed local one-body and safely scaled
+Appendix-D gains remain rectangular Schur contractions rather than expanded
+four-index coordinate tables. When several fixed numerical terms are present,
+the plan also combines their Hamiltonian blocks and anticommutator loss blocks;
+gain channels remain separate, so this introduces no dissipative cross terms.
+The rectangular maps are expanded only for an explicitly requested sparse
+Liouvillian. The plan never contains mutable application scratch. A
+`LiouvillianWorkspace` contains the multiplication matrices needed
 for each Schur sector and, for an in-place operator schedule, the evaluated
 operator and dynamic Schur/gain buffers. It can be reused by dynamics and
 Krylov algorithms.
@@ -68,6 +79,26 @@ values = liouvillian_spectrum(prepared; target=:largest_real, nev=6)
 diagnostics(rho_ss)
 recommend_solver(model; task=:steady_state)
 ```
+
+Use `state(solution, i)` when `i` is a saved-state index and
+`state_at(solution, t)` when `t` is a physical time. The explicit form avoids
+the integer ambiguity and uses allocation-free lookup on saved ordered grids.
+
+The preparation route depends on the task rather than on one universal plan:
+
+| Task | Input | Prepared object | Task-owned scratch |
+|---|---|---|---|
+| PI dynamics and stationary/spectral solves | `PIModel` | `CompiledPIModel` / `LiouvillianPlan` | `LiouvillianWorkspace` plus the selected integrator or Krylov workspace |
+| Fixed geometry with changing scalar rates | `PIModel` prototype | `CompiledPIModelFamily` then `SpecializedPIModel` | one Liouvillian/solver workspace per worker |
+| Certified diagonal dynamics | invariant `PIModel` | `PopulationPlan` | `PopulationWorkspace` |
+| Periodic dynamics | periodic Liouvillian source | `FloquetMap` | `FloquetWorkspace` or `FloquetBatchWorkspace` |
+| Finite-memory bath | PI source and `HEOMBath`s | `HEOMPlan` | `HEOMWorkspace` / `HEOMEvolutionWorkspace` |
+| Quantum regression | autonomous source and insertions | `CorrelationPlan` | `CorrelationWorkspace` |
+| Parameter continuation | parameter recipe or compiled family | `ParameterScanPlan` | `ParameterScanWorkspace` |
+
+All prepared source wrappers participate in one private linear-operator trait
+protocol. This is an implementation boundary for maintainers, not another
+public abstraction users must learn.
 
 When only observables are needed, replace the first call by
 
@@ -333,7 +364,14 @@ efficient reuse.
 
 `compile(...; backend=:auto, memory_budget=...)` keeps driven models
 matrix-free and uses a conservative sparse-storage bound for autonomous
-models. Inspect `prepared.estimates`; the choice is never hidden.
+models. Explicit sparse compilation and `liouvillian(...;
+representation=:sparse)` use the same 512 MiB default guard and reject a
+conservative live-assembly peak before allocating the matrix. Scalar-rate
+families additionally support `specialize(...; backend=:auto,
+memory_budget=...)`; their precomputed metadata lets repeated specializations
+make this decision without rebuilding or re-estimating Schur geometry. Pass
+`memory_budget=Inf` only to opt out explicitly. Inspect `prepared.estimates`;
+the choice and budget status are never hidden.
 
 Additional estimates are available through:
 
@@ -368,9 +406,72 @@ For a `PIModel` or `CompiledPIModel`, `recommend_solver` includes one-body
 geometry only when its terms require that lowering. Bare bases, states,
 operators, and lowered plans lack term provenance, so they retain the
 conservative allowance and report
-`geometry_requirement=:conservative_unknown`. The result includes these
-geometry and solver-vector contributions in `estimated_peak_bytes` and
-reports whether that bound fits the requested memory budget.
+`geometry_requirement=:conservative_unknown`. The report separates
+`resources.setup`, `resources.retained`, `resources.solve`, and
+`resources.output`, then takes the maximum live setup/solve phase instead of
+adding temporaries that do not coexist. Each component states whether its
+bytes are measured (`:actual`), structurally bounded (`:upper_bound`), modeled
+(`:estimate`), or unavailable (`:unknown`). Inspect `budget_status` and
+`safe_to_run`: the latter remains `missing` when an estimate is informative but
+cannot certify a fit.
+
+Operation-specific accounting matters. A direct stationary solve includes a
+bordered sparse factorization bound, a dense spectrum includes matrix copies
+and eigensolver work arrays, iterative routes include their Krylov basis, and
+dynamics includes saved states and streamed scalar series. For example:
+
+```julia
+advice = recommend_solver(
+    model;
+    task=:dynamics,
+    samples=1001,
+    saved_states=0,
+    observable_series=2,
+    memory_budget=2^30,
+)
+
+advice.resources.output
+advice.budget_status
+```
+
+The coordinate type is inferred from the supplied model or prepared source.
+Dense compatibility guards conservatively reserve storage at no less than
+`ComplexF64` precision. For a standalone dynamics estimate with mixed precisions, pass
+`observable_type` and `time_type`; the high-level `solve_dynamics` command
+infers both from the actual observables and saved-time vector.
+
+High-level `stationary_state`, `liouvillian_spectrum`, and `solve_dynamics`
+use the same 512 MiB default preflight. Automatic stationary/spectral routes
+switch to matrix-free Krylov when the direct/dense candidate exceeds the
+budget, and then check the selected Krylov route itself. An explicit
+factorizing route that exceeds the budget raises before materialization. Pass
+`memory_budget=Inf` only as an intentional opt-out after checking available
+RAM.
+
+The same contract covers the other user-facing routes that can otherwise hide
+quadratic or history-sized output:
+
+- complete Liouvillian and Floquet eigendecompositions, dense Floquet
+  propagators, and dense Floquet fixed-point solves check operation-specific
+  multi-array peak estimates;
+- selected Liouvillian/Floquet and response calculations check their actual
+  Arnoldi, GMRES, recycled, or exponential-action workspace capacity,
+  including a supplied reusable workspace;
+- response `method=:auto` uses a dense matrix only when its factorization fits,
+  then verifies the selected Krylov alternative as well;
+- `stroboscopic_evolution` and density-valued, weak-PI, diffusive, and
+  composite trajectory histories check their requested saved-coordinate lower
+  bound. Predictable retained observable-statistics arrays and diffusive
+  measurement/innovation records are included. Use final-state or
+  observable-only streaming APIs when saved states are the bottleneck;
+- `pseudospectral_abscissa` additionally limits the Cartesian grid point count
+  through `max_grid_points`, because bounded workspace alone does not bound
+  the number of repeated linear solves.
+
+These checks never reduce `nev`, discard output times, lower precision, or
+declare a nonconverged iterative result acceptable. An insufficient budget
+raises with a matrix-free/streaming alternative instead of silently changing
+the requested numerical problem.
 
 The estimates distinguish retained storage from temporary setup allocations.
 Always benchmark representative values of `N`, `d`, body order, and sector

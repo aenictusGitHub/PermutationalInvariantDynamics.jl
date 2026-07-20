@@ -51,6 +51,9 @@ end
     plan = MeanFieldPlan(model; limit=:finite)
     direct_plan = MeanFieldPlan(4, 2, terms; limit=:finite)
     workspace = MeanFieldWorkspace(plan, sigma)
+    @test sum(length,(workspace.stage,workspace.k1,workspace.k2,
+                      workspace.k3,workspace.k4))==3length(sigma)
+    @test isempty(workspace.k3)&&isempty(workspace.k4)
     du = similar(sigma)
     meanfield_rhs!(du, plan, sigma, 0.0, nothing, workspace)
     reference = _mf_pi_product_rhs(model, sigma)
@@ -112,6 +115,10 @@ end
     work32 = MeanFieldWorkspace(plan32, sigma32)
     @test_throws ArgumentError meanfield_rhs!(similar(sigma), plan32, sigma,
                                                0.0, nothing, work32)
+    evolved32=similar(sigma32)
+    meanfield_evolve!(evolved32,plan32,sigma32,
+        (Float32(0),Float32(0.01));steps=1,workspace=work32)
+    @test eltype(evolved32)===ComplexF32
 
     driven32 = MeanFieldPlan(2, 2,
         [LocalJump(ComplexF32.(sm); rate=(t,p)->1.0f0)])
@@ -127,6 +134,11 @@ end
     sm_big = Complex{BigFloat}.(sm)
     plan_big = MeanFieldPlan(3, 2, [LocalJump(sm_big; rate=big"0.2")])
     @test eltype(meanfield_rhs(plan_big, sigma_big)) == Complex{BigFloat}
+    evolved_big=similar(sigma_big)
+    meanfield_evolve!(evolved_big,plan_big,sigma_big,
+        (big"0",big"0.01");steps=1,
+        workspace=MeanFieldWorkspace(plan_big,sigma_big))
+    @test eltype(evolved_big)===Complex{BigFloat}
 end
 
 @testset "collective p-body mean-field overlap closure" begin
@@ -253,6 +265,13 @@ end
     meanfield_evolve!(destination, autonomous, sigma0, (0.0, tf);
                       steps=800, workspace=work)
     @test destination ≈ exact atol=3e-11 rtol=3e-11
+    meanfield_evolve!(destination,autonomous,sigma0,(0.0,0.001);
+                      steps=1,workspace=work)
+    @test (@allocated meanfield_evolve!(
+        destination,autonomous,sigma0,(0.0,0.001);
+        steps=1,workspace=work))<=4096
+    @test_throws ArgumentError meanfield_evolve!(
+        work.stage,autonomous,sigma0,(0.0,0.01);steps=1,workspace=work)
     @test_throws ArgumentError meanfield_evolve!(
         Matrix{Complex{BigFloat}}(sigma0), autonomous, sigma0, (0.0, tf);
         steps=2, workspace=work)

@@ -27,12 +27,90 @@ plan = ParameterScanPlan(0.05:0.05:0.5, builder;
 result = parameter_scan(plan)
 ```
 
+When only scalar rates vary, compile the fixed representation geometry once:
+
+```julia
+prototype = builder(0.05)
+family = compile_family(prototype)
+
+family_plan = ParameterScanPlan(0.05:0.05:0.5, family;
+    rate_builder=pump -> (1.0, pump),
+    algorithm=RecycledGMRESAlgorithm(
+        krylovdim=30, recycle_dim=8),
+    continuation=true)
+
+family_result = parameter_scan(family_plan)
+```
+
+`rate_builder` follows `family.rate_indices` order. Each point binds its rates
+with `specialize`; immutable Schur geometry is shared, while each task owns
+its operator compatibility workspace and solver scratch.
+
 The builder may accept either `(parameter)` or `(parameter, index)`. A second
 constructor accepts `(parameters, prototype, remaker)` for code organized
 around an immutable prototype. In both cases the callable must return a fresh
-`PIModel` or an already `CompiledPIModel`. Compilation is performed once per
+`PIModel`, an already `CompiledPIModel`, or a `SpecializedPIModel`.
+Ordinary models are compiled once per
 parameter when necessary: prepared kernel coefficients may depend on that
-parameter and therefore cannot in general be shared safely.
+parameter and therefore cannot in general be shared safely. Use
+`compile_family` only under its stricter fixed-operator, scalar-rate contract.
+
+## Resource preflight and materialization guard
+
+`ParameterScanPlan` has a 512 MiB `memory_budget` by default. Before allocating
+the Krylov/Arnoldi workspace at each point, the scan records a conservative
+resource report in `point.diagnostics.resources`. Its known peak includes:
+
+- every active compiled operator and task-owned solver workspace;
+- transient selected Ritz vectors and continuation copies;
+- one live output per worker;
+- all outputs requested by `save_outputs=true`; and
+- the final restart state or Ritz seed.
+
+For threaded scans the active per-worker terms are multiplied by the bounded
+worker-pool size; immutable family geometry is counted once in the process.
+Distributed scans apply the budget independently on every worker process. The
+report exposes `known_peak_bytes`, `known_budget_fits`,
+`budget_status`, and the component bounds. A model builder and the value
+returned by an arbitrary `diagnostic` can allocate or retain unbounded user
+objects, so they appear in `unknown_components`; consequently
+`safe_to_run` remains `missing` even when all known structural bounds fit.
+
+The same budget is reserved before compiling a point. An explicit sparse
+backend whose conservative live assembly bound does not fit is rejected before
+the sparse PI-coordinate matrix is allocated. A family specialization applies
+the same rule without recomputing its shared Schur geometry estimate. A
+builder that constructs and returns an already compiled model has necessarily
+allocated it before the scan sees it; construct such an object once outside
+the builder, or return a `PIModel`/use `compile_family`, when pre-allocation
+guarding is required.
+
+`algorithm=:auto` is budget aware at the aggregate scan level. Small steady
+problems prefer the direct route and small complete spectra prefer dense
+diagonalization only when their full point peak fits; otherwise the scan uses
+GMRES or ordinary Arnoldi. An explicitly requested direct or dense algorithm
+still raises instead of changing methods. Output accounting follows the
+solver route: Float32 matrix-free results retain 8-byte `ComplexF32`
+coordinates, while factorizing steady-state and dense-spectrum guards
+conservatively reserve 16-byte `ComplexF64` output, continuation-copy, and
+saved-history storage.
+
+For a large scan, stream reduced diagnostics instead of density operators:
+
+```julia
+excited_population = ComplexF64[0 0; 0 1]
+safe_plan = ParameterScanPlan(parameters, builder;
+    compile_options=(backend=:matrixfree,),
+    memory_budget=2 * 1024^3,
+    save_outputs=false,
+    diagnostic=(rho, parameter) ->
+        (parameter=parameter,
+         excitation=collective_expectation(rho, excited_population)))
+```
+
+Reduce `krylovdim`, the number of threaded workers, retained eigenvectors, or
+saved outputs when the known peak exceeds the budget. `memory_budget=Inf`
+disables the guard explicitly; it is not an automatic fallback.
 
 `ParameterScanPlan` contains no numerical scratch. A
 `ParameterScanWorkspace` owns the previous continuation seed and compatible
@@ -45,10 +123,19 @@ validated checkpoint seed explicitly.
 ## Continuation and compatibility
 
 Serial steady-state scans pass the preceding successful state to Krylov GMRES
-or shift-invert. Spectral scans use a deterministic combination of the
-previous selected Ritz vectors. Combining the vectors avoids an immediate
-one-dimensional Arnoldi breakdown that would occur if its seed were an exact
-single eigenvector.
+or shift-invert. `RecycledGMRESAlgorithm` additionally retains a bounded
+near-zero Ritz space in its task-owned workspace. At every point it recomputes
+the images of those directions under the new Liouvillian and still validates
+the complete unpreconditioned residual.
+
+Harmonic-Arnoldi spectral scans retain the selected slow subspace as a thick
+matrix seed. Block-Arnoldi scans retain up to `block_size` selected Ritz
+vectors and pass them back as the next block seed. Other iterative spectral
+methods use a deterministic combination of the previous selected Ritz
+vectors, avoiding a one-dimensional Arnoldi breakdown on a single exact
+eigenvector. The preferred spellings are `:arnoldi`, `:block_arnoldi`,
+`:harmonic`, `:iram`, and `:jd`; retained aliases are normalized before
+workspace sizing and resource preflight.
 
 Continuation is used only when all of the following match:
 
@@ -62,10 +149,10 @@ Solver storage is independently reused when its task, dimension, scalar type,
 and Krylov size match. A change in any of these properties rebuilds the
 workspace instead of converting or truncating it.
 
-This continuation reuses an initial state/vector and compatible ordinary
-GMRES or Arnoldi arrays. It does not retain a GCRO invariant subspace. Use the
-lower-level [`RecycledGMRESWorkspace`](@ref) explicitly when subspace recycling
-between custom linear systems is the intended algorithm.
+Ordinary `GMRESAlgorithm` continues to reuse only the initial state and
+compatible arrays. Select `RecycledGMRESAlgorithm` for true GCRO-style
+subspace recycling, or use [`RecycledGMRESWorkspace`](@ref) directly for
+custom linear systems.
 
 ## Streaming and restart
 
@@ -177,20 +264,23 @@ retain eigenvectors:
 ```julia
 plan = ParameterScanPlan(parameters, builder;
     task=:spectrum,
-    algorithm=:iram,
+    algorithm=:block_arnoldi,
     spectrum_target=:largest_real,
     nev=8,
-    solver_options=(krylovdim=48, maxrestarts=20),
+    solver_options=(krylovdim=48, block_size=4, maxrestarts=20),
     save_vectors=false)
 ```
 
 The continuation seed is retained even when the returned spectra omit their
-vectors. Dense spectra accept the same scan interface but do not claim a warm
-start or Krylov-workspace reuse.
+vectors. Block-Arnoldi resource estimates include the block workspace and
+bounded restart matrix; changing `block_size`, dimension, or scalar type
+rebuilds that task-owned scratch. Dense spectra accept the same scan interface
+but do not claim a warm start or Krylov-workspace reuse.
 
-For steady-state scans with `GMRESAlgorithm`, its `krylovdim` field is the
-single source of workspace sizing. Repeating `krylovdim` in `solver_options`
-is rejected instead of silently selecting one value.
+For steady-state scans with `GMRESAlgorithm` or `RecycledGMRESAlgorithm`, the
+algorithm fields are the single source of workspace sizing. Repeating
+`krylovdim` or `recycle_dim` in `solver_options` is rejected instead of
+silently selecting one value.
 
 ## Dependency-free rows and columns
 

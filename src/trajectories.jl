@@ -51,6 +51,48 @@ function Base.show(io::IO,result::TrajectoryEnsembleResult)
     print(io,"TrajectoryEnsembleResult($(result.trajectory_count) trajectories, $stored, $(length(result.times)) sampling times)")
 end
 
+"""
+    TrajectorySteadyStateResult
+
+Detailed result returned by [`trajectory_steady_state`](@ref) or
+[`weak_pi_trajectory_steady_state`](@ref) when `return_info=true`. `state` is
+the unmodified Monte Carlo average of the post-settling path means.
+`sample_spread` is the square root of their unbiased sample variance in
+Hilbert--Schmidt norm, and `standard_error` is the corresponding
+Hilbert--Schmidt standard-error norm.
+The PI coefficient basis is orthonormal, so these quantities are evaluated
+without reconstructing the full Hilbert space.
+
+`residual`, `relative_residual`, and `trace_error` diagnose the returned
+average; they are reports, not convergence certificates. When named
+Hermitian `observables` were requested, that field contains statistics across
+the same independent path means. Samples taken along one path are averaged
+before any uncertainty is estimated and are therefore never counted as
+independent trajectories. A weak-PI result requested with `batch_size`
+retains an additional [`WeakPIBatchMeansDiagnostics`](@ref) in
+`metadata.batch_means`; the primary fields keep their independent-path
+meaning.
+"""
+struct TrajectorySteadyStateResult{T<:AbstractFloat,S<:PIState,O,M}
+    state::S
+    trajectory_count::Int
+    samples_per_trajectory::Int
+    sampling_times::Vector{T}
+    sample_spread::T
+    standard_error::T
+    residual::T
+    relative_residual::T
+    trace_error::T
+    observables::O
+    metadata::M
+end
+
+function Base.show(io::IO,result::TrajectorySteadyStateResult)
+    print(io,"TrajectorySteadyStateResult($(result.trajectory_count) trajectories x ",
+          "$(result.samples_per_trajectory) samples, residual=$(result.residual), ",
+          "HS standard error=$(result.standard_error))")
+end
+
 function _named_observables(observables)
     observables isa NamedTuple&&return collect(pairs(observables))
     observables isa AbstractDict&&return collect(pairs(observables))
@@ -188,6 +230,117 @@ function _observable_statistics(acc::_OnlineObservableAccumulator{R},ops,times,
     (;times=copy(times),trajectories=n,observables=results)
 end
 
+# Streaming state reduction used by the trajectory steady-state estimator.
+# The first requested output is the initial state and is deliberately skipped;
+# every later output belongs to the post-settling sampling window.  A path
+# retains one running mean rather than one PIState per requested time.
+mutable struct _TrajectoryStateSampler{V}
+    mean::V
+    count::Int
+    first_output_index::Int
+end
+
+function _TrajectoryStateSampler(prototype::AbstractVector;
+                                 first_output_index::Integer=2)
+    first_output_index>0||throw(ArgumentError(
+        "first trajectory sampling index must be positive"))
+    _TrajectoryStateSampler(similar(prototype),0,Int(first_output_index))
+end
+
+function _reset_trajectory_state_sampler!(sampler::_TrajectoryStateSampler)
+    fill!(sampler.mean,zero(eltype(sampler.mean)))
+    sampler.count=0
+    sampler
+end
+
+function _record_trajectory_state!(sampler::_TrajectoryStateSampler,x,
+                                   output_index::Integer)
+    output_index<sampler.first_output_index&&return sampler
+    sampler.count+=1
+    R=_real_float_type(eltype(sampler.mean))
+    count=_checked_statistics_count(R,sampler.count,"trajectory time sample")
+    @inbounds for index in eachindex(sampler.mean,x)
+        sampler.mean[index]+=(x[index]-sampler.mean[index])/count
+    end
+    sampler
+end
+
+mutable struct _OnlineStateAccumulator{R<:AbstractFloat,V}
+    count::Int
+    mean::V
+    m2::R
+end
+
+function _OnlineStateAccumulator(prototype::AbstractVector)
+    R=_real_float_type(eltype(prototype))
+    _OnlineStateAccumulator(0,similar(prototype),zero(R))
+end
+
+function _accumulate_state!(acc::_OnlineStateAccumulator{R},x) where R
+    acc.count+=1
+    count=_checked_statistics_count(R,acc.count,"trajectory")
+    if acc.count==1
+        copyto!(acc.mean,x)
+        return acc
+    end
+    previous=count-one(R)
+    factor=previous/count
+    distance2=zero(R)
+    @inbounds for index in eachindex(acc.mean,x)
+        delta=x[index]-acc.mean[index]
+        distance2+=abs2(delta)
+        acc.mean[index]+=delta/count
+    end
+    acc.m2+=factor*distance2
+    acc
+end
+
+function _merge_states!(left::_OnlineStateAccumulator{R},
+                        right::_OnlineStateAccumulator{R}) where R
+    right.count==0&&return left
+    if left.count==0
+        left.count=right.count
+        copyto!(left.mean,right.mean)
+        left.m2=right.m2
+        return left
+    end
+    total=left.count+right.count
+    left_count=_checked_statistics_count(R,left.count,"trajectory")
+    right_count=_checked_statistics_count(R,right.count,"trajectory")
+    total_count=_checked_statistics_count(R,total,"trajectory")
+    distance2=zero(R)
+    @inbounds for index in eachindex(left.mean,right.mean)
+        delta=right.mean[index]-left.mean[index]
+        distance2+=abs2(delta)
+        left.mean[index]+=delta*right_count/total_count
+    end
+    left.m2+=right.m2+distance2*left_count*right_count/total_count
+    left.count=total
+    left
+end
+
+function _steady_observable_statistics(acc::_OnlineObservableAccumulator{R},
+                                       ops,confidence::Real) where R
+    0<confidence<1||throw(ArgumentError("confidence must lie in (0,1)"))
+    n=acc.count
+    n>1||throw(ArgumentError(
+        "at least two independent paths are required for observable uncertainty"))
+    z=R(_normal_quantile((1+confidence)/2))
+    denominator=_checked_statistics_count(R,n,"observable")
+    variance_denominator=_checked_statistics_count(R,n-1,"observable")
+    results=Dict{Any,Any}()
+    for observable_index in eachindex(ops)
+        mean=acc.mean[observable_index,1]
+        variance=acc.m2[observable_index,1]/variance_denominator
+        standard_error=sqrt(variance/denominator)
+        half_width=z*standard_error
+        results[first(ops[observable_index])]=(
+            ;mean,variance,standard_error,confidence,
+            lower=mean-half_width,upper=mean+half_width)
+    end
+    (;trajectories=n,observables=results)
+end
+
 mutable struct _OnlineJumpAccumulator{R<:AbstractFloat}
     count::Int
     totals::Vector{Int}
@@ -314,19 +467,25 @@ struct TrajectoryPlan{M,L,H,J,W}
     trace_weights::W
 end
 
+isautonomous(plan::TrajectoryPlan)=isautonomous(plan.liouvillian)
+
 function _trajectory_plan(model::PIModel,liouvillian_plan::LiouvillianPlan)
     all(term_has_fixed_operator,model.terms)||throw(ArgumentError(
         "trajectory kernels require fixed operators; scalar rates may depend on time"))
     kernels=liouvillian_plan.kernels
     kernels===nothing&&throw(ArgumentError(
         "trajectory kernels require terms that lower to prepared PI kernels"))
-    supported=Union{HamiltonianPIKernel,DissipatorPIKernel,LocalJumpPIKernel}
+    supported=Union{HamiltonianPIKernel,DissipatorPIKernel,LocalJumpPIKernel,
+                    FactorizedLocalJumpPIKernel,
+                    FactorizedLocalPBodyJumpPIKernel}
     all(kernel->kernel isa supported,kernels)||throw(ArgumentError(
         "trajectory kernels require Hamiltonian, collective/direct-jump, or local-jump lowerings"))
     # Tuple filtering preserves the statically known kernel count and types;
     # a generator comprehension widens these to an unknown-length Vararg.
     hamiltonians=filter(kernel->kernel isa HamiltonianPIKernel,kernels)
-    jumps=filter(kernel->kernel isa Union{DissipatorPIKernel,LocalJumpPIKernel},
+    jumps=filter(kernel->kernel isa Union{DissipatorPIKernel,LocalJumpPIKernel,
+                 FactorizedLocalJumpPIKernel,
+                 FactorizedLocalPBodyJumpPIKernel},
                  kernels)
     R=_real_float_type(eltype(liouvillian_plan.tracevec))
     weights=Vector{R}(undef,length(model.basis.sectors))
@@ -356,10 +515,16 @@ function TrajectoryPlan(model::PIModel;T=nothing)
     end
     T===nothing||throw(ArgumentError(
         "T is only used to select the precision of an empty trajectory model; nonempty models infer it from their terms"))
-    _trajectory_plan(model,LiouvillianPlan(model))
+    _trajectory_plan(model,_term_resolved_liouvillian_plan(model))
 end
 function TrajectoryPlan(compiled::CompiledPIModel;T=nothing)
-    T===nothing&&return _trajectory_plan(compiled.model,compiled.plan)
+    if T===nothing
+        kernels=compiled.plan.kernels
+        resolved=kernels!==nothing&&
+            any(kernel->kernel isa FusedStaticPIKernel,kernels) ?
+                _term_resolved_liouvillian_plan(compiled.model) : compiled.plan
+        return _trajectory_plan(compiled.model,resolved)
+    end
     isempty(compiled.model.terms)||throw(ArgumentError(
         "T is only used to select the precision of an empty trajectory model; nonempty models infer it from their terms"))
     T isa Type&&T<:AbstractFloat||throw(ArgumentError(
@@ -381,27 +546,41 @@ end
 _trajectory_plan_for_state(plan::TrajectoryPlan,rho::PIState)=plan
 
 """
-    TrajectoryWorkspace(plan, rho)
-    TrajectoryWorkspace(model, rho)
-    TrajectoryWorkspace(compiled, rho)
+    TrajectoryWorkspace(plan, rho; mode=:full)
+    TrajectoryWorkspace(model, rho; mode=:full)
+    TrajectoryWorkspace(compiled, rho; mode=:full)
 
 Preallocated mutable stage vectors and Schur-block scratch for one PI quantum
 trajectory at a time. Reuse it sequentially. Concurrent paths must have
 distinct workspaces, which may all refer to the same immutable
 [`TrajectoryPlan`](@ref).
+
+The default `mode=:full` supports both fixed-step RK4 and adaptive
+event-driven Dormand--Prince paths. Fixed-step RK4 uses three full-vector
+registers; `mode=:fixed` additionally omits `k3`, `k4`, and the six
+Dormand--Prince stage, trial, embedded, and event-root vectors. A fixed-only
+workspace rejects `algorithm=:event` instead of allocating the omitted
+storage lazily.
 """
-struct TrajectoryWorkspace{V,R,P,W}
+struct TrajectoryWorkspace{V,R,P,W,E}
     tmp::V;k1::V;k2::V;k3::V;k4::V;k5::V;k6::V;k7::V
     trial::V;embedded::V;start::V
     current::V
     channel_gain::V
     intensities::Vector{R}
     jump_scales::Vector{R}
+    hazard_stages::Vector{R}
+    dense_hazard::Vector{R}
     plan::P
     liouvillian_work::W
+    effective_qblocks::E
+    mode::Symbol
 end
 
-function TrajectoryWorkspace(plan::TrajectoryPlan,rho::PIState)
+function TrajectoryWorkspace(plan::TrajectoryPlan,rho::PIState;
+                             mode::Symbol=:full)
+    mode in (:full,:fixed)||throw(ArgumentError(
+        "trajectory workspace mode must be :full or :fixed"))
     rho.basis===plan.model.basis||throw(ArgumentError(
         "state and trajectory plan use incompatible PI bases"))
     _check_liouvillian_source_precision(plan.liouvillian,eltype(rho.data),
@@ -410,26 +589,41 @@ function TrajectoryWorkspace(plan::TrajectoryPlan,rho::PIState)
         throw(ArgumentError("trajectory state scalar type $(eltype(rho.data)) cannot represent plan scalar type $(plan.liouvillian.Ttype)"))
     v=similar(rho.data)
     R=_real_float_type(eltype(v));njumps=length(plan.jumps)
-    TrajectoryWorkspace(similar(v),similar(v),similar(v),similar(v),similar(v),
-                        similar(v),similar(v),similar(v),similar(v),similar(v),
-                        similar(v),v,similar(v),zeros(R,njumps),
-                        zeros(R,njumps),plan,
-                        LiouvillianWorkspace(plan.liouvillian))
+    adaptive_vector()=mode===:full ? similar(v) : similar(v,0)
+    full_rk4_vector()=mode===:full ? similar(v) : similar(v,0)
+    effective_qblocks=isempty(plan.jumps) ? Matrix{eltype(v)}[] :
+        [zeros(eltype(v),length(plan.model.basis.patterns[s]),
+            length(plan.model.basis.patterns[s]))
+         for s in eachindex(plan.model.basis.sectors)]
+    TrajectoryWorkspace(similar(v),similar(v),similar(v),full_rk4_vector(),
+                        full_rk4_vector(),
+                        adaptive_vector(),adaptive_vector(),adaptive_vector(),
+                        adaptive_vector(),adaptive_vector(),adaptive_vector(),
+                        v,similar(v),zeros(R,njumps),
+                        zeros(R,njumps),zeros(R,7),zeros(R,4),plan,
+                        LiouvillianWorkspace(plan.liouvillian),
+                        effective_qblocks,mode)
 end
-TrajectoryWorkspace(model::PIModel,rho::PIState)=
-    TrajectoryWorkspace(_trajectory_plan_for_state(model,rho),rho)
-TrajectoryWorkspace(compiled::CompiledPIModel,rho::PIState)=
-    TrajectoryWorkspace(_trajectory_plan_for_state(compiled,rho),rho)
+TrajectoryWorkspace(model::PIModel,rho::PIState;kwargs...)=
+    TrajectoryWorkspace(_trajectory_plan_for_state(model,rho),rho;kwargs...)
+TrajectoryWorkspace(compiled::CompiledPIModel,rho::PIState;kwargs...)=
+    TrajectoryWorkspace(_trajectory_plan_for_state(compiled,rho),rho;kwargs...)
 
 """
-    TrajectoryBatchWorkspace(plan, rho; workers=Threads.nthreads())
-    TrajectoryBatchWorkspace(model, rho; workers=Threads.nthreads())
-    TrajectoryBatchWorkspace(compiled, rho; workers=Threads.nthreads())
+    TrajectoryBatchWorkspace(plan, rho;
+                             workers=Threads.nthreads(), mode=:full)
+    TrajectoryBatchWorkspace(model, rho;
+                             workers=Threads.nthreads(), mode=:full)
+    TrajectoryBatchWorkspace(compiled, rho;
+                             workers=Threads.nthreads(), mode=:full)
 
-Reusable worker pool for [`quantum_trajectories`](@ref). The immutable
-trajectory plan is stored once, while every worker owns independent integrator
-scratch and a reusable random-number generator. A batch workspace may be
-reused sequentially but must not be used by concurrent ensemble calls.
+Reusable worker pool for [`quantum_trajectories`](@ref) and
+[`trajectory_steady_state`](@ref). The immutable trajectory plan is stored
+once, while every worker owns independent integrator scratch and a reusable
+random-number generator. A batch workspace may be reused sequentially but
+must not be used by concurrent ensemble or estimator calls.
+`mode` is forwarded to every worker; use `mode=:fixed` only when all calls
+will use the fixed-step algorithm.
 """
 struct TrajectoryBatchWorkspace{P,W,R,S}
     plan::P
@@ -439,9 +633,10 @@ struct TrajectoryBatchWorkspace{P,W,R,S}
 end
 
 function TrajectoryBatchWorkspace(plan::TrajectoryPlan,rho::PIState;
-                                  workers::Integer=Threads.nthreads())
+                                  workers::Integer=Threads.nthreads(),
+                                  mode::Symbol=:full)
     workers>0||throw(ArgumentError("worker count must be positive"))
-    workspaces=[TrajectoryWorkspace(plan,rho) for _ in 1:Int(workers)]
+    workspaces=[TrajectoryWorkspace(plan,rho;mode) for _ in 1:Int(workers)]
     rngs=[MersenneTwister(0) for _ in 1:Int(workers)]
     TrajectoryBatchWorkspace(plan,workspaces,rngs,UInt64[])
 end
@@ -485,6 +680,20 @@ end
 function _apply_gain!(y,x,k::LocalJumpPIKernel,b,scale,work)
     fill!(y,zero(eltype(y)))
     @inbounds for q in eachindex(k.gain.V);y[k.gain.I[q]]+=scale*k.gain.V[q]*x[k.gain.J[q]];end
+    y
+end
+function _apply_gain!(y,x,k::FactorizedLocalJumpPIKernel,b,scale,work)
+    fill!(y,zero(eltype(y)))
+    _ensure_batch_capacity!(work.batch,1)
+    _apply_factorized_onebody_gain_batch!(reshape(y,:,1),reshape(x,:,1),
+        k.branches,k.contractions,b,scale,work.batch,1)
+    y
+end
+function _apply_gain!(y,x,k::FactorizedLocalPBodyJumpPIKernel,b,scale,work)
+    fill!(y,zero(eltype(y)))
+    _ensure_batch_capacity!(work.batch,1)
+    _apply_factorized_pbody_gain_batch!(reshape(y,:,1),reshape(x,:,1),
+        k.groups,k.contractions,k.pair_scales,b,scale,work.batch)
     y
 end
 
@@ -598,13 +807,90 @@ end
 end
 
 
+@inline _accumulate_effective_jump_blocks!(w,t,p,::Tuple{},index)=nothing
+@inline function _accumulate_effective_jump_blocks!(w,t,p,
+        jumps::Tuple{K,Vararg{Any}},index) where K
+    kernel=first(jumps);R=eltype(w.intensities)
+    scale=_trajectory_jump_scale(kernel,t,p,R)
+    w.jump_scales[index]=scale
+    if !iszero(scale)
+        @inbounds for sector in eachindex(w.effective_qblocks)
+            effective=w.effective_qblocks[sector]
+            qblock=kernel.qblocks[sector]
+            for block_index in eachindex(effective,qblock)
+                effective[block_index]+=scale*qblock[block_index]
+            end
+        end
+    end
+    _accumulate_effective_jump_blocks!(
+        w,t,p,Base.tail(jumps),index+1)
+end
+
+function _prepare_effective_jump_blocks!(w::TrajectoryWorkspace,t,p)
+    for block in w.effective_qblocks
+        fill!(block,zero(eltype(block)))
+    end
+    _accumulate_effective_jump_blocks!(w,t,p,w.plan.jumps,1)
+    w.effective_qblocks
+end
+
+function _effective_jump_intensity_from_blocks(w,x,b)
+    R=eltype(w.intensities);total=zero(R)
+    for sector in eachindex(b.sectors)
+        n=length(b.patterns[sector]);range=
+            b.offsets[sector]:b.offsets[sector+1]-1
+        X=reshape(view(x,range),n,n)
+        effective=w.effective_qblocks[sector]
+        sector_trace=zero(eltype(x))
+        @inbounds for column in 1:n,row in 1:n
+            sector_trace+=effective[row,column]*X[column,row]
+        end
+        total+=w.plan.trace_weights[sector]*real(sector_trace)
+    end
+    tolerance=_intensity_tolerance(R)
+    isfinite(total)||throw(ArgumentError(
+        "total jump intensity is nonfinite; use a wider scalar type or inspect the state and rates"))
+    total>=-tolerance||throw(ArgumentError(
+        "combined jump gain has negative trace $total"))
+    max(zero(R),total)
+end
+
+function _effective_jump_intensity!(w,x,b,t,p)
+    isempty(w.plan.jumps)&&return zero(eltype(w.intensities))
+    _prepare_effective_jump_blocks!(w,t,p)
+    _effective_jump_intensity_from_blocks(w,x,b)
+end
+
+function _apply_effective_jump_drift_and_intensity!(y,x,w,b,t,p)
+    isempty(w.plan.jumps)&&return zero(eltype(w.intensities))
+    _prepare_effective_jump_blocks!(w,t,p)
+    R=eltype(w.intensities);total=zero(R)
+    for sector in eachindex(b.sectors)
+        n=length(b.patterns[sector]);off=b.offsets[sector]
+        A,B,X=w.liouvillian_work.blocks[sector]
+        copyto!(X,1,x,off,n*n)
+        effective=w.effective_qblocks[sector]
+        mul!(A,effective,X)
+        total+=w.plan.trace_weights[sector]*real(tr(A))
+        mul!(B,X,effective)
+        @inbounds for index in eachindex(A)
+            y[off+index-1]-=(A[index]+B[index])/2
+        end
+    end
+    tolerance=_intensity_tolerance(R)
+    isfinite(total)||throw(ArgumentError(
+        "total jump intensity is nonfinite; use a wider scalar type or inspect the state and rates"))
+    total>=-tolerance||throw(ArgumentError(
+        "combined jump gain has negative trace $total"))
+    max(zero(R),total)
+end
+
+
 function _conditional_action_and_intensity!(y,x,w,b,t,p,tau)
     fill!(y,zero(eltype(y)))
     _apply_trajectory_hamiltonians!(y,x,w.plan.hamiltonians,b,t,p,
                                     w.liouvillian_work)
-    lambda=_apply_conditional_jumps!(y,x,w,b,t,p,w.plan.jumps,1)
-    isfinite(lambda)||throw(ArgumentError(
-        "total jump intensity is nonfinite; use a wider scalar type or inspect the state and rates"))
+    lambda=_apply_effective_jump_drift_and_intensity!(y,x,w,b,t,p)
     @. y=y+lambda*x
     lambda
 end
@@ -616,12 +902,103 @@ end
 
 function _conditional_rk4!(x,w,b,t,h,p,tau)
     _conditional_action!(w.k1,x,w,b,t,p,tau)
-    @. w.tmp=x+(h/2)*w.k1;_conditional_action!(w.k2,w.tmp,w,b,t+h/2,p,tau)
-    @. w.tmp=x+(h/2)*w.k2;_conditional_action!(w.k3,w.tmp,w,b,t+h/2,p,tau)
-    @. w.tmp=x+h*w.k3;_conditional_action!(w.k4,w.tmp,w,b,t+h,p,tau)
-    @. x=x+(h/6)*(w.k1+2w.k2+2w.k3+w.k4)
+    copyto!(w.k2,w.k1)
+    @. w.tmp=x+(h/2)*w.k1
+    _conditional_action!(w.k1,w.tmp,w,b,t+h/2,p,tau)
+    @. w.k2=w.k2+2w.k1
+    @. w.tmp=x+(h/2)*w.k1
+    _conditional_action!(w.k1,w.tmp,w,b,t+h/2,p,tau)
+    @. w.k2=w.k2+2w.k1
+    @. w.tmp=x+h*w.k1
+    _conditional_action!(w.k1,w.tmp,w,b,t+h,p,tau)
+    @. x=x+(h/6)*(w.k2+w.k1)
     z=dot(tau,x);R=_real_float_type(eltype(x))
     abs(z)>eps(R)||throw(ArgumentError("conditional state acquired zero trace"));x./=z;x
+end
+
+# Shampine's quartic continuous extension for the Dormand--Prince 5(4)
+# stages.  Event-root searches use these retained coefficients instead of
+# reintegrating a complete seven-stage trial at every bisection point.
+@inline function _dopri_dense_table(::Type{R}) where R<:AbstractFloat
+    (R(-8048581381)/R(2820520608),
+     R(8663915743)/R(2820520608),
+     R(-12715105075)/R(11282082432),
+     R(131558114200)/R(32700410799),
+     R(-68118460800)/R(10900136933),
+     R(87487479700)/R(32700410799),
+     R(-1754552775)/R(470086768),
+     R(14199869525)/R(1410260304),
+     R(-10690763975)/R(1880347072),
+     R(127303824393)/R(49829197408),
+     R(-318862633887)/R(49829197408),
+     R(701980252875)/R(199316789632),
+     R(-282668133)/R(205662961),
+     R(2019193451)/R(616988883),
+     R(-1453857185)/R(822651844),
+     R(40617522)/R(29380423),
+     R(-110615467)/R(29380423),
+     R(69997945)/R(29380423))
+end
+
+function _prepare_dopri_dense_output!(w)
+    R=eltype(w.hazard_stages)
+    c12,c13,c14,c32,c33,c34,c42,c43,c44,c52,c53,c54,
+        c62,c63,c64,c72,c73,c74=_dopri_dense_table(R)
+    l=w.hazard_stages;q=w.dense_hazard
+    q[1]=l[1]
+    q[2]=c12*l[1]+c32*l[3]+c42*l[4]+c52*l[5]+c62*l[6]+c72*l[7]
+    q[3]=c13*l[1]+c33*l[3]+c43*l[4]+c53*l[5]+c63*l[6]+c73*l[7]
+    q[4]=c14*l[1]+c34*l[3]+c44*l[4]+c54*l[5]+c64*l[6]+c74*l[7]
+    w
+end
+
+@inline function _dopri_dense_hazard(w,h,theta)
+    q=w.dense_hazard
+    h*theta*(q[1]+theta*(q[2]+theta*(q[3]+theta*q[4])))
+end
+
+function _dopri_dense_state!(destination,start,w,h,theta)
+    R=eltype(w.hazard_stages)
+    c12,c13,c14,c32,c33,c34,c42,c43,c44,c52,c53,c54,
+        c62,c63,c64,c72,c73,c74=_dopri_dense_table(R)
+    k1=w.k1;k3=w.k3;k4=w.k4;k5=w.k5;k6=w.k6;k7=w.k7
+    @inbounds @simd for index in eachindex(destination,start)
+        q1=k1[index]
+        q2=c12*k1[index]+c32*k3[index]+c42*k4[index]+
+            c52*k5[index]+c62*k6[index]+c72*k7[index]
+        q3=c13*k1[index]+c33*k3[index]+c43*k4[index]+
+            c53*k5[index]+c63*k6[index]+c73*k7[index]
+        q4=c14*k1[index]+c34*k3[index]+c44*k4[index]+
+            c54*k5[index]+c64*k6[index]+c74*k7[index]
+        destination[index]=start[index]+h*theta*(q1+
+            theta*(q2+theta*(q3+theta*q4)))
+    end
+    destination
+end
+
+function _dopri_dense_root(w,h,remaining,increment,time_tolerance)
+    R=typeof(h)
+    endpoint=_dopri_dense_hazard(w,h,one(R))
+    scale=max(one(R),abs(increment),abs(endpoint),
+        abs(h)*sum(abs,w.hazard_stages))
+    tolerance=R(256)*eps(R)*scale
+    isfinite(endpoint)&&abs(endpoint-increment)<=tolerance||return nothing
+    -tolerance<=remaining<=endpoint+tolerance||return nothing
+    lo=zero(R);hi=one(R);hazard_lo=zero(R);hazard_hi=endpoint
+    while h*(hi-lo)>time_tolerance
+        mid=(lo+hi)/2
+        (mid==lo||mid==hi)&&break
+        hazard_mid=_dopri_dense_hazard(w,h,mid)
+        isfinite(hazard_mid)&&
+            hazard_lo-tolerance<=hazard_mid<=hazard_hi+tolerance||
+            return nothing
+        if hazard_mid>=remaining
+            hi=mid;hazard_hi=hazard_mid
+        else
+            lo=mid;hazard_lo=hazard_mid
+        end
+    end
+    h*hi
 end
 
 # One Dormand--Prince 5(4) trial for the normalized conditional state together
@@ -646,6 +1023,10 @@ function _conditional_dopri_trial!(w,x,b,t,h,p,tau,abstol,reltol)
     @. w.trial=x+h*((35//384)*w.k1+(500//1113)*w.k3+
                     (125//192)*w.k4-(2187//6784)*w.k5+(11//84)*w.k6)
     l7=_conditional_action_and_intensity!(w.k7,w.trial,w,b,t+h,p,tau)
+    w.hazard_stages[1]=l1;w.hazard_stages[2]=l2
+    w.hazard_stages[3]=l3;w.hazard_stages[4]=l4
+    w.hazard_stages[5]=l5;w.hazard_stages[6]=l6
+    w.hazard_stages[7]=l7
     @. w.embedded=x+h*((5179//57600)*w.k1+(7571//16695)*w.k3+
                        (393//640)*w.k4-(92097//339200)*w.k5+
                        (187//2100)*w.k6+(1//40)*w.k7)
@@ -689,6 +1070,7 @@ function _event_driven_trajectory(plan,rho0,ts,w,rng,parameters,dt,
                                   abstol,reltol,dtmin,dtmax,event_time_tolerance;
                                   observable_ops=nothing,
                                   observable_values=nothing,
+                                  state_sampler=nothing,
                                   save_states::Bool=true,
                                   record_jumps::Bool=true)
     save_states&&!record_jumps&&throw(ArgumentError(
@@ -699,6 +1081,7 @@ function _event_driven_trajectory(plan,rho0,ts,w,rng,parameters,dt,
     save_states&&(states[1]=copy(rho0))
     observable_values===nothing||_record_observables!(
         observable_values,observable_ops,x,1)
+    state_sampler===nothing||_record_trajectory_state!(state_sampler,x,1)
     jt=record_jumps ? eltype(ts)[] : nothing
     jc=record_jumps ? Int[] : nothing;t=ts[1]
     R=typeof(dt)
@@ -738,17 +1121,21 @@ function _event_driven_trajectory(plan,rho0,ts,w,rng,parameters,dt,
             # A continuous event occurred inside the accepted step. Locate the
             # hazard root from the unchanged step-start state, then apply the
             # selected channel at that physical event time.
-            remaining=threshold-hazard;lo=zero(h);hi=h
-            time_tol=max(event_time_tolerance,R(8)*eps(t)*max(abs(t),one(t)))
-            for _ in 1:60
-                hi-lo<=time_tol&&break
-                mid=(lo+hi)/2
-                mid_increment,_=_conditional_dopri_trial!(w,w.start,b,t,mid,parameters,tau,abstol,reltol)
-                if mid_increment>=remaining;hi=mid;else;lo=mid;end
+            remaining=threshold-hazard
+            _prepare_dopri_dense_output!(w)
+            time_tol=max(event_time_tolerance,
+                R(8)*eps(max(abs(t),one(t))))
+            event_step=_dopri_dense_root(
+                w,h,remaining,increment,time_tol)
+            if event_step===nothing
+                h>minimum_step||throw(ErrorException(
+                    "Dormand--Prince dense hazard lost its event bracket above dtmin=$dtmin at t=$t"))
+                h=max(minimum_step,h/2)
+                continue
             end
-            event_step=hi
-            _conditional_dopri_trial!(w,w.start,b,t,event_step,parameters,tau,abstol,reltol)
-            copyto!(x,w.trial);z=dot(tau,x)
+            theta=event_step/h
+            _dopri_dense_state!(x,w.start,w,h,theta)
+            z=dot(tau,x)
             abs(z)>eps(R)||throw(ArgumentError("conditional state acquired zero trace"));x./=z
             t+=event_step
             rates=_channel_intensities!(w,x,b,t,parameters)
@@ -769,9 +1156,11 @@ function _event_driven_trajectory(plan,rho0,ts,w,rng,parameters,dt,
         save_states&&(states[output_index]=PIState(b,x))
         observable_values===nothing||_record_observables!(
             observable_values,observable_ops,x,output_index)
+        state_sampler===nothing||_record_trajectory_state!(
+            state_sampler,x,output_index)
     end
     save_states ? QuantumTrajectory(ts,states,jt,jc) :
-        (;jump_times=jt,jump_channels=jc)
+        record_jumps ? (;jump_times=jt,jump_channels=jc) : nothing
 end
 
 function _prepare_trajectory_arguments(times,::Type{R};dt::Real,
@@ -832,6 +1221,14 @@ function _check_trajectory_workspace(work::TrajectoryWorkspace,
     work
 end
 
+function _require_trajectory_workspace_mode(work::TrajectoryWorkspace,
+                                            algorithm::Symbol)
+    algorithm===:fixed||work.mode===:full||throw(ArgumentError(
+        "algorithm=:event requires TrajectoryWorkspace(mode=:full); " *
+        "the supplied fixed-only workspace omits adaptive stages"))
+    work
+end
+
 function _check_trajectory_batch_workspace(work::TrajectoryBatchWorkspace,
                                            source,rho::PIState)
     _trajectory_source_matches(work.plan,source)||throw(ArgumentError(
@@ -867,25 +1264,52 @@ function _validate_trajectory_initial_state(plan,rho0)
     nothing
 end
 
+function _trajectory_history_bytes(state_dimension::Integer,::Type{T},
+        time_count::Integer,path_count::Integer,::Type{RT}) where {T,RT}
+    entries=BigInt(state_dimension)*BigInt(time_count)*BigInt(path_count)
+    time_entries=BigInt(time_count)*BigInt(path_count)
+    _performance_entries_bytes(entries,T)+
+        _performance_entries_bytes(time_entries,RT)
+end
+
+function _guard_trajectory_history(label,state_dimension,::Type{T},times,
+        path_count,memory_budget;guidance) where T
+    estimate=_trajectory_history_bytes(state_dimension,T,length(times),
+        path_count,eltype(times))
+    _require_performance_budget(label,estimate,memory_budget;guidance)
+end
+
+function _trajectory_observable_statistics_bytes(nobservables::Integer,
+        ntimes::Integer,worker_count::Integer,::Type{R}) where R
+    # Per worker: one path buffer and Welford mean/M2. Final reporting retains
+    # mean, variance, standard error, and two confidence limits while the
+    # merged accumulator is still live.
+    entries=BigInt(nobservables)*BigInt(ntimes)*(3BigInt(worker_count)+5)
+    _performance_entries_bytes(entries,R)
+end
+
 function _quantum_trajectory_prepared(plan,rho0,ts,w,rng,options;
                                       observable_ops=nothing,
                                       observable_values=nothing,
+                                      state_sampler=nothing,
                                       save_states::Bool=true,
                                       record_jumps::Bool=true)
     save_states&&!record_jumps&&throw(ArgumentError(
         "saved trajectories require recorded jump histories"))
+    _require_trajectory_workspace_mode(w,options.algorithm)
     b=plan.model.basis;tau=plan.liouvillian.tracevec
     R=eltype(w.intensities)
     options.algorithm!==:fixed&&return _event_driven_trajectory(
         plan,rho0,ts,w,rng,options.parameters,options.dt,options.abstol,
         options.reltol,options.dtmin,options.dtmax,
         options.event_time_tolerance;observable_ops,observable_values,
-        save_states,record_jumps)
+        state_sampler,save_states,record_jumps)
     x=w.current;copyto!(x,rho0.data)
     states=save_states ? Vector{typeof(rho0)}(undef,length(ts)) : nothing
     save_states&&(states[1]=copy(rho0))
     observable_values===nothing||_record_observables!(
         observable_values,observable_ops,x,1)
+    state_sampler===nothing||_record_trajectory_state!(state_sampler,x,1)
     jt=record_jumps ? eltype(ts)[] : nothing
     jc=record_jumps ? Int[] : nothing;t=ts[1]
     for output_index in 2:length(ts)
@@ -893,19 +1317,25 @@ function _quantum_trajectory_prepared(plan,rho0,ts,w,rng,options;
         while t<target
             h,lands_on_target=_trajectory_step_to_target(
                 t,target,options.dt)
-            rates=_channel_intensities!(w,x,b,t,options.parameters)
-            lambda=_total_intensity(rates)
+            lambda=_effective_jump_intensity!(
+                w,x,b,t,options.parameters)
             if lambda*h>options.max_jump_probability
                 h=options.max_jump_probability/lambda
                 lands_on_target=false
             end
             _conditional_rk4!(x,w,b,t,h,options.parameters,tau)
             t=lands_on_target ? target : t+h
-            rates=_channel_intensities!(w,x,b,t,options.parameters)
-            lambda=_total_intensity(rates)
+            lambda=_effective_jump_intensity!(
+                w,x,b,t,options.parameters)
             jump_probability=-expm1(-lambda*h)
             if lambda>0&&rand(rng,typeof(jump_probability))<jump_probability
-                u=rand(rng,typeof(lambda))*lambda
+                rates=_channel_intensities!(w,x,b,t,options.parameters)
+                selected_total=_total_intensity(rates)
+                tolerance=_intensity_tolerance(typeof(lambda))*
+                    max(one(lambda),lambda,selected_total)
+                abs(selected_total-lambda)<=tolerance||throw(ArgumentError(
+                    "combined and channel-resolved jump intensities disagree at a selected event"))
+                u=rand(rng,typeof(selected_total))*selected_total
                 channel=_select_jump_channel(rates,u)
                 _apply_gain!(w.channel_gain,x,plan.jumps[channel],b,
                              w.jump_scales[channel],w.liouvillian_work)
@@ -921,9 +1351,11 @@ function _quantum_trajectory_prepared(plan,rho0,ts,w,rng,options;
         save_states&&(states[output_index]=PIState(b,x))
         observable_values===nothing||_record_observables!(
             observable_values,observable_ops,x,output_index)
+        state_sampler===nothing||_record_trajectory_state!(
+            state_sampler,x,output_index)
     end
     save_states ? QuantumTrajectory(ts,states,jt,jc) :
-        (;jump_times=jt,jump_channels=jc)
+        record_jumps ? (;jump_times=jt,jump_channels=jc) : nothing
 end
 
 """
@@ -939,16 +1371,27 @@ over particle labels and therefore generally produce mixed conditional PI
 states. The fixed step is automatically shortened so the total jump
 probability remains below `max_jump_probability`.
 
+All rate-weighted channel loss blocks are combined into one effective Schur
+operator per integration stage. The normalized no-jump drift therefore does
+not apply one matrix product per channel; individual channel intensities are
+evaluated only when an event must select its channel.
+
 Set `algorithm=:event` (aliases `:adaptive` and `:event_driven`) to integrate
 the normalized no-jump equation and its accumulated hazard with an embedded
 Dormand--Prince 5(4) method. Jump times are then continuous hazard roots,
-rather than endpoints of Bernoulli time steps. `dt` is the initial adaptive
+rather than endpoints of Bernoulli time steps. Root bisection evaluates the
+quartic continuous extension of the accepted stages, so it does not rerun a
+seven-stage trial at every candidate time. `dt` is the initial adaptive
 step and `dtmax` its upper bound; `abstol`, `reltol`, `dtmin`, and
 `event_time_tolerance` control the adaptive solve. A final step may be shorter
 than `dtmin` solely to land on a requested output time. Here `R` is the real
 floating precision of the prepared trajectory. Time grids and explicitly
 supplied controls must be representable in `R` without narrowing; default
 controls are constructed directly in `R`.
+
+`memory_budget` preflights the predictable saved state/time history before
+trajectory-plan or workspace construction. It is an output lower-bound guard;
+data-dependent jump records and reusable worker scratch remain additional.
 """
 function quantum_trajectory(source::Union{PIModel,CompiledPIModel,TrajectoryPlan},
                             rho0::PIState{R},times;
@@ -956,18 +1399,24 @@ function quantum_trajectory(source::Union{PIModel,CompiledPIModel,TrajectoryPlan
                             max_jump_probability=nothing,workspace=nothing,
                             algorithm::Symbol=:fixed,abstol=nothing,
                             reltol=nothing,dtmin=nothing,
-                            dtmax=nothing,event_time_tolerance=nothing) where {R<:AbstractFloat}
+                            dtmax=nothing,event_time_tolerance=nothing,
+                            memory_budget=_DEFAULT_HIGHLEVEL_MEMORY_BUDGET) where {R<:AbstractFloat}
+    ts,options=_prepare_trajectory_arguments(times,R;dt,parameters,
+        max_jump_probability,algorithm,abstol,reltol,dtmin,dtmax,
+        event_time_tolerance)
+    _guard_trajectory_history("quantum-trajectory state history",
+        length(rho0.data),eltype(rho0.data),ts,1,memory_budget;
+        guidance="Request fewer saved times for a long path.")
     if workspace===nothing
-        plan=_plan_for_source(source,rho0);w=TrajectoryWorkspace(plan,rho0)
+        plan=_plan_for_source(source,rho0)
+        mode=algorithm===:fixed ? :fixed : :full
+        w=TrajectoryWorkspace(plan,rho0;mode)
     else
         workspace isa TrajectoryWorkspace||throw(ArgumentError(
             "workspace must be a TrajectoryWorkspace"))
         w=_check_trajectory_workspace(workspace,source,rho0);plan=w.plan
     end
     _validate_trajectory_initial_state(plan,rho0)
-    ts,options=_prepare_trajectory_arguments(times,R;dt,parameters,
-        max_jump_probability,algorithm,abstol,reltol,dtmin,dtmax,
-        event_time_tolerance)
     _quantum_trajectory_prepared(plan,rho0,ts,w,rng,options)
 end
 
@@ -1001,6 +1450,10 @@ Welford accumulator are retained per active worker. Channel-resolved jump
 statistics are accumulated online by default; set `jump_statistics=false` to
 omit them. A state-free call requires at least one observable because the
 no-observable route preserves the legacy trajectory-vector return type.
+The default `memory_budget` rejects predictable saved state/time histories and
+retained observable-statistics arrays above 512 MiB before their allocation.
+It does not bound the data-dependent number of jump records; disable
+`jump_statistics` when those records are unnecessary.
 """
 function quantum_trajectories(source::Union{PIModel,CompiledPIModel,TrajectoryPlan},
         rho0::PIState{R},times,n::Integer;seed::Integer=0,
@@ -1009,46 +1462,57 @@ function quantum_trajectories(source::Union{PIModel,CompiledPIModel,TrajectoryPl
         algorithm::Symbol=:fixed,abstol=nothing,reltol=nothing,
         dtmin=nothing,dtmax=nothing,event_time_tolerance=nothing,
         observables=nothing,save_states::Bool=true,
-        jump_statistics::Bool=true,confidence::Real=0.95) where {R<:AbstractFloat}
+        jump_statistics::Bool=true,confidence::Real=0.95,
+        memory_budget=_DEFAULT_HIGHLEVEL_MEMORY_BUDGET) where {R<:AbstractFloat}
     _quantum_trajectories_dispatch(observables,
         source,rho0,times,n;
         seed,threaded,workspace,dt,parameters,max_jump_probability,algorithm,
         abstol,reltol,dtmin,dtmax,event_time_tolerance,save_states,
-        jump_statistics,confidence)
+        jump_statistics,confidence,memory_budget)
 end
 
 function _quantum_trajectories_dispatch(::Nothing,
         source,rho0,times,n;
         seed,threaded,workspace,dt,parameters,max_jump_probability,algorithm,
         abstol,reltol,dtmin,dtmax,event_time_tolerance,save_states,
-        jump_statistics,confidence)
+        jump_statistics,confidence,memory_budget)
     save_states||throw(ArgumentError(
         "save_states=false requires at least one observable"))
     _quantum_trajectories_legacy(source,rho0,times,n;seed,threaded,workspace,
         dt,parameters,max_jump_probability,algorithm,abstol,reltol,dtmin,
-        dtmax,event_time_tolerance)
+        dtmax,event_time_tolerance,memory_budget)
 end
 
 function _quantum_trajectories_dispatch(observables,
         source,rho0,times,n;seed,threaded,workspace,dt,parameters,
         max_jump_probability,algorithm,abstol,reltol,dtmin,dtmax,
-        event_time_tolerance,save_states,jump_statistics,confidence)
+        event_time_tolerance,save_states,jump_statistics,confidence,
+        memory_budget)
     _quantum_trajectories_streaming(source,rho0,times,n;
         seed,threaded,workspace,dt,parameters,max_jump_probability,algorithm,
         abstol,reltol,dtmin,dtmax,event_time_tolerance,observables,
-        save_states,jump_statistics,confidence)
+        save_states,jump_statistics,confidence,memory_budget)
 end
 
 function _quantum_trajectories_legacy(
         source::Union{PIModel,CompiledPIModel,TrajectoryPlan},
         rho0::PIState{R},times,n::Integer;seed::Integer,threaded::Bool,
         workspace,dt::Real,parameters,max_jump_probability,algorithm::Symbol,
-        abstol,reltol,dtmin,dtmax,event_time_tolerance) where {R<:AbstractFloat}
+        abstol,reltol,dtmin,dtmax,event_time_tolerance,
+        memory_budget) where {R<:AbstractFloat}
     n>0||throw(ArgumentError("trajectory count must be positive"))
+    ts,options=_prepare_trajectory_arguments(times,R;dt,parameters,
+        max_jump_probability,algorithm,abstol,reltol,dtmin,dtmax,
+        event_time_tolerance)
+    _guard_trajectory_history("quantum-trajectory ensemble state history",
+        length(rho0.data),eltype(rho0.data),ts,n,memory_budget;
+        guidance=
+        "Pass observables=... and save_states=false for online statistics.")
     if workspace===nothing
         plan=_plan_for_source(source,rho0)
         worker_count=threaded ? min(Int(n),Threads.nthreads()) : 1
-        batch=TrajectoryBatchWorkspace(plan,rho0;workers=worker_count)
+        mode=algorithm===:fixed ? :fixed : :full
+        batch=TrajectoryBatchWorkspace(plan,rho0;workers=worker_count,mode)
     elseif workspace isa TrajectoryBatchWorkspace
         batch=_check_trajectory_batch_workspace(workspace,source,rho0)
         plan=batch.plan
@@ -1063,9 +1527,6 @@ function _quantum_trajectories_legacy(
             "workspace must be a TrajectoryWorkspace or TrajectoryBatchWorkspace"))
     end
     _validate_trajectory_initial_state(plan,rho0)
-    ts,options=_prepare_trajectory_arguments(times,R;dt,parameters,
-        max_jump_probability,algorithm,abstol,reltol,dtmin,dtmax,
-        event_time_tolerance)
     if batch===nothing
         master=MersenneTwister(seed);seeds=rand(master,UInt64,n)
     else
@@ -1158,14 +1619,27 @@ function _quantum_trajectories_streaming(
         rho0::PIState{R},times,n::Integer;seed::Integer,threaded::Bool,
         workspace,dt::Real,parameters,max_jump_probability,algorithm::Symbol,
         abstol,reltol,dtmin,dtmax,event_time_tolerance,observables,
-        save_states::Bool,jump_statistics::Bool,confidence::Real) where {R<:AbstractFloat}
+        save_states::Bool,jump_statistics::Bool,confidence::Real,
+        memory_budget) where {R<:AbstractFloat}
     n>0||throw(ArgumentError("trajectory count must be positive"))
     !save_states&&observables===nothing&&throw(ArgumentError(
         "save_states=false requires at least one observable"))
+    ts,options=_prepare_trajectory_arguments(times,R;dt,parameters,
+        max_jump_probability,algorithm,abstol,reltol,dtmin,dtmax,
+        event_time_tolerance)
+    if save_states
+        _guard_trajectory_history("quantum-trajectory ensemble state history",
+            length(rho0.data),eltype(rho0.data),ts,n,memory_budget;
+            guidance=
+            "Set save_states=false to retain only online observable statistics.")
+    else
+        _performance_memory_limit(memory_budget)
+    end
     if workspace===nothing
         plan=_plan_for_source(source,rho0)
         requested_workers=threaded ? min(Int(n),Threads.nthreads()) : 1
-        batch=TrajectoryBatchWorkspace(plan,rho0;workers=requested_workers)
+        mode=algorithm===:fixed ? :fixed : :full
+        batch=TrajectoryBatchWorkspace(plan,rho0;workers=requested_workers,mode)
     elseif workspace isa TrajectoryBatchWorkspace
         batch=_check_trajectory_batch_workspace(workspace,source,rho0)
         plan=batch.plan
@@ -1179,9 +1653,6 @@ function _quantum_trajectories_streaming(
             "workspace must be a TrajectoryWorkspace or TrajectoryBatchWorkspace"))
     end
     _validate_trajectory_initial_state(plan,rho0)
-    ts,options=_prepare_trajectory_arguments(times,R;dt,parameters,
-        max_jump_probability,algorithm,abstol,reltol,dtmin,dtmax,
-        event_time_tolerance)
     ops=_prepare_streaming_observables(rho0.basis,observables;
                                        require_hermitian=true)
     0<confidence<1||throw(ArgumentError(
@@ -1200,6 +1671,13 @@ function _quantum_trajectories_streaming(
     TT=eltype(ts)
     out=save_states ? Vector{QuantumTrajectory{TT,typeof(rho0)}}(undef,n) : nothing
     Rstats=_observable_scalar_type(rho0,ops)
+    statistics_estimate=_trajectory_observable_statistics_bytes(
+        length(ops),length(ts),worker_count,Rstats)
+    history_estimate=save_states ? _trajectory_history_bytes(
+        length(rho0.data),eltype(rho0.data),length(ts),n,eltype(ts)) : big(0)
+    _require_performance_budget("trajectory ensemble retained output",
+        history_estimate+statistics_estimate,memory_budget;guidance=
+        "Set save_states=false, request fewer times, or reduce the observable set.")
     observable_buffers=
         [Matrix{Rstats}(undef,length(ops),length(ts)) for _ in 1:worker_count]
     observable_accumulators=
@@ -1262,6 +1740,282 @@ function _quantum_trajectories_streaming(
     P=Union{Nothing,Vector{QuantumTrajectory{TT,typeof(rho0)}}}
     TrajectoryEnsembleResult{TT,P,typeof(observable_summary)}(
         copy(ts),out,observable_summary,jump_summary,Int(n))
+end
+
+function _trajectory_integer_count(value::Integer,label,minimum::Int)
+    converted=try
+        Int(value)
+    catch
+        throw(ArgumentError("$label=$value cannot be represented as an Int"))
+    end
+    converted>=minimum||throw(ArgumentError(
+        "$label must be at least $minimum"))
+    converted
+end
+
+function _trajectory_steady_sampling_times(::Type{R},settling_time,
+        samples_per_trajectory::Int,sampling_interval) where R<:AbstractFloat
+    settling=_trajectory_real_input(R,settling_time,"settling_time")
+    settling>zero(R)||throw(ArgumentError("settling_time must be positive"))
+    interval=if sampling_interval===nothing
+        samples_per_trajectory==1||throw(ArgumentError(
+            "sampling_interval is required when samples_per_trajectory is greater than one"))
+        nothing
+    else
+        value=_trajectory_real_input(R,sampling_interval,"sampling_interval")
+        value>zero(R)||throw(ArgumentError(
+            "sampling_interval must be positive"))
+        value
+    end
+    sample_times=Vector{R}(undef,samples_per_trajectory)
+    sample_times[1]=settling
+    if samples_per_trajectory>1
+        for index in 2:samples_per_trajectory
+            offset=_checked_statistics_count(R,index-1,
+                "trajectory time-sample offset")
+            value=settling+offset*interval
+            isfinite(value)||throw(ArgumentError(
+                "post-settling sampling times overflow trajectory precision $R"))
+            value>sample_times[index-1]||throw(ArgumentError(
+                "sampling_interval is too small to produce distinct sampling times in trajectory precision $R"))
+            sample_times[index]=value
+        end
+    end
+    times=Vector{R}(undef,length(sample_times)+1)
+    times[1]=zero(R)
+    copyto!(times,2,sample_times,1,length(sample_times))
+    times,sample_times,settling,interval
+end
+
+function _steady_state_path!(sampler,state_accumulator,
+        observable_accumulator,observable_buffer,observable_ops,
+        plan,rho0,times,worker,rng,options,samples_per_trajectory)
+    _reset_trajectory_state_sampler!(sampler)
+    _quantum_trajectory_prepared(plan,rho0,times,worker,rng,options;
+        state_sampler=sampler,save_states=false,record_jumps=false)
+    sampler.count==samples_per_trajectory||throw(ErrorException(
+        "internal trajectory sampler retained $(sampler.count) states instead of $samples_per_trajectory"))
+    _accumulate_state!(state_accumulator,sampler.mean)
+    if observable_accumulator!==nothing
+        _record_observables!(observable_buffer,observable_ops,sampler.mean,1)
+        _accumulate_observables!(observable_accumulator,observable_buffer)
+    end
+    nothing
+end
+
+"""
+    trajectory_steady_state(source, rho0;
+        trajectories, settling_time, dt,
+        samples_per_trajectory=1, sampling_interval=nothing,
+        seed=0, threaded=false, workspace=nothing,
+        observables=nothing, confidence=0.95, return_info=false,
+        parameters=nothing, max_jump_probability=0.05,
+        algorithm=:fixed, abstol=1e-9, reltol=1e-7,
+        dtmin=eps(R), dtmax=dt, event_time_tolerance=1e-10)
+
+Estimate an autonomous stationary PI density operator with quantum-jump
+trajectories. Each independent path is evolved from `rho0` to
+`settling_time`. One or more states are then sampled at equal
+`sampling_interval`s and averaged within that path. The returned density
+operator is the average of those independent path means. No state history or
+jump record is constructed, so retained state storage is
+`O(workers * length(rho0.data))` rather than proportional to the number of
+paths or post-settling samples.
+
+At least two trajectories are required. Multiple samples can reduce the
+variance of an ergodic path average, but samples from the same path may be
+correlated. They are therefore averaged before the path-to-path uncertainty
+is evaluated and never counted as independent observations. Choose the
+settling time, sampling interval, sampling-window length, path count, and
+integration controls through explicit convergence studies. Strong symmetries
+or multiple stationary states can make the result depend on `rho0`.
+
+The source may be a `PIModel`, `CompiledPIModel`, or reusable
+[`TrajectoryPlan`](@ref), but it must be autonomous and use the fixed jump
+operators supported by PI trajectories. For a periodically driven stationary
+regime, use Floquet analysis. Call `freeze` only when the stationary state of
+one explicitly selected instantaneous generator is the intended question;
+freezing does not solve the driven problem. `threaded=true` uses task-owned
+workspaces and trajectory-indexed random streams. Pass a
+[`TrajectoryBatchWorkspace`](@ref) to reuse those buffers across calls.
+
+By default, return the estimated `PIState`. Set `return_info=true` to receive
+a [`TrajectorySteadyStateResult`](@ref), including the Hilbert--Schmidt sample
+spread and standard-error norm, the Liouvillian residual, relative residual,
+and trace error. These diagnostics are not a steady-state certificate and the
+state is never normalized, symmetrized, or positivity-repaired. With
+`return_info=true`, named Hermitian `observables` add means, unbiased
+variances, standard errors, and normal confidence intervals across the
+independent path means; requesting observables without the detailed result is
+rejected rather than computing and discarding their statistics.
+"""
+function trajectory_steady_state(
+        source::Union{PIModel,CompiledPIModel,TrajectoryPlan},
+        rho0::PIState{R};trajectories::Integer,settling_time,dt::Real,
+        samples_per_trajectory::Integer=1,sampling_interval=nothing,
+        seed::Integer=0,threaded::Bool=false,workspace=nothing,
+        observables=nothing,confidence::Real=0.95,return_info::Bool=false,
+        parameters=nothing,max_jump_probability=nothing,
+        algorithm::Symbol=:fixed,abstol=nothing,reltol=nothing,
+        dtmin=nothing,dtmax=nothing,event_time_tolerance=nothing) where
+        {R<:AbstractFloat}
+    path_count_int=_trajectory_integer_count(trajectories,"trajectories",2)
+    samples_per_path=_trajectory_integer_count(
+        samples_per_trajectory,"samples_per_trajectory",1)
+    _checked_statistics_count(R,path_count_int,"trajectory")
+    _checked_statistics_count(R,samples_per_path,"trajectory time sample")
+    samples_per_path<typemax(Int)||throw(ArgumentError(
+        "samples_per_trajectory is too large to construct the sampling grid"))
+    0<confidence<1||throw(ArgumentError("confidence must lie in (0,1)"))
+    observables!==nothing&&!return_info&&throw(ArgumentError(
+        "trajectory steady-state observables require return_info=true"))
+
+    if workspace===nothing
+        plan=_plan_for_source(source,rho0)
+        requested_workers=threaded ? min(path_count_int,Threads.nthreads()) : 1
+        mode=algorithm===:fixed ? :fixed : :full
+        batch=TrajectoryBatchWorkspace(plan,rho0;workers=requested_workers,mode)
+    elseif workspace isa TrajectoryBatchWorkspace
+        batch=_check_trajectory_batch_workspace(workspace,source,rho0)
+        plan=batch.plan
+    elseif workspace isa TrajectoryWorkspace
+        threaded&&throw(ArgumentError(
+            "threaded steady-state trajectories require a TrajectoryBatchWorkspace with independent worker scratch"))
+        _check_trajectory_workspace(workspace,source,rho0)
+        plan=workspace.plan
+        batch=nothing
+    else
+        throw(ArgumentError(
+            "workspace must be a TrajectoryWorkspace or TrajectoryBatchWorkspace"))
+    end
+    _validate_trajectory_initial_state(plan,rho0)
+    isautonomous(plan)||throw(ArgumentError(
+        "trajectory_steady_state requires an autonomous model; call freeze(...; time=..., parameters=...) before estimating a stationary state of a driven source"))
+
+    times,sampling_times,settling,interval=
+        _trajectory_steady_sampling_times(R,settling_time,
+            samples_per_path,sampling_interval)
+    times,options=_prepare_trajectory_arguments(times,R;dt,parameters,
+        max_jump_probability,algorithm,abstol,reltol,dtmin,dtmax,
+        event_time_tolerance)
+    ops=_prepare_streaming_observables(rho0.basis,observables;
+                                       require_hermitian=true)
+
+    if batch===nothing
+        master=MersenneTwister(seed)
+        seeds=rand(master,UInt64,path_count_int)
+        workers=(workspace,)
+        rngs=(master,)
+        worker_count=1
+    else
+        master=batch.rngs[1]
+        Random.seed!(master,seed)
+        resize!(batch.seeds,path_count_int)
+        rand!(master,batch.seeds)
+        seeds=batch.seeds
+        available=length(batch.workers)
+        worker_count=threaded ?
+            min(path_count_int,Threads.nthreads(),available) : 1
+        workers=batch.workers
+        rngs=batch.rngs
+    end
+
+    samplers=[_TrajectoryStateSampler(rho0.data) for _ in 1:worker_count]
+    state_accumulators=[_OnlineStateAccumulator(rho0.data)
+                        for _ in 1:worker_count]
+    Rstats=_observable_scalar_type(rho0,ops)
+    observable_buffers=observables===nothing ? nothing :
+        [Matrix{Rstats}(undef,length(ops),1) for _ in 1:worker_count]
+    observable_accumulators=observables===nothing ? nothing :
+        [_OnlineObservableAccumulator(Rstats,length(ops),1)
+         for _ in 1:worker_count]
+
+    if worker_count==1
+        worker=workers[1]
+        rng=rngs[1]
+        for trajectory_index in 1:path_count_int
+            Random.seed!(rng,seeds[trajectory_index])
+            _steady_state_path!(samplers[1],state_accumulators[1],
+                observable_accumulators===nothing ? nothing :
+                    observable_accumulators[1],
+                observable_buffers===nothing ? nothing : observable_buffers[1],
+                ops,plan,rho0,times,worker,rng,options,
+                samples_per_path)
+        end
+    else
+        chunk_size=max(1,path_count_int÷(8worker_count))
+        next_index=Threads.Atomic{Int}(1)
+        @sync for worker_index in 1:worker_count
+            let worker=workers[worker_index],rng=rngs[worker_index],
+                sampler=samplers[worker_index],
+                state_accumulator=state_accumulators[worker_index],
+                observable_accumulator=observable_accumulators===nothing ?
+                    nothing : observable_accumulators[worker_index],
+                observable_buffer=observable_buffers===nothing ?
+                    nothing : observable_buffers[worker_index],
+                counter=next_index
+                Threads.@spawn begin
+                    while true
+                        first_index=Threads.atomic_add!(counter,chunk_size)
+                        first_index>path_count_int&&break
+                        final_index=min(path_count_int,
+                                        first_index+chunk_size-1)
+                        for trajectory_index in first_index:final_index
+                            Random.seed!(rng,seeds[trajectory_index])
+                            _steady_state_path!(sampler,state_accumulator,
+                                observable_accumulator,observable_buffer,ops,
+                                plan,rho0,times,worker,rng,options,
+                                samples_per_path)
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    merged_state=state_accumulators[1]
+    for worker_index in 2:worker_count
+        _merge_states!(merged_state,state_accumulators[worker_index])
+    end
+    merged_state.count==path_count_int||throw(ErrorException(
+        "internal trajectory reduction retained $(merged_state.count) paths instead of $trajectories"))
+    path_variance_denominator=_checked_statistics_count(
+        R,path_count_int-1,"trajectory")
+    path_count=_checked_statistics_count(R,path_count_int,"trajectory")
+    sample_spread=sqrt(merged_state.m2/path_variance_denominator)
+    standard_error=sample_spread/sqrt(path_count)
+    state=PIState(rho0.basis,merged_state.mean)
+
+    residual_buffer=workers[1].tmp
+    apply!(residual_buffer,plan.liouvillian,state.data,
+           workers[1].liouvillian_work)
+    residual=norm(residual_buffer)
+    relative_residual=residual/max(norm(state.data),one(R))
+    state_trace_error=R(trace_error(state))
+
+    observable_summary=if observable_accumulators===nothing
+        nothing
+    else
+        merged=observable_accumulators[1]
+        for worker_index in 2:worker_count
+            _merge_observables!(merged,observable_accumulators[worker_index])
+        end
+        _steady_observable_statistics(merged,ops,confidence)
+    end
+    metadata=(;algorithm=options.algorithm,seed,
+        threaded_requested=threaded,threaded=worker_count>1,worker_count,
+        dt=options.dt,max_jump_probability=options.max_jump_probability,
+        abstol=options.abstol,reltol=options.reltol,dtmin=options.dtmin,
+        dtmax=options.dtmax,
+        event_time_tolerance=options.event_time_tolerance,
+        settling_time=settling,sampling_interval=interval,confidence,
+        path_reduction=:post_settling_mean,
+        uncertainty_unit=:independent_path_mean)
+    result=TrajectorySteadyStateResult(state,path_count_int,
+        samples_per_path,copy(sampling_times),sample_spread,
+        standard_error,residual,relative_residual,state_trace_error,
+        observable_summary,metadata)
+    return_info ? result : state
 end
 
 """Average equally sampled quantum trajectories into PI density matrices."""

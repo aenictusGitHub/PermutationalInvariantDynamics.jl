@@ -34,6 +34,12 @@ end
     # expectation(x,A)=Tr(A' x): QRT requires Tr(A*x), with A=c'.
     plan=CorrelationPlan(compiled,cdag,c)
     workspace=CorrelationWorkspace(plan;krylovdim=4)
+    time_workspace=CorrelationWorkspace(plan;krylovdim=4,mode=:time)
+    @test time_workspace.krylov===nothing
+    @test isempty(time_workspace.rhs)
+    @test isempty(time_workspace.solution)
+    @test Base.summarysize(time_workspace)<Base.summarysize(workspace)
+    @test_throws ArgumentError CorrelationWorkspace(plan;mode=:invalid)
     delays=[0.0,0.2,0.7]
     values=two_time_correlation(plan,excited,delays;
         steps_per_interval=100,workspace=workspace)
@@ -45,6 +51,8 @@ end
     @test two_time_correlation!(destination,plan,excited,delays;
         steps_per_interval=100,workspace=workspace)===destination
     @test destination≈values atol=2e-10
+    @test two_time_correlation(plan,excited,delays;
+        steps_per_interval=100,workspace=time_workspace)≈values atol=2e-10
     @test_throws ArgumentError two_time_correlation(plan,excited,[0.1,0.0])
     @test_throws ArgumentError two_time_correlation(plan,excited,[-0.1])
 
@@ -72,11 +80,63 @@ end
     @test spectrum.values≈expected_spectrum atol=2e-11 rtol=2e-11
     @test spectrum.convention===:one_sided_exp_minus_iomega_t
     @test spectrum.method===:matrixfree_shifted_gmres
+    @test spectrum.shared_arnoldi
+    @test spectrum.solver===:multishift
+    @test spectrum.shared_batches==1
+    @test isempty(spectrum.fallback_frequencies)
     @test spectrum.connected
     @test spectrum.stationary_residual<1e-13
     @test_throws ArgumentError stationary_correlation_spectrum(
         stationary_plan,rho_ss,[omega];connected=false,
         workspace=stationary_workspace)
+    stationary_time_workspace=CorrelationWorkspace(
+        stationary_plan;krylovdim=4,mode=:time)
+    @test_throws ArgumentError stationary_correlation_spectrum(
+        stationary_plan,rho_ss,[omega];workspace=stationary_time_workspace)
+
+    sequential_spectrum=stationary_correlation_spectrum(
+        stationary_plan,rho_ss,frequencies;workspace=stationary_workspace,
+        solver=:sequential)
+    forced_shared_spectrum=stationary_correlation_spectrum(
+        stationary_plan,rho_ss,frequencies;workspace=stationary_workspace,
+        solver=:multishift)
+    @test sequential_spectrum.solver===:sequential
+    @test !sequential_spectrum.shared_arnoldi
+    @test forced_shared_spectrum.values≈sequential_spectrum.values atol=2e-11 rtol=2e-11
+    @test forced_shared_spectrum.solver===:multishift
+    supplied_multi=MultiShiftGMRESWorkspace(
+        ComplexF64,length(stationary_plan.basis),2,4)
+    supplied_result=stationary_correlation_spectrum(
+        stationary_plan,rho_ss,frequencies;workspace=stationary_workspace,
+        multishift_workspace=supplied_multi)
+    @test supplied_result.values≈sequential_spectrum.values atol=2e-11 rtol=2e-11
+    @test supplied_result.shared_batches==1
+    @test supplied_result.fallback_frequencies==[3]
+    @test_throws ArgumentError stationary_correlation_spectrum(
+        stationary_plan,rho_ss,frequencies;workspace=stationary_workspace,
+        multishift_workspace=supplied_multi,multishift_batchsize=3)
+    @test_throws ArgumentError stationary_correlation_spectrum(
+        stationary_plan,rho_ss,frequencies;workspace=stationary_workspace,
+        solver=:multishift,multishift_workspace=supplied_multi)
+    wrong_multi=MultiShiftGMRESWorkspace(ComplexF64,2,2,2)
+    @test_throws DimensionMismatch stationary_correlation_spectrum(
+        stationary_plan,rho_ss,frequencies;workspace=stationary_workspace,
+        multishift_workspace=wrong_multi)
+    memory_fallback=stationary_correlation_spectrum(
+        stationary_plan,rho_ss,frequencies;workspace=stationary_workspace,
+        shared_memory_budget=1)
+    @test memory_fallback.solver===:sequential
+    @test memory_fallback.values≈sequential_spectrum.values atol=2e-11 rtol=2e-11
+    @test_throws ArgumentError stationary_correlation_spectrum(
+        stationary_plan,rho_ss,frequencies;workspace=stationary_workspace,
+        solver=:multishift,shared_memory_budget=1)
+    @test_throws ArgumentError stationary_correlation_spectrum(
+        stationary_plan,rho_ss,frequencies;workspace=stationary_workspace,
+        solver=:unsupported)
+    empty_spectrum=stationary_correlation_spectrum(
+        stationary_plan,rho_ss,Float64[];workspace=stationary_workspace,
+        solver=:multishift,multishift_workspace=supplied_multi)
+    @test isempty(empty_spectrum.values)
 
     # The shifted solve itself reuses every large Krylov array.  Warm the
     # exact callable-operator specialization before checking the small scalar
@@ -116,8 +176,12 @@ end
     sampled=correlation_spectrum_fft(stationary_plan,rho_ss,
         collect(range(0.0,2.0;length=17));steps_per_interval=8,
         workspace=stationary_workspace,nfft=32)
+    sampled_time_only=correlation_spectrum_fft(stationary_plan,rho_ss,
+        collect(range(0.0,2.0;length=17));steps_per_interval=8,
+        workspace=stationary_time_workspace,nfft=32)
     @test sampled.connected
     @test sampled.offset≈0 atol=1e-14
+    @test sampled_time_only.values≈sampled.values atol=1e-14 rtol=1e-14
 
     gdelays=[0.0,0.4,1.0]
     g2=delayed_second_order_correlation(
@@ -204,6 +268,7 @@ end
     prepared2=compile(model2;backend=:matrixfree)
     plan2=CorrelationPlan(prepared2,A2,c2)
     workspace2=CorrelationWorkspace(plan2;krylovdim=8)
+    time_workspace2=CorrelationWorkspace(plan2;krylovdim=8,mode=:time)
     delays2=[0.0,0.17,0.43]
     values2=two_time_correlation(plan2,rho2,delays2;
         steps_per_interval=32,workspace=workspace2)
@@ -212,12 +277,13 @@ end
     reference2=[dot(adjoint(A2).data,exp(delay*denseL2)*seed2.data)
                 for delay in delays2]
     @test values2≈reference2 atol=5e-12 rtol=5e-12
+    @test Base.summarysize(time_workspace2)<Base.summarysize(workspace2)
 
     # The warmed in-place path performs no history allocation and reuses the
     # plan-owned Liouvillian geometry plus caller-owned RK4 storage.
     _correlation_time_allocation(
         values2,plan2,rho2,delays2,2,workspace2)
     time_alloc=_correlation_time_allocation(
-        values2,plan2,rho2,delays2,2,workspace2)
+        values2,plan2,rho2,delays2,2,time_workspace2)
     @test time_alloc<=512
 end

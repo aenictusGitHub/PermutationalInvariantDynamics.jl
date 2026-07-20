@@ -16,8 +16,8 @@ They validate basis ownership and return package-level state or result objects.
 | Area | Recommended entry points |
 |---|---|
 | Representation | `PIBasis`, `PIState`, `PIOperator`, `exact_binomial`, `exact_multinomial`, Schur-block constructors, spin/state conveniences, `PIModel`, and the physical term constructors |
-| Preparation | `compile`, `isautonomous`, `freeze` |
-| Dynamics | `solve_dynamics` (including observable-only streaming), `solve_populations`, `dynamics_problem`, `floquet_steady_state`, `quantum_trajectories` (including online ensemble statistics) |
+| Preparation | `compile`, `compile_family`, `specialize`, `isautonomous`, `freeze` |
+| Dynamics | `solve_dynamics` (including observable-only streaming), `solve_populations`, `dynamics_problem`, `floquet_steady_state`, `quantum_trajectories` (including online ensemble statistics), `trajectory_steady_state` |
 | Mean-field predictions | `MeanFieldPlan`, `solve_meanfield`, `meanfield_problem`, `meanfield_stationary_state`, `meanfield_stability` |
 | Stationary and spectral analysis | `stationary_state`, `liouvillian_spectrum`, `pi_liouvillian_gap`, `diagnostics`, `recommend_solver` |
 | Observables and information | `collective_expectation`, `collective_variance`, `qfi`, `qfim`, `two_time_correlation`, `delayed_second_order_correlation`, `stationary_correlation_spectrum`, entropy and distance functions |
@@ -38,8 +38,9 @@ threading contracts.
 - `OneBodyGeometry`, `PBodyGeometry`, `CollectiveObservablePlan`, and
   `ReductionPlan` own prepared representation data. They can only be used with
   the exact `PIBasis` object from which they were constructed.
-- `LiouvillianPlan` and `CompiledPIModel` hold lowered model data;
-  `LiouvillianWorkspace`, `EvolutionWorkspace`, `KrylovWorkspace`,
+- `LiouvillianPlan`, `CompiledPIModel`, and `CompiledPIModelFamily` hold lowered model data;
+  `LiouvillianWorkspace`, `ThreadedLiouvillianWorkspace`,
+  `EvolutionWorkspace`, `KrylovWorkspace`,
   `ArnoldiWorkspace`, `SymmetryProjectorWorkspace`, and `ReductionWorkspace`
   hold mutable scratch.
 - `BlockGMRESWorkspace`, `MultiShiftGMRESWorkspace`,
@@ -48,14 +49,16 @@ threading contracts.
   actions. Projected dense factorizations may still allocate, and every
   workspace is task-owned.
 - `ParameterScanPlan` holds a copied parameter grid and callable model recipe;
-  `ParameterScanWorkspace` holds continuation and solver scratch. Serial
+  `ParameterScanWorkspace` holds continuation, family-Liouvillian, and solver
+  scratch. Serial
   continuation, independent threaded scans, and optional process-distributed
   scans have deliberately different ownership contracts described in the
   [scan guide](parameter_scans.md).
 - `HEOMPlan` stores the finite hierarchy topology and physical coupling data.
   `HEOMWorkspace` and `HEOMEvolutionWorkspace` separate application scratch
-  from hierarchy-sized RK4 stages. Hard hierarchy truncation and bath-pole
-  convergence remain explicit research choices.
+  from the three hierarchy-sized arrays used by low-storage forward RK4. Hard
+  hierarchy truncation and bath-pole convergence remain explicit research
+  choices.
 - `QuditHusimiPlan` retains dense coherent vectors for a fixed point/sector
   set and exact basis. Reuse it across states; setup can dominate for many
   large irreps. `ConvergenceStudyResult` retains every requested refinement
@@ -81,7 +84,7 @@ threading contracts.
   per active task. The supplied background excludes monitored dissipators.
 - `PopulationPlan` stores the certified sparse action on multiplicity-weighted
   Schur-diagonal probabilities. `PopulationWorkspace` owns its application and
-  RK4 scratch. Certification is exact by default, compile-only coordinate
+  three-array forward RK4 scratch. Certification is exact by default, compile-only coordinate
   lookup scales with the population dimension and is not retained, and scalar
   time-dependent rates reuse the same reduced matrices. Operator-valued
   schedules must be frozen before certification. Plan construction currently
@@ -94,9 +97,16 @@ threading contracts.
   Its callback writes into the evaluated operator stored by each
   `LiouvillianWorkspace`; batched forward and adjoint calls evaluate it once
   per application stage rather than once per input column.
+- `ThreadedLiouvillianWorkspace` partitions complete destination Schur sectors
+  among task-private block scratch. `threaded_apply!` and its adjoint evaluate
+  every operator/rate schedule once before spawning and never perform atomic
+  output updates or scheduler-ordered reductions. It is useful only after benchmarking
+  against ordinary application; small blocks can be dominated by task or
+  nested-BLAS overhead. One task takes the ordinary inline fast path.
 - `MeanFieldPlan` lowers supported physical terms to one-site contractions
   with at most `d^p` by `d^p` scratch matrices. `MeanFieldWorkspace` owns its
-  RK and contraction scratch; use one workspace per concurrent task.
+  three-matrix forward RK and contraction scratch; use one workspace per
+  concurrent task.
 - `liouvillian`, `apply!`, `apply_adjoint!`, `evolve!`, `steady_state`, and the
   lower-level Krylov routines provide explicit control over storage and solver
   choices.
@@ -212,9 +222,13 @@ algorithms may evolve as the remaining numerical bottlenecks are addressed.
   functions provide an opt-in direct-sum Schur-irrep unraveling. Fixed local
   gains are decomposed into checked one-box Kraus branches for qubits and
   qudits. The pseudo-state and its path statistics depend on this unraveling
-  convention and are not labeled-particle pure states. Operator-valued and
-  local-p-body jumps, adaptive event timing, and composite pseudo-ket paths
-  are not yet part of this surface.
+  convention and are not labeled-particle pure states.
+  `weak_pi_trajectory_steady_state` streams density-valued path means without
+  storing pseudo-ket histories; it returns a generally mixed `PIState` and its
+  optional path-level uncertainty diagnostics. Fixed-step RK4 and continuous-
+  hazard adaptive/event-driven timing are supported. Operator-valued and
+  local-p-body jumps and composite pseudo-ket paths are not yet part of this
+  surface.
 - `CompositePIBasis`, `FiniteOperatorBasis`, factorized composite states and
   operators, `CompositeSuperoperator`, and `CompositeTrajectoryPlan` provide
   deterministic and density-valued quantum-jump dynamics of several PI
@@ -232,6 +246,8 @@ extreme-scale LR construction are exercised on larger research problems.
 ## Preparing repeated observables
 
 `OneBodyGeometry` contains the CG contractions shared by every local matrix.
+Its sparse logical cells are stored as packed offsets into contiguous tuple
+arrays, so qudit caches do not retain one heap vector per empty cell.
 Use it while preparing several collective observables, then retain only the
 smaller observable plans:
 

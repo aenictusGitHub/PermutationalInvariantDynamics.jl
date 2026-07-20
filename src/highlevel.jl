@@ -1,6 +1,16 @@
 """Common supertype for dispatchable high-level solver choices."""
 abstract type AbstractPIAlgorithm end
 
+function _checked_algorithm_int(value::Integer,name::AbstractString;
+        minimum::Integer=1)
+    value isa Bool&&throw(ArgumentError("$name must be an integer, not a Bool"))
+    value>=minimum||throw(ArgumentError(
+        "$name must be at least $minimum"))
+    BigInt(value)<=typemax(Int)||throw(ArgumentError(
+        "$name must be representable as an Int"))
+    Int(value)
+end
+
 """Select a conservative algorithm from the problem representation and size."""
 struct AutoAlgorithm <: AbstractPIAlgorithm end
 """Trace-bordered direct stationary-state solve."""
@@ -16,7 +26,7 @@ struct ShiftInvertAlgorithm{T} <: AbstractPIAlgorithm
     maxiter::Int
 end
 ShiftInvertAlgorithm(;shift=nothing,maxiter::Integer=200)=
-    ShiftInvertAlgorithm(shift,Int(maxiter))
+    ShiftInvertAlgorithm(shift,_checked_algorithm_int(maxiter,"maxiter"))
 
 """Restarted matrix-free GMRES stationary-state algorithm and optional preconditioner."""
 struct GMRESAlgorithm{P} <: AbstractPIAlgorithm
@@ -26,7 +36,33 @@ struct GMRESAlgorithm{P} <: AbstractPIAlgorithm
 end
 GMRESAlgorithm(;krylovdim::Integer=30,maxiter::Integer=500,
                preconditioner=nothing)=
-    GMRESAlgorithm(Int(krylovdim),Int(maxiter),preconditioner)
+    GMRESAlgorithm(_checked_algorithm_int(krylovdim,"krylovdim"),
+        _checked_algorithm_int(maxiter,"maxiter"),preconditioner)
+
+"""
+    RecycledGMRESAlgorithm(; krylovdim=30, maxiter=500,
+                           recycle_dim=8, preconditioner=nothing)
+
+Matrix-free GCRO-style stationary-state algorithm for continuation through a
+sequence of slowly varying Liouvillians. A task-owned
+[`RecycledGMRESWorkspace`](@ref) retains up to `recycle_dim` near-zero Ritz
+directions between solves; every new operator is reapplied to the retained
+space and the full unpreconditioned residual is checked.
+"""
+struct RecycledGMRESAlgorithm{P} <: AbstractPIAlgorithm
+    krylovdim::Int
+    maxiter::Int
+    recycle_dim::Int
+    preconditioner::P
+end
+function RecycledGMRESAlgorithm(;krylovdim::Integer=30,
+        maxiter::Integer=500,recycle_dim::Integer=8,preconditioner=nothing)
+    RecycledGMRESAlgorithm(
+        _checked_algorithm_int(krylovdim,"krylovdim"),
+        _checked_algorithm_int(maxiter,"maxiter"),
+        _checked_algorithm_int(recycle_dim,"recycle_dim";minimum=0),
+        preconditioner)
+end
 
 """Thick-restarted harmonic Arnoldi parameters for modes near zero."""
 struct HarmonicArnoldiAlgorithm <: AbstractPIAlgorithm
@@ -35,11 +71,24 @@ struct HarmonicArnoldiAlgorithm <: AbstractPIAlgorithm
     thickdim::Int
     maxrestarts::Int
 end
-HarmonicArnoldiAlgorithm(;nev::Integer=6,
-    krylovdim::Integer=max(30,3Int(nev)+6),
-    thickdim::Integer=max(Int(nev)+2,2Int(nev)),
-    maxrestarts::Integer=20)=HarmonicArnoldiAlgorithm(
-        Int(nev),Int(krylovdim),Int(thickdim),Int(maxrestarts))
+function HarmonicArnoldiAlgorithm(;nev::Integer=6,krylovdim=nothing,
+        thickdim=nothing,maxrestarts::Integer=20)
+    requested=_checked_algorithm_int(nev,"nev")
+    default_krylov=min(BigInt(typemax(Int)),
+        max(BigInt(30),3BigInt(requested)+6))
+    default_thick=min(BigInt(typemax(Int)),
+        max(BigInt(requested)+2,2BigInt(requested)))
+    krylovdim===nothing||krylovdim isa Integer||throw(ArgumentError(
+        "krylovdim must be an integer or nothing"))
+    thickdim===nothing||thickdim isa Integer||throw(ArgumentError(
+        "thickdim must be an integer or nothing"))
+    kdim=krylovdim===nothing ? Int(default_krylov) :
+        _checked_algorithm_int(krylovdim,"krylovdim")
+    thick=thickdim===nothing ? Int(default_thick) :
+        _checked_algorithm_int(thickdim,"thickdim")
+    restarts=_checked_algorithm_int(maxrestarts,"maxrestarts";minimum=0)
+    HarmonicArnoldiAlgorithm(requested,kdim,thick,restarts)
+end
 
 """Typed high-level stationary-state result."""
 struct SteadyStateResult{S,I,A}
@@ -90,22 +139,18 @@ state(sol::DynamicsStreamResult,i::Integer)=begin
         "this result was created with save_states=false"))
     sol.states[i]
 end
-state(sol::DynamicsStreamResult,t::Real)=begin
-    i=findmin(abs.(sol.times.-t))[2]
-    isapprox(sol.times[i],t)||throw(ArgumentError("time $t was not saved"))
-    state(sol,i)
-end
+state_at(sol::DynamicsStreamResult,t::Real)=
+    state(sol,_saved_time_index(sol.times,t))
+state(sol::DynamicsStreamResult,t::Real)=state_at(sol,t)
 Base.length(sol::DynamicsResult)=length(sol.states)
 Base.getindex(sol::DynamicsResult,i::Integer)=sol.states[i]
 Base.firstindex(sol::DynamicsResult)=firstindex(sol.states)
 Base.lastindex(sol::DynamicsResult)=lastindex(sol.states)
 Base.iterate(sol::DynamicsResult,args...)=iterate(sol.states,args...)
 state(sol::DynamicsResult,i::Integer)=sol.states[i]
-state(sol::DynamicsResult,t::Real)=begin
-    i=findmin(abs.(sol.times.-t))[2]
-    isapprox(sol.times[i],t)||throw(ArgumentError("time $t was not saved"))
-    sol.states[i]
-end
+state_at(sol::DynamicsResult,t::Real)=
+    sol.states[_saved_time_index(sol.times,t)]
+state(sol::DynamicsResult,t::Real)=state_at(sol,t)
 
 """Typed selected-spectrum result."""
 struct SpectrumResult{V,W,I}
@@ -133,6 +178,12 @@ end
 function show(io::IO,prepared::CompiledPIModel)
     print(io,"CompiledPIModel(N=$(prepared.model.basis.N), d=$(prepared.model.basis.d), dimension=$(size(prepared,1)), backend=$(prepared.backend), autonomous=$(isautonomous(prepared)))")
 end
+function show(io::IO,family::CompiledPIModelFamily)
+    print(io,"CompiledPIModelFamily(N=$(family.model.basis.N), d=$(family.model.basis.d), dimension=$(size(family.plan,1)), varied_rates=$(family.rate_indices))")
+end
+function show(io::IO,prepared::SpecializedPIModel)
+    print(io,"SpecializedPIModel(N=$(prepared.model.basis.N), d=$(prepared.model.basis.d), dimension=$(size(prepared,1)), backend=$(prepared.backend), rates=$(prepared.rates))")
+end
 function show(io::IO,plan::LiouvillianPlan)
     print(io,"LiouvillianPlan(N=$(plan.basis.N), d=$(plan.basis.d), dimension=$(size(plan,1)), kernels=$(plan.kernels===nothing ? 0 : length(plan.kernels)), autonomous=$(isautonomous(plan)))")
 end
@@ -154,66 +205,113 @@ function show(io::IO,result::SpectrumResult)
 end
 
 function _algorithm_options(algorithm)
-    algorithm isa Symbol && return (algorithm,NamedTuple())
+    algorithm isa Symbol && return (
+        _canonical_stationary_algorithm(algorithm),NamedTuple())
     algorithm isa AutoAlgorithm && return (:auto,NamedTuple())
     algorithm isa DirectAlgorithm && return (:direct,NamedTuple())
     algorithm isa SVDAlgorithm && return (:svd,NamedTuple())
     algorithm isa EigenAlgorithm && return (:eigen,NamedTuple())
     algorithm isa ShiftInvertAlgorithm && return (:shiftinvert,
         (;shift=algorithm.shift,maxiter=algorithm.maxiter))
-    algorithm isa GMRESAlgorithm && return (:krylov,
+    algorithm isa GMRESAlgorithm && return (:gmres,
         (;krylovdim=algorithm.krylovdim,maxiter=algorithm.maxiter,
+          preconditioner=algorithm.preconditioner))
+    algorithm isa RecycledGMRESAlgorithm && return (:gmres,
+        (;krylovdim=algorithm.krylovdim,maxiter=algorithm.maxiter,
+          recycle_dim=algorithm.recycle_dim,
           preconditioner=algorithm.preconditioner))
     throw(ArgumentError("unsupported stationary-state algorithm $(typeof(algorithm))"))
 end
 
 function _basis_metadata(x,basis)
     basis!==nothing&&return basis
-    x isa PIBasis&&return x
-    x isa PIModel&&return x.basis
-    hasproperty(x,:basis)&&getproperty(x,:basis) isa PIBasis&&return getproperty(x,:basis)
-    if hasproperty(x,:model)
-        m=getproperty(x,:model)
-        m isa PIModel&&return m.basis
-    end
-    if hasproperty(x,:plan)
-        p=getproperty(x,:plan)
-        hasproperty(p,:basis)&&return getproperty(p,:basis)
-    end
-    nothing
+    _operator_basis(x)
 end
 
 """
     stationary_state(x; algorithm=AutoAlgorithm(), basis=nothing,
+                     memory_budget=512*1024^2,
                      return_info=false, kwargs...)
 
 High-level stationary-state command. Model and compiled-model inputs return a
 `PIState`; `return_info=true` returns a `SteadyStateResult`. The existing
 `steady_state` function remains the low-level coordinate-vector interface.
+Automatic selection preflights direct and matrix-free peaks. Explicit dense,
+direct, SVD, eigen, and shift-invert routes throw before materialization when
+their conservative structural peak exceeds `memory_budget`. Pass
+`memory_budget=Inf` to opt out explicitly. The returned information includes
+the complete `resource_preflight` report.
 """
 function stationary_state(x;algorithm=AutoAlgorithm(),basis=nothing,
+                          memory_budget=_DEFAULT_HIGHLEVEL_MEMORY_BUDGET,
                           return_info::Bool=false,kwargs...)
     method,options=_algorithm_options(algorithm)
     b=_basis_metadata(x,basis)
     b===nothing&&throw(ArgumentError("stationary_state requires PI basis metadata"))
-    info = if x isa Union{PIModel,CompiledPIModel}
-        steady_state(x;method=method,return_info=true,options...,kwargs...)
+    requested_method=method
+    report_algorithm=method
+    report_krylovdim=haskey(options,:krylovdim) ? options.krylovdim :
+        get(kwargs,:krylovdim,30)
+    report_recycle_dim=haskey(options,:recycle_dim) ? options.recycle_dim :
+        get(kwargs,:recycle_dim,0)
+    report_shift=haskey(options,:shift) ? options.shift : get(kwargs,:shift,nothing)
+    report_preconditioner=haskey(options,:preconditioner) ?
+        options.preconditioner : get(kwargs,:preconditioner,nothing)
+    report_type=_resource_scalar_type(x,get(kwargs,:initial_state,nothing),
+        report_shift,report_preconditioner,get(kwargs,:workspace,nothing))
+    preflight=recommend_solver(x;task=:steady_state,
+        algorithm=report_algorithm,memory_budget,krylovdim=report_krylovdim,
+        recycle_dim=report_recycle_dim,
+        T=report_type)
+    _enforce_memory_budget(preflight,"stationary_state")
+    selected_algorithm=requested_method===:auto ? preflight.algorithm : method
+    solver_method=_stationary_solver_method(selected_algorithm)
+    info = if x isa Union{PIModel,CompiledPIModel,SpecializedPIModel}
+        steady_state(x;method=solver_method,return_info=true,memory_budget,
+                     options...,kwargs...)
     else
-        steady_state(x;basis=b,method=method,return_info=true,options...,kwargs...)
+        steady_state(x;basis=b,method=solver_method,return_info=true,memory_budget,
+                     options...,kwargs...)
     end
+    info=merge(info,(;resource_preflight=preflight,
+        requested_algorithm=requested_method,selected_algorithm))
     rho=PIState(b,info.state)
     result=SteadyStateResult(rho,info,algorithm)
     return_info ? result : rho
 end
 
-function _saved_times(tspan,saveat)
+function _guard_saved_time_storage(count::Integer,::Type{T},memory_budget) where T
+    estimate=_performance_entries_bytes(BigInt(count),T)
+    _require_performance_budget("saved time grid",estimate,memory_budget;
+        guidance="Request fewer saved times or stream a coarser grid.")
+end
+
+function _saved_times(tspan,saveat;
+        memory_budget=Inf)
     t0,t1=tspan;t1>=t0||throw(ArgumentError("tspan must be ordered"))
-    saveat===nothing&&return [float(t0),float(t1)]
+    if saveat===nothing
+        T=promote_type(typeof(float(t0)),typeof(float(t1)))
+        _guard_saved_time_storage(2,T,memory_budget)
+        return T[float(t0),float(t1)]
+    end
     if saveat isa Real
-        saveat>0||throw(ArgumentError("saveat must be positive"))
-        ts=collect(float(t0):float(saveat):float(t1))
+        isfinite(saveat)&&saveat>0||throw(ArgumentError(
+            "saveat must be finite and positive"))
+        grid=float(t0):float(saveat):float(t1)
+        append_endpoint=isempty(grid)||last(grid)<t1
+        count=BigInt(length(grid))+(append_endpoint ? 1 : 0)
+        _guard_saved_time_storage(count,eltype(grid),memory_budget)
+        ts=collect(grid)
         (isempty(ts)||ts[end]<t1)&&push!(ts,float(t1))
         return ts
+    end
+    if applicable(length,saveat)
+        count=length(saveat)
+        source_type=try eltype(saveat) catch; Any end
+        if source_type isa Type&&source_type<:Number&&isconcretetype(source_type)
+            saved_type=typeof(float(zero(source_type)))
+            _guard_saved_time_storage(count,saved_type,memory_budget)
+        end
     end
     ts=float.(collect(saveat));isempty(ts)&&throw(ArgumentError("saveat cannot be empty"))
     first(ts)==t0&&last(ts)==t1||throw(ArgumentError("explicit saveat times must include both endpoints of tspan"))
@@ -224,7 +322,8 @@ end
 """
     solve_dynamics(x, rho0, tspan; saveat=nothing,
                    steps_per_interval=64, parameters=nothing,
-                   observables=nothing, save_states=true)
+                   observables=nothing, save_states=true,
+                   memory_budget=512*1024^2)
 
 Compile a model once when needed and propagate with the allocation-conscious
 fixed-step RK4 path. The result carries saved times and PI states and supports
@@ -238,14 +337,37 @@ state is propagated, and no sampled state history is constructed. A local
 `d`-by-`d` matrix denotes its collective sum. Non-Hermitian observables are
 accepted and retain complex expectation values. A state-free call without an
 observable is rejected because it would return no dynamics output.
+
+Before compiling a raw model, this command accounts for the matrix-free plan,
+RK4 workspace, saved states, sampled times, prepared observables, and scalar
+observable series. It throws when the known peak exceeds `memory_budget`; use
+`save_states=false` to stream output or `memory_budget=Inf` to opt out.
 """
 function solve_dynamics(x,rho0::PIState,tspan;saveat=nothing,
                         steps_per_interval::Integer=64,parameters=nothing,
-                        observables=nothing,save_states::Bool=true)
+                        observables=nothing,save_states::Bool=true,
+                        memory_budget=_DEFAULT_HIGHLEVEL_MEMORY_BUDGET)
     steps_per_interval>0||throw(ArgumentError("steps_per_interval must be positive"))
-    ts=_saved_times(tspan,saveat)
+    ts=_saved_times(tspan,saveat;memory_budget)
+    named_observables=observables===nothing ? Pair[] :
+        _named_observables(observables)
+    observable_series=length(named_observables)
+    state_type=_resource_scalar_type(x,rho0)
+    observable_type=state_type
+    for (_,observable) in named_observables
+        candidate=_resource_value_scalar_type(observable)
+        candidate===nothing||
+            (observable_type=promote_type(observable_type,candidate))
+    end
+    preflight=recommend_solver(x;task=:dynamics,algorithm=:rk4,
+        memory_budget,T=state_type,observable_type,
+        time_type=eltype(ts),samples=length(ts),
+        saved_states=save_states ? length(ts) : 0,
+        observable_series)
+    _enforce_memory_budget(preflight,"solve_dynamics")
     source = x isa PIModel && isdefined(@__MODULE__,:compile) ?
-        getfield(@__MODULE__,:compile)(x;backend=:matrixfree) : x
+        getfield(@__MODULE__,:compile)(x;backend=:matrixfree,
+            memory_budget=memory_budget) : x
     _solve_dynamics_output(observables,source,rho0,ts;
         steps_per_interval,parameters,save_states)
 end
@@ -310,9 +432,9 @@ function _spectrum_algorithm(algorithm,target,n,nev)
         return (:harmonic,(;nev=algorithm.nev,krylovdim=algorithm.krylovdim,
             thickdim=algorithm.thickdim,maxrestarts=algorithm.maxrestarts))
     elseif algorithm isa Symbol && algorithm!==:auto
-        return (algorithm,(;nev=Int(nev)))
+        return (_canonical_spectrum_algorithm(algorithm),(;nev=Int(nev)))
     elseif algorithm isa AutoAlgorithm || algorithm===:auto
-        method=target===:near_zero ? :harmonic : n<=256 ? :dense : :krylov
+        method=target===:near_zero ? :harmonic : n<=256 ? :dense : :arnoldi
         return (method,(;nev=Int(nev)))
     end
     throw(ArgumentError("unsupported spectrum algorithm $(typeof(algorithm))"))
@@ -320,33 +442,89 @@ end
 
 """
     liouvillian_spectrum(x; target=:largest_real, nev=6,
-                         algorithm=:auto, vectors=false, return_info=false)
+                         algorithm=:auto, vectors=false,
+                         memory_budget=512*1024^2, return_info=false)
 
 Consistent high-level spectral command. `target` is one of `:largest_real`,
 `:near_zero`, or `:largest_magnitude`; method-specific `sortby`/`which`
 dialects remain available through the lower-level spectral functions.
+Automatic selection compares the complete dense-spectrum peak with the budget
+before choosing dense or matrix-free Arnoldi. Explicit dense requests exceeding
+the structural bound throw before materialization. `memory_budget=Inf` opts out.
+An explicit `algorithm=:block_arnoldi` uses the thick-restarted batched solver;
+its `block_size` is part of the resource preflight.
+With `return_info=true`, solver metadata and `resource_preflight` are returned
+without computing right eigenvectors unless `vectors=true`.
 """
 function liouvillian_spectrum(x;target=:largest_real,nev::Integer=6,
                               algorithm=:auto,vectors::Bool=false,
+                              memory_budget=_DEFAULT_HIGHLEVEL_MEMORY_BUDGET,
                               return_info::Bool=false,kwargs...)
     target in (:largest_real,:near_zero,:largest_magnitude)||
         throw(ArgumentError("target must be :largest_real, :near_zero, or :largest_magnitude"))
+    algorithm isa Union{Symbol,AutoAlgorithm,HarmonicArnoldiAlgorithm}||
+        throw(ArgumentError(
+        "unsupported spectrum algorithm $(typeof(algorithm))"))
+    nev isa Bool&&throw(ArgumentError("nev must be an integer, not a Bool"))
     nev>0||throw(ArgumentError("nev must be positive"))
-    source=x
-    n=pi_dimension(source);method,options=_spectrum_algorithm(algorithm,target,n,nev)
-    method in (:jd,:jacobi_davidson)&&target!==:near_zero&&throw(ArgumentError(
+    source=x;n=pi_dimension(source)
+    n>0||throw(ArgumentError("the spectral source must have positive dimension"))
+    requested_nev=if algorithm isa HarmonicArnoldiAlgorithm
+        algorithm.nev<=n||throw(ArgumentError(
+            "HarmonicArnoldiAlgorithm.nev exceeds the source dimension"))
+        algorithm.nev
+    else
+        Int(min(BigInt(n),BigInt(nev)))
+    end
+    auto_requested=algorithm isa AutoAlgorithm||algorithm===:auto
+    report_algorithm = auto_requested ?
+        (target===:near_zero ? :harmonic : :auto) :
+        algorithm isa HarmonicArnoldiAlgorithm ? :harmonic :
+        _canonical_spectrum_algorithm(algorithm)
+    default_krylovdim=Int(min(BigInt(typemax(Int)),
+        max(BigInt(20),2BigInt(requested_nev)+4)))
+    report_krylovdim=algorithm isa HarmonicArnoldiAlgorithm ?
+        algorithm.krylovdim : get(kwargs,:krylovdim,default_krylovdim)
+    report_krylovdim=_checked_algorithm_int(
+        report_krylovdim,"krylovdim")
+    report_block_size=_checked_algorithm_int(
+        get(kwargs,:block_size,min(requested_nev,4)),"block_size")
+    report_maxrestarts=_checked_algorithm_int(
+        get(kwargs,:maxrestarts,20),"maxrestarts";minimum=0)
+    report_type=_resource_scalar_type(source,
+        get(kwargs,:initial_vector,nothing),get(kwargs,:initial_subspace,nothing),
+        get(kwargs,:operator_scale,nothing),get(kwargs,:shift,nothing))
+    preflight=recommend_solver(source;task=:spectrum,
+        algorithm=report_algorithm,memory_budget,krylovdim=report_krylovdim,
+        nev=requested_nev,block_size=report_block_size,
+        maxrestarts=report_maxrestarts,vectors,T=report_type)
+    _enforce_memory_budget(preflight,"liouvillian_spectrum")
+    selected_algorithm=auto_requested ? preflight.algorithm : report_algorithm
+    method,options=_spectrum_algorithm(
+        selected_algorithm,target,n,requested_nev)
+    method===:jd&&target!==:near_zero&&throw(ArgumentError(
         "Jacobi--Davidson is a near-target solver; use target=:near_zero or call jacobi_davidson_spectrum with a numeric target"))
     sortby=target===:largest_real ? :real : :magnitude
     rev=target!==:near_zero
-    want_vectors=vectors||return_info
+    default_options=haskey(options,:krylovdim)||haskey(kwargs,:krylovdim) ?
+        NamedTuple() : (;krylovdim=report_krylovdim)
     raw=pi_liouvillian_spectrum(source;method=method,sortby=sortby,rev=rev,
-                                vectors=want_vectors,options...,kwargs...)
-    if !want_vectors
-        return raw[1:min(Int(nev),length(raw))]
+                                vectors,return_info,memory_budget,
+                                default_options...,options...,kwargs...)
+    if !vectors&&!return_info
+        return raw[1:min(requested_nev,length(raw))]
     end
-    take=1:min(Int(nev),length(raw.values))
-    values=raw.values[take];vecs=vectors ? raw.vectors[:,take] : nothing
-    info=Base.structdiff(raw,(values=raw.values,vectors=raw.vectors))
+    take=1:min(requested_nev,length(raw.values))
+    raw_vectors=hasproperty(raw,:vectors) ? raw.vectors : nothing
+    vectors&&raw_vectors===nothing&&throw(ArgumentError(
+        "the selected spectral solver did not return requested eigenvectors"))
+    values=raw.values[take];vecs=vectors ? raw_vectors[:,take] : nothing
+    stripped=hasproperty(raw,:vectors) ?
+        Base.structdiff(raw,(values=raw.values,vectors=raw_vectors)) :
+        Base.structdiff(raw,(values=raw.values,))
+    info=merge(stripped,
+        (;resource_preflight=preflight,requested_algorithm=algorithm,
+          selected_algorithm=method))
     result=SpectrumResult(values,vecs,info)
     return_info ? result : (vectors ? (values=values,vectors=vecs) : values)
 end
@@ -409,37 +587,210 @@ function estimate_geometry_bytes(b::PIBasis;T=Float64,
                estimate=:conservative_structural_upper_bound))
 end
 
+function _sparse_csc_structural_upper_bytes(n::Integer,::Type{T};
+        bigfloat_precision::Integer=precision(BigFloat)) where T
+    entries=big(n)^2
+    entries*_scalar_retained_bytes(T;bigfloat_precision)+
+        (entries+big(n)+1)*sizeof(Int)
+end
+
+_dense_matrix_structural_bytes(n::Integer,::Type{T};
+        bigfloat_precision::Integer=precision(BigFloat)) where T =
+    big(n)^2*_scalar_retained_bytes(T;bigfloat_precision)
+
+function _solver_direct_upper_bytes(n::Integer,::Type{T};
+        bigfloat_precision::Integer=precision(BigFloat)) where T
+    # The bordered system has dimension n+1.  Six dense-pattern CSC arrays
+    # conservatively cover the bordered copy, symbolic/numeric factors, and
+    # factorization work arrays.  This is deliberately much larger than the
+    # common sparse case, but unlike an nnz guess it remains useful before
+    # assembly.
+    six=6*_sparse_csc_structural_upper_bytes(n+1,T;bigfloat_precision)
+    six+4big(n)*_scalar_retained_bytes(T;bigfloat_precision)
+end
+
+function _solver_shiftinvert_upper_bytes(n::Integer,::Type{T};
+        bigfloat_precision::Integer=precision(BigFloat)) where T
+    5*_sparse_csc_structural_upper_bytes(n,T;bigfloat_precision)+
+        5big(n)*_scalar_retained_bytes(T;bigfloat_precision)
+end
+
+function _solver_dense_upper_bytes(n::Integer,::Type{T},copies::Integer;
+        bigfloat_precision::Integer=precision(BigFloat)) where T
+    copies*_dense_matrix_structural_bytes(n,T;bigfloat_precision)+
+        4big(n)*_scalar_retained_bytes(T;bigfloat_precision)
+end
+
 """
-    estimate_solver_bytes(x; algorithm=:gmres, krylovdim=30, T=ComplexF64,
+    estimate_solver_bytes(x; algorithm=:gmres, krylovdim=30, recycle_dim=0,
+                          block_size=4, T=ComplexF64,
                           bigfloat_precision=precision(BigFloat))
 
-Estimate solver work-array storage, excluding operator and factorization data.
+Estimate solver work-array storage, excluding the retained input operator.
 Fixed-size isbits values retain exact inline byte accounting; heap-backed
 BigFloat values use the same conservative precision-aware bound as
 [`estimate_state_bytes`](@ref). GMRES real residual/history storage follows the
-real component type of `T` rather than assuming `Float64`.
+real component type of `T` rather than assuming `Float64`. Matrix-free Krylov
+and RK4 formulas count their explicit arrays. Direct, shift-invert, dense
+eigenvalue, and SVD routes instead return conservative structural upper bounds
+for solver-owned matrix/factor arrays; allocator metadata and vendor-library
+internal buffers remain platform dependent.
 """
 function estimate_solver_bytes(x;algorithm=:gmres,krylovdim::Integer=30,
+                               recycle_dim::Integer=0,
+                               block_size::Integer=4,
                                T=ComplexF64,
                                bigfloat_precision::Integer=precision(BigFloat))
     krylovdim>0||throw(ArgumentError("krylovdim must be positive"))
-    ni=pi_dimension(x);mi=Int(min(big(ni),big(krylovdim)));n=big(ni);m=big(mi)
+    recycle_dim>=0||throw(ArgumentError("recycle_dim must be nonnegative"))
+    block_size>0||throw(ArgumentError("block_size must be positive"))
+    ni=pi_dimension(x);mi=Int(min(big(ni),big(krylovdim)));n=big(ni)
+    k=big(min(recycle_dim,max(ni-1,0)))
     scalar_bytes=_scalar_retained_bytes(T;bigfloat_precision)
-    real_bytes=_scalar_retained_bytes(_real_float_type(T);bigfloat_precision)
-    algorithm in (:gmres,:krylov)&&return scalar_bytes*(n*(m+6)+(m+1)*m+2m+1)+real_bytes*m
-    algorithm in (:arnoldi,:harmonic,:iram,:implicit_qr)&&return scalar_bytes*(2n*m+n+3m*m)
-    # Arnoldi/JD search arrays plus a same-dimension restarted-GMRES
-    # correction workspace and six explicit correction vectors.
-    algorithm in (:jd,:jacobi_davidson)&&return scalar_bytes*(6n*m+14n+4m*m+2m)
-    algorithm in (:dense,:direct,:svd)&&return scalar_bytes*n*n
-    algorithm in (:rk4,:dynamics)&&return 5scalar_bytes*n
+    algorithm in (:gmres,:krylov)&&return _performance_gmres_bytes(
+        ni,T,mi;recycle_dim=Int(k),bigfloat_precision)
+    algorithm in (:arnoldi,:ordinary_arnoldi)&&return _performance_arnoldi_bytes(
+        ni,T,mi;mode=:ordinary,bigfloat_precision)
+    if algorithm in (:block_arnoldi,:block)
+        return _performance_block_arnoldi_bytes(
+            ni,T,mi,min(mi,Int(min(BigInt(ni),BigInt(block_size))));
+            bigfloat_precision)
+    end
+    if algorithm in (:harmonic,:iram,:implicit_qr)
+        return _performance_arnoldi_bytes(
+            ni,T,mi;mode=:full,bigfloat_precision)
+    end
+    # A conservative JD estimate uses a same-dimension correction GMRES
+    # (the allocating solver defaults to at most 20) plus its six explicit
+    # full-coordinate correction/locking vectors.
+    if algorithm in (:jd,:jacobi_davidson)
+        return _performance_arnoldi_bytes(
+            ni,T,mi;mode=:full,bigfloat_precision)+
+            _performance_gmres_bytes(ni,T,mi;bigfloat_precision)+
+            _performance_entries_bytes(6n,T;bigfloat_precision)
+    end
+    algorithm===:direct&&return _solver_direct_upper_bytes(ni,T;
+        bigfloat_precision)
+    if algorithm in (:shiftinvert,:shift_invert,:inverse_iteration)
+        return _solver_shiftinvert_upper_bytes(ni,T;bigfloat_precision)
+    end
+    algorithm in (:dense,:eigen)&&return _solver_dense_upper_bytes(ni,T,8;
+        bigfloat_precision)
+    algorithm===:svd&&return _solver_dense_upper_bytes(ni,T,10;
+        bigfloat_precision)
+    algorithm in (:rk4,:dynamics)&&return 3scalar_bytes*n
     throw(ArgumentError("unknown solver-memory algorithm $algorithm"))
+end
+
+function _resource_memory_budget(memory_budget)
+    memory_budget isa Real&&!(memory_budget isa Bool)||throw(ArgumentError(
+        "memory_budget must be a nonnegative number of bytes or Inf"))
+    isnan(memory_budget)&&throw(ArgumentError("memory_budget cannot be NaN"))
+    memory_budget>=0||throw(ArgumentError("memory_budget must be nonnegative"))
+    isinf(memory_budget)&&return (;bytes=nothing,disabled=true)
+    (;bytes=floor(BigInt,memory_budget),disabled=false)
+end
+
+function _resource_component(bytes,provenance::Symbol;includes=(),excludes=())
+    provenance in (:actual,:upper_bound,:estimate,:unknown)||throw(ArgumentError(
+        "invalid resource-estimate provenance $provenance"))
+    converted=bytes===nothing ? nothing : big(bytes)
+    converted===nothing||converted>=0||throw(ArgumentError(
+        "resource byte estimates must be nonnegative"))
+    (;bytes=converted,provenance,includes=Tuple(includes),excludes=Tuple(excludes))
+end
+
+
+function _resource_peak(setup,retained,solve,output)
+    named=((:setup,setup),(:retained,retained),(:solve,solve),(:output,output))
+    unknown_components=Symbol[name for (name,component) in named
+        if component.provenance in (:estimate,:unknown)]
+    missing_bytes=any(component.bytes===nothing for (_,component) in named)
+    retained_bytes=retained.bytes===nothing ? big(0) : retained.bytes
+    setup_known=retained_bytes+(setup.bytes===nothing ? big(0) : setup.bytes)
+    solve_known=retained_bytes+
+        (solve.bytes===nothing ? big(0) : solve.bytes)+
+        (output.bytes===nothing ? big(0) : output.bytes)
+    known_peak=max(setup_known,solve_known)
+    provenance = any(component.provenance===:unknown for (_,component) in named) ?
+        :unknown : any(component.provenance===:estimate for (_,component) in named) ?
+        :estimate : any(component.provenance===:upper_bound for (_,component) in named) ?
+        :upper_bound : :actual
+    bytes=missing_bytes ? nothing : known_peak
+    peak=_resource_component(bytes,provenance;
+        includes=(:retained_storage,:setup_or_solve_workspace,:retained_output),
+        excludes=(:allocator_metadata,:garbage_collector_timing,
+                  :vendor_library_hidden_buffers))
+    (;peak,known_peak_bytes=known_peak,unknown_components=Tuple(unknown_components))
+end
+
+function _resource_budget_status(peak,known_peak_bytes,budget)
+    budget.disabled&&return (:disabled,missing)
+    known_peak_bytes>budget.bytes&&return (:exceeds,false)
+    peak.provenance in (:actual,:upper_bound)&&peak.bytes!==nothing&&
+        return (:fits,isempty(peak.excludes) ? true : missing)
+    (:unknown,missing)
+end
+
+function _enforce_memory_budget(report,operation::AbstractString)
+    report.budget_status===:exceeds||return report
+    throw(ArgumentError("$operation preflight estimates a peak of " *
+        "$(report.known_peak_bytes) bytes, exceeding memory_budget=" *
+        "$(report.memory_budget) bytes. Select a matrix-free/streaming route, " *
+        "reduce the Krylov dimension or saved output, raise memory_budget, or " *
+        "pass memory_budget=Inf to opt out explicitly."))
+end
+
+_resource_source_prepared(x)=x isa Union{CompiledPIModel,SpecializedPIModel,
+    LiouvillianPlan,MatrixFreeLiouvillian,AbstractMatrix}
+
+function _resource_source_has_sparse_operator(x)
+    x isa SparseMatrixCSC&&return true
+    x isa Union{CompiledPIModel,SpecializedPIModel}&&return x.backend===:sparse
+    false
+end
+
+function _resource_base_scalar_type(x)
+    if x isa PIModel
+        T=Complex{_model_geometry_type(x)}
+        for term in x.terms
+            rate=try term_rate(term) catch; nothing end
+            rate isa Number&&(T=promote_type(T,typeof(rate)))
+        end
+        return T
+    end
+    T=try eltype(x) catch; ComplexF64 end
+    T===Any ? ComplexF64 : T
+end
+
+function _resource_value_scalar_type(value)
+    value===nothing&&return nothing
+    value isa Symbol&&return nothing
+    value isa PIState&&return eltype(value.data)
+    value isa Number&&return typeof(value)
+    value isa AbstractArray&&return eltype(value)
+    if hasproperty(value,:V)
+        V=getproperty(value,:V)
+        V isa AbstractArray&&return eltype(V)
+    end
+    T=try eltype(value) catch; Any end
+    T===Any ? nothing : T
+end
+
+function _resource_scalar_type(x,values...)
+    T=_resource_base_scalar_type(x)
+    for value in values
+        V=_resource_value_scalar_type(value)
+        V===nothing||(T=promote_type(T,V))
+    end
+    T
 end
 
 function _recommended_geometry_policy(x,basis)
     basis===nothing&&return (include=false,requirement=:unavailable,
                              source=:no_basis_metadata)
-    model=x isa PIModel ? x : x isa CompiledPIModel ? x.model : nothing
+    model=x isa PIModel ? x :
+          x isa Union{CompiledPIModel,SpecializedPIModel} ? x.model : nothing
     if model!==nothing
         required=any(_term_requires_onebody_geometry,model.terms)
         return (include=required,
@@ -455,39 +806,97 @@ function _recommended_geometry_policy(x,basis)
 end
 
 """
-    recommend_solver(x; task=:steady_state, memory_budget=512*1024^2,
+    recommend_solver(x; task=:steady_state, algorithm=:auto,
+                     memory_budget=512*1024^2, krylovdim=30, recycle_dim=0,
+                     nev=6, block_size=min(nev, 4), vectors=false,
+                     maxrestarts=20, samples=1, saved_states=1,
+                     observable_series=0, workers=1,
                      bigfloat_precision=precision(BigFloat))
 
-Return a transparent heuristic recommendation. This performs no assembly and
-reports its assumptions; `compile(...; backend=:auto)` makes the final backend
-choice from the lowered plan. Model and `CompiledPIModel` inputs include
-one-body geometry only when their terms require it. Inputs carrying only basis
-metadata retain a conservative geometry allowance, identified by
+Return an assembly-free solver and resource preflight. The result preserves the
+historical flat byte fields and additionally provides
+`resources=(setup, retained, solve, output, peak)`. Every component records its
+`bytes`, `provenance` (`:actual`, `:upper_bound`, `:estimate`, or `:unknown`),
+and explicit inclusions/exclusions. `known_peak_bytes` is the largest known
+setup/solve phase total; `budget_status` is `:fits`, `:exceeds`, `:unknown`, or
+`:disabled`, and `safe_to_run` is deliberately `missing` unless a measured or
+structural upper bound supports a safety claim.
+
+For dynamics, `samples` is the number of retained time points,
+`saved_states` is the number of those points whose PI state is retained, and
+`observable_series` counts streamed scalar series. `workers` models concurrent
+task-owned workspaces with one shared prepared source. `memory_budget=Inf`
+explicitly disables budget enforcement. Model and `CompiledPIModel` inputs
+include one-body geometry only when their terms require it. Inputs carrying
+only basis metadata retain a conservative geometry allowance, identified by
 `geometry_requirement=:conservative_unknown`.
+
+Coordinate precision is inferred from `x` unless `T` is supplied. For a
+dynamics-only estimate, `observable_type` and `time_type` can describe wider
+prepared observables or saved-time vectors without incorrectly widening the
+state and RK4 workspace. Dense compatibility solvers account for their actual
+or conservatively bounded storage at no less than `ComplexF64` precision.
+For `task=:spectrum, algorithm=:block_arnoldi`, `block_size` is included in
+the complete reusable block-workspace estimate rather than treated as a free
+matrix--matrix optimization. Prepared sources also contribute their bounded
+per-action materialization transient and any first-use batched Schur buffer;
+`operator_action_per_worker_upper_bytes` reports that part separately.
+Prepared dynamics additionally includes the fresh task-owned application
+workspace constructed by the propagator.
 """
-function recommend_solver(x;task=:steady_state,memory_budget::Integer=512*1024^2,
-                          krylovdim::Integer=30,T=ComplexF64,
+function recommend_solver(x;task=:steady_state,algorithm=:auto,
+                          memory_budget=_DEFAULT_HIGHLEVEL_MEMORY_BUDGET,
+                          krylovdim::Integer=30,nev::Integer=6,
+                          block_size::Integer=min(nev,4),
+                          maxrestarts::Integer=20,
+                          recycle_dim::Integer=0,
+                          vectors::Bool=false,samples::Integer=1,
+                          saved_states::Integer=1,
+                          observable_series::Integer=0,workers::Integer=1,
+                          T=nothing,observable_type=nothing,time_type=nothing,
                           bigfloat_precision::Integer=precision(BigFloat))
-    memory_budget>0||throw(ArgumentError("memory_budget must be positive"))
+    task in (:steady_state,:spectrum,:dynamics)||throw(ArgumentError(
+        "task must be :steady_state, :spectrum, or :dynamics"))
+    krylovdim>0||throw(ArgumentError("krylovdim must be positive"))
+    recycle_dim>=0||throw(ArgumentError("recycle_dim must be nonnegative"))
+    nev>0||throw(ArgumentError("nev must be positive"))
+    block_size>0||throw(ArgumentError("block_size must be positive"))
+    maxrestarts>=0||throw(ArgumentError("maxrestarts must be nonnegative"))
+    samples>=0||throw(ArgumentError("samples must be nonnegative"))
+    saved_states>=0||throw(ArgumentError("saved_states must be nonnegative"))
+    saved_states<=samples||throw(ArgumentError(
+        "saved_states cannot exceed samples"))
+    observable_series>=0||throw(ArgumentError(
+        "observable_series must be nonnegative"))
+    workers>0||throw(ArgumentError("workers must be positive"))
+    budget=_resource_memory_budget(memory_budget)
+    T=T===nothing ? _resource_scalar_type(x) : T
+    T isa Type&&T<:Number||throw(ArgumentError(
+        "T must be a numeric scalar type or nothing"))
+    T=_complex_float_type(T)
+    denseT=promote_type(T,ComplexF64)
+    observable_type=observable_type===nothing ? T : observable_type
+    observable_type isa Type&&observable_type<:Number||throw(ArgumentError(
+        "observable_type must be a numeric scalar type or nothing"))
+    observableT=_complex_float_type(observable_type)
+    time_type=time_type===nothing ? _real_float_type(T) : time_type
+    time_type isa Type&&time_type<:Number||throw(ArgumentError(
+        "time_type must be a numeric scalar type or nothing"))
+    timeT=_real_float_type(time_type)
     n=pi_dimension(x);autonomous=applicable(isautonomous,x) ? isautonomous(x) : true
     scalar_bytes=_scalar_retained_bytes(T;bigfloat_precision)
-    dense_bytes=scalar_bytes*big(n)^2
+    observable_scalar_bytes=_scalar_retained_bytes(
+        observableT;bigfloat_precision)
+    time_scalar_bytes=_scalar_retained_bytes(timeT;bigfloat_precision)
+    dense_bytes=_dense_matrix_structural_bytes(n,T;bigfloat_precision)
+    sparse_bytes=_sparse_csc_structural_upper_bytes(n,T;bigfloat_precision)
     gmres_bytes=estimate_solver_bytes(x;algorithm=:gmres,
-        krylovdim=krylovdim,T=T,bigfloat_precision)
+        krylovdim=krylovdim,recycle_dim,T=T,bigfloat_precision)
     arnoldi_bytes=estimate_solver_bytes(x;algorithm=:arnoldi,
         krylovdim=krylovdim,T=T,bigfloat_precision)
+    block_arnoldi_bytes=estimate_solver_bytes(x;algorithm=:block_arnoldi,
+        krylovdim=krylovdim,block_size,T=T,bigfloat_precision)
     dynamics_bytes=estimate_solver_bytes(x;algorithm=:rk4,T=T,bigfloat_precision)
-    task in (:steady_state,:spectrum,:dynamics)||throw(ArgumentError("task must be :steady_state, :spectrum, or :dynamics"))
-    backend=(!autonomous||dense_bytes>memory_budget||n>512) ? :matrixfree : :sparse
-    algorithm = task===:dynamics ? (autonomous&&backend===:sparse ? :exponential_or_adaptive : :adaptive_or_rk4) :
-                task===:steady_state ? (backend===:sparse ? :direct : :gmres) :
-                (backend===:sparse ? :dense : :arnoldi)
-    reason=!autonomous ? "time-dependent generators require explicit-time matrix-free application" :
-           dense_bytes>memory_budget ? "dense PI storage exceeds the requested memory budget" :
-           n>512 ? "PI dimension exceeds the conservative sparse/direct crossover" :
-           "PI dimension is below the conservative sparse/direct crossover"
-    selected_solver_bytes=task===:steady_state ? gmres_bytes :
-        task===:spectrum ? arnoldi_bytes : dynamics_bytes
     basis=_basis_metadata(x,nothing)
     geometry_policy=_recommended_geometry_policy(x,basis)
     geometry=geometry_policy.include ? estimate_geometry_bytes(basis;
@@ -497,27 +906,227 @@ function recommend_solver(x;task=:steady_state,memory_budget::Integer=512*1024^2
     geometry_setup=basis===nothing ? nothing :
         geometry===nothing ? big(0) : geometry.setup_bytes
     state_bytes=estimate_state_bytes(x;T=T,bigfloat_precision)
-    estimated_peak=geometry_setup===nothing ? nothing :
-        geometry_setup+state_bytes+selected_solver_bytes
-    fits_memory=estimated_peak===nothing ? missing : estimated_peak<=memory_budget
-    if fits_memory===false
-        reason *= iszero(geometry_setup) ?
-            "; estimated state and solver vectors exceed the requested memory budget" :
-            "; estimated geometry setup plus state and solver vectors exceed the requested memory budget"
+    observable_operator_bytes=big(observable_series)*big(n)*
+        observable_scalar_bytes
+    prepared_source=_resource_source_prepared(x)
+    input_retained=big(Base.summarysize(x))
+    term_count=x isa PIModel ? length(x.terms) : 0
+
+    algorithm isa Symbol||throw(ArgumentError(
+        "recommend_solver algorithm must be a Symbol"))
+    normalized = task===:steady_state ?
+        _canonical_stationary_algorithm(algorithm) : task===:spectrum ?
+        _canonical_spectrum_algorithm(algorithm) :
+        _canonical_dynamics_algorithm(algorithm)
+
+    function output_bytes_for(chosen_algorithm)
+        outputT = chosen_algorithm in
+            (:direct,:shiftinvert,:svd,:eigen,:dense) ? denseT : T
+        output_scalar_bytes=_scalar_retained_bytes(outputT;bigfloat_precision)
+        if task===:steady_state
+            return big(workers)*big(n)*output_scalar_bytes
+        elseif task===:spectrum
+            count=min(big(n),big(nev))
+            if chosen_algorithm===:block_arnoldi
+                return big(workers)*_performance_block_arnoldi_output_bytes(
+                    n,T,count,maxrestarts;vectors,
+                    bigfloat_precision)
+            end
+            return big(workers)*(count*output_scalar_bytes+
+                (vectors ? count*big(n)*output_scalar_bytes : big(0)))
+        end
+        big(workers)*(big(samples)*time_scalar_bytes+
+            big(saved_states)*state_bytes+
+            big(samples)*big(observable_series)*observable_scalar_bytes)
     end
-    (;task,dimension=n,autonomous,backend,algorithm,reason,memory_budget,
+
+    function resources_for(chosen_backend,chosen_algorithm)
+        setup = if prepared_source
+            _resource_component(0,:actual;includes=(:already_prepared_source,))
+        elseif geometry_setup===nothing
+            _resource_component(chosen_backend===:sparse ? sparse_bytes : nothing,
+                :unknown;includes=(:known_operator_assembly_storage,),
+                excludes=(:unavailable_geometry_setup,:custom_term_lowering))
+        else
+            assembly=chosen_backend===:sparse ? sparse_bytes : big(0)
+            geometry_temporary=max(big(geometry_setup)-big(geometry_retained),
+                                   big(0))
+            _resource_component(geometry_temporary+assembly,:estimate;
+                includes=(:one_body_geometry_temporary_setup,
+                          :operator_assembly_temporary),
+                excludes=(:allocator_metadata,:pbody_or_custom_term_transients))
+        end
+
+        retained = if prepared_source
+            extra=chosen_backend===:sparse&&!_resource_source_has_sparse_operator(x) ?
+                sparse_bytes : big(0)
+            provenance=iszero(extra)&&iszero(observable_operator_bytes) ?
+                :actual : :upper_bound
+            _resource_component(input_retained+extra+observable_operator_bytes,
+                provenance;includes=(:prepared_source,:prepared_observables,
+                                      :requested_operator_representation),
+                excludes=(:allocator_metadata,))
+        else
+            geometry_known=geometry_retained===nothing ? big(0) : geometry_retained
+            # Trace vectors, immutable kernel blocks, and one task workspace are
+            # linear in retained PI coordinates for built-in one-body/direct
+            # terms.  Geometry has its own stronger structural bound above.
+            plan_payload=big(3+2term_count)*state_bytes
+            operator_payload=chosen_backend===:sparse ? sparse_bytes : big(0)
+            bytes=input_retained+geometry_known+plan_payload+operator_payload+
+                observable_operator_bytes
+            provenance=geometry_retained===nothing ? :unknown : :estimate
+            _resource_component(bytes,provenance;
+                includes=(:input_source,:geometry_retention,
+                          :compiled_kernel_estimate,:prepared_observables,
+                          :requested_operator_representation),
+                excludes=(:allocator_metadata,:custom_term_payloads,
+                          :pbody_geometry_not_captured_by_onebody_estimate))
+        end
+
+        solverT=chosen_algorithm in
+            (:direct,:shiftinvert,:svd,:eigen,:dense) ? denseT : T
+        solver_workspace_single = if task===:steady_state
+            chosen_algorithm===:gmres ? gmres_bytes :
+            estimate_solver_bytes(x;algorithm=chosen_algorithm,
+                krylovdim=krylovdim,T=solverT,bigfloat_precision)
+        elseif task===:spectrum
+            chosen_algorithm===:dense ? estimate_solver_bytes(x;
+                algorithm=:dense,krylovdim=krylovdim,T=solverT,bigfloat_precision) :
+            chosen_algorithm===:block_arnoldi ? block_arnoldi_bytes :
+            chosen_algorithm in (:jd,:jacobi_davidson) ? estimate_solver_bytes(x;
+                algorithm=:jd,krylovdim=krylovdim,T=T,bigfloat_precision) :
+            chosen_algorithm in (:iram,) ? estimate_solver_bytes(x;
+                algorithm=:iram,krylovdim=krylovdim,T=T,bigfloat_precision) :
+            chosen_algorithm===:harmonic ? estimate_solver_bytes(x;
+                algorithm=:harmonic,krylovdim=krylovdim,T=T,bigfloat_precision) :
+            arnoldi_bytes
+        else
+            dynamics_bytes
+        end
+        iterative=task===:dynamics||chosen_algorithm in
+            (:gmres,:arnoldi,:block_arnoldi,:harmonic,:iram,:jd,
+             :jacobi_davidson)
+        operator_action_single=if !iterative
+            big(0)
+        elseif !prepared_source
+            task===:dynamics ? _performance_array_bytes(
+                n,T,0;linear_arrays=16,bigfloat_precision) : big(0)
+        elseif task===:dynamics
+            _performance_linear_operator_workspace_bytes(x)+
+                _performance_source_action_bytes(x,T)
+        else
+            fresh_plan_workspace=x isa LiouvillianPlan ?
+                _performance_linear_operator_workspace_bytes(x) : big(0)
+            batch_growth=chosen_algorithm===:block_arnoldi ?
+                _performance_batched_action_growth_bytes(
+                    x,min(n,krylovdim,block_size)) : big(0)
+            fresh_plan_workspace+
+                _performance_source_action_bytes(x,T)+batch_growth
+        end
+        solver_single=solver_workspace_single+operator_action_single
+        solver_provenance = chosen_algorithm in
+            (:direct,:shiftinvert,:svd,:eigen,:dense) ? :upper_bound : :actual
+        !iszero(operator_action_single)&&(solver_provenance=:upper_bound)
+        solve=_resource_component(big(workers)*solver_single,solver_provenance;
+            includes=(:task_owned_solver_workspaces,
+                      :operator_action_transients,
+                      :lazy_batched_operator_workspace),
+            excludes=(:preconditioner_payload,:vendor_library_hidden_buffers))
+        output_bytes=output_bytes_for(chosen_algorithm)
+        output=_resource_component(output_bytes,:upper_bound;
+            includes=(:returned_states,:returned_values,:saved_times,
+                      :observable_series),excludes=(:container_metadata,))
+        peak_info=_resource_peak(setup,retained,solve,output)
+        (;setup,retained,solve,output,
+          solver_workspace_single,operator_action_single,peak_info...)
+    end
+
+    requested_algorithm=normalized
+    if normalized===:auto
+        if task===:steady_state
+            direct_resources=resources_for(:sparse,:direct)
+            direct_fits=budget.disabled||
+                direct_resources.known_peak_bytes<=budget.bytes
+            if autonomous&&n<=512&&direct_fits
+                backend=:sparse;selected_algorithm=:direct
+                reason="autonomous PI dimension and conservative direct-solve peak are below the crossover and budget"
+            else
+                backend=:matrixfree;selected_algorithm=:gmres
+                reason=!autonomous ?
+                    "time-dependent generators require explicit-time matrix-free application" :
+                    n>512 ? "PI dimension exceeds the conservative direct-solve crossover" :
+                    "the conservative direct-solve peak exceeds the requested memory budget"
+            end
+        elseif task===:spectrum
+            dense_resources=resources_for(:sparse,:dense)
+            dense_fits=budget.disabled||dense_resources.known_peak_bytes<=budget.bytes
+            if autonomous&&n<=256&&dense_fits
+                backend=:sparse;selected_algorithm=:dense
+                reason="autonomous PI dimension and conservative dense-spectrum peak are below the crossover and budget"
+            else
+                backend=:matrixfree;selected_algorithm=:arnoldi
+                reason=!autonomous ?
+                    "stationary spectra require an autonomous generator; freeze the model before solving" :
+                    n>256 ? "PI dimension exceeds the conservative dense-spectrum crossover" :
+                    "the conservative dense-spectrum peak exceeds the requested memory budget"
+            end
+        else
+            backend=:matrixfree;selected_algorithm=:rk4
+            reason="fixed-step high-level dynamics uses preallocated matrix-free RK4 application"
+        end
+    else
+        selected_algorithm=normalized
+        backend = task===:dynamics || selected_algorithm in
+            (:gmres,:arnoldi,:block_arnoldi,:harmonic,:iram,:jd,
+             :jacobi_davidson) ?
+            :matrixfree : :sparse
+        reason="the explicitly requested $selected_algorithm algorithm determines the $backend backend"
+    end
+
+    resources=resources_for(backend,selected_algorithm)
+    budget_status,safe_to_run=_resource_budget_status(resources.peak,
+        resources.known_peak_bytes,budget)
+    budget_status===:exceeds&&(reason *=
+        "; the selected route exceeds the requested memory budget")
+    selected_solver_bytes=resources.solve.bytes
+    estimated_peak=resources.peak.bytes
+    fits_memory=budget_status===:fits ? true :
+        budget_status===:exceeds ? false : missing
+    (;task,dimension=n,autonomous,backend,algorithm=selected_algorithm,
+      requested_algorithm,reason,memory_budget,
       state_bytes,dense_upper_bytes=dense_bytes,
+      sparse_operator_upper_bytes=sparse_bytes,
       scalar_retained_bytes=scalar_bytes,
+      observable_scalar_type=observableT,time_scalar_type=timeT,
+      observable_scalar_retained_bytes=observable_scalar_bytes,
+      time_scalar_retained_bytes=time_scalar_bytes,
       scalar_storage_estimate=_scalar_storage_estimate(T),
       bigfloat_precision_assumption=_scalar_precision_assumption(
           T,bigfloat_precision),
       krylov_vector_bytes=task===:spectrum ? arnoldi_bytes : gmres_bytes,
       gmres_vector_bytes=gmres_bytes,arnoldi_vector_bytes=arnoldi_bytes,
+      block_arnoldi_vector_bytes=block_arnoldi_bytes,block_size,
       dynamics_workspace_bytes=dynamics_bytes,
       selected_solver_bytes,geometry_retained_upper_bytes=geometry_retained,
       geometry_setup_upper_bytes=geometry_setup,
       geometry_requirement=geometry_policy.requirement,
       geometry_assumption_source=geometry_policy.source,
+      setup_peak_bytes=resources.setup.bytes,
+      retained_bytes=resources.retained.bytes,
+      solve_workspace_bytes=resources.solve.bytes,
+      operator_action_per_worker_upper_bytes=
+          resources.operator_action_single,
+      operator_action_upper_bytes=
+          big(workers)*resources.operator_action_single,
+      output_bytes=resources.output.bytes,
+      resources=(setup=resources.setup,retained=resources.retained,
+                 solve=resources.solve,output=resources.output,
+                 peak=resources.peak),
+      known_peak_bytes=resources.known_peak_bytes,
+      peak_provenance=resources.peak.provenance,
+      unknown_components=resources.unknown_components,
+      budget_status,safe_to_run,
       estimated_peak_bytes=estimated_peak,fits_memory,
       heuristic=true)
 end
@@ -532,6 +1141,14 @@ end
 function diagnostics(prepared::CompiledPIModel;kwargs...)
     merge(prepared.estimates,(;backend=prepared.backend,
         autonomous=isautonomous(prepared),retained_bytes=Base.summarysize(prepared)))
+end
+function diagnostics(family::CompiledPIModelFamily;kwargs...)
+    merge(family.estimates,(;varied_rates=family.rate_indices,
+        retained_bytes=Base.summarysize(family)))
+end
+function diagnostics(prepared::SpecializedPIModel;kwargs...)
+    merge(prepared.estimates,(;backend=prepared.backend,autonomous=true,
+        rates=prepared.rates,retained_bytes=Base.summarysize(prepared)))
 end
 function diagnostics(plan::LiouvillianPlan;kwargs...)
     (;dimension=size(plan,1),scalar_type=eltype(plan),autonomous=isautonomous(plan),

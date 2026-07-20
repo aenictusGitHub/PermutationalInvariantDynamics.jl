@@ -260,8 +260,14 @@ function _advanced_column_factor!(Q,W,R;breakdown_factor=nothing)
     rank
 end
 
-function _advanced_apply_columns!(dest,A,src)
+function _advanced_apply_columns!(dest,A,src,operator_workspace=nothing)
     size(dest)==size(src)||throw(DimensionMismatch("operator block arrays differ in size"))
+    if operator_workspace!==nothing
+        applicable(apply!,dest,A,src,operator_workspace)||throw(ArgumentError(
+            "the supplied operator_workspace does not support batched application of $(typeof(A))"))
+        apply!(dest,A,src,operator_workspace)
+        return dest
+    end
     if !(A isa Function)&&applicable(mul!,dest,A,src)
         try
             mul!(dest,A,src)
@@ -440,6 +446,453 @@ function block_gmres(A,B::AbstractMatrix;initial_guess=nothing,
     reused=workspace!==nothing
     ws=reused ? workspace : BlockGMRESWorkspace(T,n,p,block_krylovdim)
     merge(block_gmres!(X,A,B,ws;kwargs...),(workspace_reused=reused,))
+end
+
+
+# Thick-restarted block Arnoldi --------------------------------------------
+
+"""
+    BlockArnoldiWorkspace(T, n, krylovdim, block_size)
+    BlockArnoldiWorkspace(A, krylovdim, block_size)
+
+Reusable full-coordinate storage for [`block_arnoldi_spectrum`](@ref).
+`krylovdim` is the maximum total search-space dimension, while `block_size`
+is the maximum number of directions advanced in one matrix--matrix operator
+application. The workspace is mutable and must be owned by one task at a
+time.
+
+The implementation stores both the search basis and its operator image so a
+Rayleigh--Ritz extraction and thick restart do not rebuild already available
+actions. Candidate Ritz vectors are nevertheless reapplied in batches before
+their reported residuals are accepted; diagnostics are therefore full-space
+residuals rather than projected estimates.
+"""
+mutable struct BlockArnoldiWorkspace{T}
+    V::Matrix{T}
+    AV::Matrix{T}
+    X::Matrix{T}
+    AX::Matrix{T}
+    W::Matrix{T}
+    residual_seeds::Matrix{T}
+    coefficients::Matrix{T}
+    projected::Matrix{T}
+    factor::Matrix{T}
+end
+
+function _performance_block_arnoldi_workspace_bytes(dimension::Integer,::Type{T},
+        krylovdim::Integer,block_size::Integer;
+        bigfloat_precision::Integer=precision(BigFloat)) where T
+    n=BigInt(dimension);m=min(n,BigInt(krylovdim))
+    p=min(n,m,BigInt(block_size))
+    entries=4n*m+2n*p+m*p+m*m+p*p
+    _performance_entries_bytes(entries,T;bigfloat_precision)
+end
+
+function _performance_block_arnoldi_projected_bytes(krylovdim::Integer,
+        ::Type{T};bigfloat_precision::Integer=precision(BigFloat)) where T
+    m=BigInt(krylovdim)
+    # Ritz vectors, eigenvalues, and conservative dense driver scratch while
+    # the workspace-owned projected matrix remains live.
+    _performance_entries_bytes(3m*m+8m,T;bigfloat_precision)
+end
+
+function _performance_block_arnoldi_bytes(dimension::Integer,::Type{T},
+        krylovdim::Integer,block_size::Integer;
+        bigfloat_precision::Integer=precision(BigFloat)) where T
+    m=min(BigInt(dimension),BigInt(krylovdim))
+    _performance_block_arnoldi_workspace_bytes(
+        dimension,T,krylovdim,block_size;bigfloat_precision)+
+        _performance_block_arnoldi_projected_bytes(
+            m,T;bigfloat_precision)
+end
+
+function _performance_block_arnoldi_output_bytes(dimension::Integer,::Type{T},
+        nev::Integer,maxrestarts::Integer;vectors::Bool=false,
+        bigfloat_precision::Integer=precision(BigFloat)) where T
+    entries=8BigInt(nev)+12(BigInt(maxrestarts)+1)+
+        (vectors ? BigInt(dimension)*BigInt(nev) : big(0))
+    _performance_entries_bytes(entries,T;bigfloat_precision)
+end
+
+function _block_arnoldi_workspace_owned_bytes(work::BlockArnoldiWorkspace)
+    sum(BigInt(Base.summarysize(array)) for array in
+        (work.V,work.AV,work.X,work.AX,work.W,work.residual_seeds,
+         work.coefficients,work.projected,work.factor))
+end
+
+_block_operator_workspace_bytes(::Nothing)=big(0)
+_block_operator_workspace_bytes(work)=BigInt(Base.summarysize(work))
+
+function BlockArnoldiWorkspace(::Type{T},n::Integer,krylovdim::Integer,
+                               block_size::Integer) where T
+    n>0||throw(ArgumentError("dimension must be positive"))
+    krylovdim>0||throw(ArgumentError("krylovdim must be positive"))
+    block_size>0||throw(ArgumentError("block_size must be positive"))
+    BigInt(n)<=typemax(Int)&&BigInt(krylovdim)<=typemax(Int)&&
+        BigInt(block_size)<=typemax(Int)||throw(ArgumentError(
+            "block-Arnoldi dimensions must be representable as Int values"))
+    ni=Int(n);m=min(ni,Int(krylovdim));p=min(ni,m,Int(block_size))
+    BlockArnoldiWorkspace(zeros(T,ni,m),zeros(T,ni,m),
+        zeros(T,ni,m),zeros(T,ni,m),zeros(T,ni,p),zeros(T,ni,p),
+        zeros(T,m,p),zeros(T,m,m),zeros(T,p,p))
+end
+
+function BlockArnoldiWorkspace(A,krylovdim::Integer,block_size::Integer)
+    n=size(A,1);size(A,2)==n||throw(DimensionMismatch(
+        "operator must be square"))
+    S=_advanced_krylov_eltype(A);S===nothing&&throw(ArgumentError(
+        "use BlockArnoldiWorkspace(T, n, krylovdim, block_size) for a callable operator"))
+    BlockArnoldiWorkspace(_complex_float_type(S),n,krylovdim,block_size)
+end
+
+function _check_block_arnoldi_workspace(work::BlockArnoldiWorkspace,n,m,p)
+    size(work.V,1)==n&&size(work.V,2)>=m||throw(DimensionMismatch(
+        "block-Arnoldi basis workspace is too small"))
+    size(work.AV,1)==n&&size(work.AV,2)>=m&&
+        size(work.X,1)==n&&size(work.X,2)>=m&&
+        size(work.AX,1)==n&&size(work.AX,2)>=m||throw(DimensionMismatch(
+            "block-Arnoldi image workspace is too small"))
+    size(work.W,1)==n&&size(work.W,2)>=p&&
+        size(work.residual_seeds,1)==n&&
+        size(work.residual_seeds,2)>=p||throw(DimensionMismatch(
+            "block-Arnoldi batch workspace is too small"))
+    size(work.coefficients,1)>=m&&size(work.coefficients,2)>=p&&
+        size(work.projected,1)>=m&&size(work.projected,2)>=m&&
+        size(work.factor,1)>=p&&size(work.factor,2)>=p||
+        throw(DimensionMismatch("block-Arnoldi projected workspace is too small"))
+    work
+end
+
+function _block_orthogonalize_against!(W,V,k,coefficients)
+    k==0&&return W
+    columns=size(W,2);C=view(coefficients,1:k,1:columns);Vk=view(V,:,1:k)
+    for _ in 1:2
+        mul!(C,adjoint(Vk),W)
+        mul!(W,Vk,C,-one(eltype(W)),one(eltype(W)))
+    end
+    W
+end
+
+function _block_append!(V,k,W,factor;breakdown_factor)
+    available=min(size(W,2),size(V,2)-k)
+    available==0&&return 0
+    Q=view(V,:,k+1:k+available)
+    _advanced_column_factor!(Q,view(W,:,1:available),
+        view(factor,1:available,1:available);
+        breakdown_factor=breakdown_factor)
+end
+
+function _block_apply_chunks!(destination,A,source,columns,capacity,
+                              operator_workspace)
+    batches=0;applications=0;first_column=1
+    while first_column<=columns
+        last_column=min(columns,first_column+capacity-1)
+        _advanced_apply_columns!(view(destination,:,first_column:last_column),
+            A,view(source,:,first_column:last_column),operator_workspace)
+        batches+=1;applications+=last_column-first_column+1
+        first_column=last_column+1
+    end
+    applications,batches
+end
+
+function _block_random_complement!(work,rng,k,p,breakdown_factor)
+    available=min(p,size(work.V,2)-k)
+    available==0&&return 0
+    W=view(work.W,:,1:available);randn!(rng,W)
+    _block_orthogonalize_against!(W,work.V,k,work.coefficients)
+    _block_append!(work.V,k,W,work.factor;
+                   breakdown_factor=breakdown_factor)
+end
+
+"""
+    block_arnoldi_spectrum(A; nev=6, block_size=min(nev, 4),
+        krylovdim=nothing, retained_dimension=nothing, maxrestarts=20,
+        which=:LR, target=nothing, initial_subspace=nothing,
+        operator_workspace=nothing, workspace=nothing,
+        memory_budget=512*1024^2, ...)
+
+Compute selected right eigenpairs with a thick-restarted block Arnoldi
+search. Several directions are advanced together, allowing a prepared
+matrix--matrix operator kernel (notably a [`FloquetBatchWorkspace`](@ref)) to
+reuse schedules and BLAS-3 Schur contractions. Dependent initial and generated
+directions are deflated by two-pass modified Gram--Schmidt.
+
+`A` must be a sized square operator. A bare mutating callable does not carry
+the dimension required to allocate the block basis; wrap it in a
+[`MatrixFreeLiouvillian`](@ref) (and provide a batched callback when available).
+
+This routine is a block/thick-restarted Rayleigh--Ritz method. It is not an
+implicit-QR block IRAM implementation. Existing
+[`implicitly_restarted_arnoldi_spectrum`](@ref) remains the exact-shift scalar
+IRAM route.
+
+`krylovdim` bounds the total number of retained full-coordinate basis vectors;
+`retained_dimension` controls the thick restart. At every extraction the
+selected Ritz vectors are reapplied to `A` in batches, and `residuals` stores
+`norm(A*v-lambda*v)` from those fresh full-space actions. Nonconvergence raises
+unless `require_convergence=false`.
+
+`operator_workspace` is optional caller-owned scratch for an operator with an
+explicit batched `apply!` method. It is reused but never retained by the
+`BlockArnoldiWorkspace`; both objects must be task-local.
+
+The full block basis, projected eigensolve, predictable diagnostics, requested
+output vectors, source-action scratch, and supplied operator workspace are
+checked against `memory_budget` before an internal `BlockArnoldiWorkspace` is
+allocated. `memory_budget=Inf` is the explicit opt-out.
+"""
+function block_arnoldi_spectrum(A;nev::Integer=6,block_size::Integer=min(nev,4),
+        krylovdim=nothing,retained_dimension=nothing,maxrestarts::Integer=20,
+        which::Symbol=:LR,target=nothing,initial_subspace=nothing,
+        atol::Real=1e-10,rtol::Real=1e-8,vectors::Bool=false,
+        rng=Random.default_rng(),require_convergence::Bool=true,
+        breakdown_factor=nothing,operator_workspace=nothing,workspace=nothing,
+        memory_budget=_DEFAULT_HIGHLEVEL_MEMORY_BUDGET)
+    applicable(size,A,1)&&applicable(size,A,2)||throw(ArgumentError(
+        "block Arnoldi requires a sized operator; wrap a callable in MatrixFreeLiouvillian"))
+    n=size(A,1);size(A,2)==n||throw(DimensionMismatch(
+        "operator must be square"))
+    0<nev<=n||throw(ArgumentError(
+        "nev must lie between 1 and the operator dimension"))
+    block_size>0||throw(ArgumentError("block_size must be positive"))
+    maxrestarts>=0||throw(ArgumentError("maxrestarts must be nonnegative"))
+    BigInt(nev)<=typemax(Int)&&BigInt(block_size)<=typemax(Int)&&
+        BigInt(maxrestarts)<=typemax(Int)||throw(ArgumentError(
+            "block-Arnoldi integer controls must be representable as Int values"))
+    which in (:LR,:LM,:SM)||throw(ArgumentError(
+        "which must be :LR, :LM, or :SM"))
+    _check_finite_krylov_target(target)
+    initial_subspace===nothing||begin
+        initial_subspace isa AbstractMatrix||throw(ArgumentError(
+            "initial_subspace must be a matrix or nothing"))
+        size(initial_subspace,1)==n||throw(DimensionMismatch(
+            "initial_subspace has the wrong row dimension"))
+        0<size(initial_subspace,2)<=block_size||throw(ArgumentError(
+            "initial_subspace must contain between one and block_size columns"))
+    end
+    requested_m=if krylovdim===nothing
+        min(BigInt(typemax(Int)),max(BigInt(30),3BigInt(nev)+2BigInt(block_size)))
+    else
+        krylovdim isa Integer||throw(ArgumentError(
+            "krylovdim must be an integer or nothing"))
+        krylovdim>0||throw(ArgumentError("krylovdim must be positive"))
+        BigInt(krylovdim)<=typemax(Int)||throw(ArgumentError(
+            "krylovdim must be representable as an Int"))
+        BigInt(krylovdim)
+    end
+    m=min(n,Int(requested_m));m>=nev||throw(ArgumentError(
+        "krylovdim must be at least nev"))
+    p=min(n,Int(block_size),m)
+    initial_subspace===nothing||size(initial_subspace,2)<=p||
+        throw(ArgumentError(
+            "initial_subspace cannot have more than min(block_size, krylovdim, dimension) columns"))
+    default_retain=max(BigInt(nev),min(2BigInt(nev),BigInt(m)-BigInt(p)))
+    requested_retain=retained_dimension===nothing ? default_retain : begin
+        retained_dimension isa Integer||throw(ArgumentError(
+            "retained_dimension must be an integer or nothing"))
+        retained_dimension>0||throw(ArgumentError(
+            "retained_dimension must be positive"))
+        BigInt(retained_dimension)<=typemax(Int)||throw(ArgumentError(
+            "retained_dimension must be representable as an Int"))
+        BigInt(retained_dimension)
+    end
+    retain_limit=m==n ? m : m-1
+    keep=min(retain_limit,Int(requested_retain))
+    maxrestarts==0||keep>=nev||throw(ArgumentError(
+        "retained_dimension must leave room for at least nev selected vectors"))
+
+    T=_advanced_krylov_eltype(A)
+    T===nothing&&(T=initial_subspace===nothing ? ComplexF64 :
+        _complex_float_type(eltype(initial_subspace)))
+    T=_complex_float_type(T)
+    initial_subspace===nothing||
+        (T=promote_type(T,_complex_float_type(eltype(initial_subspace))))
+    target===nothing||(T=_advanced_promote_scalar_type(T,target))
+    _advanced_check_operator_precision(A,T)
+    workspace===nothing||_check_block_arnoldi_workspace(workspace,n,m,p)
+    workspace_type=workspace===nothing ? T : eltype(workspace.V)
+    promote_type(workspace_type,T)===workspace_type||throw(ArgumentError(
+        "block-Arnoldi workspace scalar type cannot represent the inputs"))
+    _advanced_check_operator_precision(A,workspace_type)
+    solver_storage=workspace===nothing ?
+        _performance_block_arnoldi_bytes(n,workspace_type,m,p) :
+        _block_arnoldi_workspace_owned_bytes(workspace)+
+            _performance_block_arnoldi_projected_bytes(m,workspace_type)
+    operator_growth=operator_workspace===nothing ?
+        _performance_batched_action_growth_bytes(A,p) :
+        _performance_batched_workspace_growth_bytes(operator_workspace,p)
+    estimate=solver_storage+
+        _performance_source_action_bytes(A,workspace_type)+
+        _block_operator_workspace_bytes(operator_workspace)+
+        operator_growth+
+        _performance_block_arnoldi_output_bytes(n,workspace_type,nev,
+            maxrestarts;vectors)
+    _require_performance_budget("thick-restarted block-Arnoldi spectrum",
+        estimate,memory_budget;guidance=
+        "Reduce krylovdim/block_size/nev or increase the budget.")
+    work=workspace===nothing ? BlockArnoldiWorkspace(workspace_type,n,m,p) :
+        workspace
+    RT=typeof(real(zero(workspace_type)))
+    atolT,rtolT=_advanced_check_tolerances(atol,rtol,RT)
+    factor=breakdown_factor===nothing ? sqrt(eps(RT)) : begin
+        breakdown_factor isa Real&&isfinite(breakdown_factor)&&
+            breakdown_factor>=0||throw(ArgumentError(
+                "breakdown_factor must be finite and nonnegative"))
+        promote_type(RT,typeof(breakdown_factor))===RT||throw(ArgumentError(
+            "breakdown_factor cannot be represented in workspace precision"))
+        RT(breakdown_factor)
+    end
+
+    fill!(work.V,zero(workspace_type));fill!(work.AV,zero(workspace_type))
+    initial_columns=initial_subspace===nothing ? p : size(initial_subspace,2)
+    W=view(work.W,:,1:initial_columns)
+    initial_subspace===nothing ? randn!(rng,W) : copyto!(W,initial_subspace)
+    k=_block_append!(work.V,0,W,work.factor;breakdown_factor=factor)
+    k>0||throw(ArgumentError(
+        "initial_subspace has no numerically independent nonzero direction"))
+    frontier_start=1;frontier_end=k
+    applications=0;batches=0;history=NamedTuple[];best=nothing
+
+    for cycle in 0:Int(maxrestarts)
+        while frontier_start<=frontier_end
+            q=frontier_end-frontier_start+1
+            input=view(work.V,:,frontier_start:frontier_end)
+            image=view(work.W,:,1:q)
+            _advanced_apply_columns!(image,A,input,operator_workspace)
+            applications+=q;batches+=1
+            copyto!(view(work.AV,:,frontier_start:frontier_end),image)
+            k==m&&break
+            _block_orthogonalize_against!(image,work.V,k,work.coefficients)
+            appended=_block_append!(work.V,k,image,work.factor;
+                                    breakdown_factor=factor)
+            if appended==0
+                appended=_block_random_complement!(work,rng,k,p,factor)
+            end
+            appended==0&&break
+            frontier_start=k+1;k+=appended;frontier_end=k
+        end
+
+        k>=nev||throw(ArgumentError(
+            "block Arnoldi constructed only $k independent directions for nev=$nev"))
+        Vk=view(work.V,:,1:k);AVk=view(work.AV,:,1:k)
+        H=view(work.projected,1:k,1:k);mul!(H,adjoint(Vk),AVk)
+        E=_projected_eigen!(H)
+        requested_target=target===nothing ? nothing : workspace_type(target)
+        order=_selected_ritz_order(E.values,which,requested_target)
+        selected=order[1:min(Int(nev),length(order))]
+        nselected=length(selected);Y=view(E.vectors,:,selected)
+        X=view(work.X,:,1:nselected);mul!(X,Vk,Y)
+        AX=view(work.AX,:,1:nselected)
+        added_applications,added_batches=_block_apply_chunks!(AX,A,X,
+            nselected,p,operator_workspace)
+        applications+=added_applications;batches+=added_batches
+        values=Vector{workspace_type}(E.values[selected])
+        residuals=Vector{RT}(undef,nselected)
+        action_scale=max(maximum((norm(view(AVk,:,column))
+            for column in 1:k);init=zero(RT)),floatmin(RT))
+        for column in 1:nselected
+            nx=_advanced_checked_norm(view(X,:,column),
+                "block-Arnoldi Ritz vector")
+            nx>zero(RT)||throw(ArgumentError(
+                "block-Arnoldi extraction produced a zero Ritz vector"))
+            view(X,:,column)./=nx;view(AX,:,column)./=nx
+            @views @. work.residual_seeds[:,1]=
+                AX[:,column]-values[column]*X[:,column]
+            residuals[column]=_advanced_checked_norm(
+                view(work.residual_seeds,:,1),
+                "block-Arnoldi full residual")
+        end
+        tolerance=atolT+rtolT*action_scale
+        isfinite(tolerance)||throw(ArgumentError(
+            "block-Arnoldi residual tolerance overflowed; rescale the operator or use wider precision"))
+        converged=residuals .<= tolerance
+        push!(history,(cycle,subspace_dimension=k,
+            converged=count(converged),maximum_residual=maximum(residuals),
+            residual_scale=action_scale,operator_applications=applications,
+            operator_batches=batches))
+        best=(values=copy(values),residuals=copy(residuals),
+            converged=copy(converged),iterations=applications,
+            operator_applications=applications,operator_batches=batches,
+            restarts=cycle,krylov_dimension=m,block_size=p,
+            retained_dimension=keep,final_subspace_dimension=k,
+            dimension=n,which,target=requested_target,
+            algorithm=:block_arnoldi,residual_scale=action_scale,
+            residual_tolerance=tolerance,restart_history=copy(history),
+            workspace_reused=workspace!==nothing,
+            operator_workspace_reused=operator_workspace!==nothing)
+        if nselected>=nev&&all(converged)
+            return vectors ? merge(best,(vectors=copy(X),)) : best
+        end
+        cycle==maxrestarts&&break
+        k==n&&break
+
+        retained=min(keep,length(order),k)
+        retained_order=order[1:retained]
+        retained_X=view(work.X,:,1:retained)
+        mul!(retained_X,Vk,view(E.vectors,:,retained_order))
+
+        retained_AX=view(work.AX,:,1:retained)
+        added_applications,added_batches=_block_apply_chunks!(retained_AX,A,
+            retained_X,retained,p,operator_workspace)
+        applications+=added_applications;batches+=added_batches
+
+        # Preserve up to one block of unconverged Ritz residuals before the
+        # search basis is overwritten. They become the next expansion front.
+        residual_count=0
+        for position in 1:retained
+            position<=nselected&&converged[position]&&continue
+            residual_count==p&&break
+            residual_count+=1
+            λ=workspace_type(E.values[retained_order[position]])
+            @views @. work.residual_seeds[:,residual_count]=
+                retained_AX[:,position]-
+                λ*retained_X[:,position]
+        end
+
+        fill!(work.V,zero(workspace_type));fill!(work.AV,zero(workspace_type))
+        copyto!(view(work.W,:,1:min(retained,p)),
+                view(retained_X,:,1:min(retained,p)))
+        # Retained dimensions may exceed one batch; factor them in chunks
+        # against the already accepted columns without truncating the space.
+        k=0;start=1
+        while start<=retained
+            stop=min(retained,start+p-1);columns=stop-start+1
+            block=view(work.W,:,1:columns)
+            copyto!(block,view(retained_X,:,start:stop))
+            _block_orthogonalize_against!(block,work.V,k,work.coefficients)
+            appended=_block_append!(work.V,k,block,work.factor;
+                                    breakdown_factor=factor)
+            k+=appended;start=stop+1
+        end
+        k>=nev||throw(ArgumentError(
+            "block-Arnoldi restart lost the requested invariant subspace"))
+        added_applications,added_batches=_block_apply_chunks!(
+            view(work.AV,:,1:k),A,view(work.V,:,1:k),k,p,
+            operator_workspace)
+        applications+=added_applications;batches+=added_batches
+        frontier_start=1;frontier_end=0
+        if residual_count>0&&k<m
+            residual_block=view(work.residual_seeds,:,1:min(residual_count,m-k))
+            _block_orthogonalize_against!(residual_block,work.V,k,
+                                          work.coefficients)
+            appended=_block_append!(work.V,k,residual_block,work.factor;
+                                    breakdown_factor=factor)
+            if appended>0
+                frontier_start=k+1;k+=appended;frontier_end=k
+            end
+        end
+        if frontier_start>frontier_end&&k<m
+            appended=_block_random_complement!(work,rng,k,p,factor)
+            if appended>0
+                frontier_start=k+1;k+=appended;frontier_end=k
+            end
+        end
+    end
+
+    require_convergence&&throw(ArgumentError(
+        "thick-restarted block Arnoldi did not converge in $maxrestarts restarts; maximum requested residual=$(maximum(best.residuals))"))
+    vectors ? merge(best,(vectors=copy(view(work.X,:,1:length(best.values))),)) :
+        best
 end
 
 

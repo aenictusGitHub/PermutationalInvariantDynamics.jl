@@ -40,6 +40,18 @@ usual_liouvillian_symmetries
 MatrixFreeSymmetryProjector
 SymmetryProjectorWorkspace
 matrixfree_symmetry_projector
+SymmetryCoordinateRestriction
+RestrictionInvarianceReport
+RestrictedLiouvillian
+RestrictedLiouvillianWorkspace
+diagonal_symmetry_restriction
+retained_indices
+restricted_trace_vector
+restrict!
+embed!
+restriction_invariance
+restriction_full_residual
+restricted_steady_state
 ```
 
 Simultaneous commuting-charge projectors are documented in
@@ -48,6 +60,7 @@ Simultaneous commuting-charge projectors are documented in
 ## Response and sensitivities
 
 ```@docs
+ResponseWorkspace
 liouvillian_modes
 resolvent_norm
 adjoint_evolve
@@ -81,6 +94,7 @@ SVDAlgorithm
 EigenAlgorithm
 ShiftInvertAlgorithm
 GMRESAlgorithm
+RecycledGMRESAlgorithm
 HarmonicArnoldiAlgorithm
 SteadyStateResult
 DynamicsResult

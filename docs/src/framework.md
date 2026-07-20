@@ -505,7 +505,11 @@ PIBasis -> PIModel -> compile -> CompiledPIModel -> solver or analysis
 
 (parameter grid, builder) -> ParameterScanPlan -> parameter_scan
 
-(PI system, exponential baths) -> HEOMPlan -> HEOM state or solver
+(periodic compiled generator) -> FloquetMap -> multiplier or fixed-point solver
+
+(autonomous compiled generator) -> ResponseWorkspace -> response or adjoint action
+
+(PI system, exponential baths) -> scaled/unscaled HEOMPlan -> HEOM state or solver
 ```
 
 | Object | Role | Ownership rule |
@@ -517,8 +521,11 @@ PIBasis -> PIModel -> compile -> CompiledPIModel -> solver or analysis
 | `CompiledPIModel` | Prepared term lowering and sparse or matrix-free backend | Compile once and share read-only |
 | `LiouvillianWorkspace` and solver workspaces | Mutable multiplication and Krylov scratch | One per concurrent task or thread |
 | Advanced Krylov workspaces | Dominant bases/residual arrays for block, multi-shift, recycled, or exponential actions | One per concurrent solve; recycled state belongs to one ordered chain |
+| `FloquetMap`, `FloquetWorkspace` | Immutable period/integration recipe and forward/adjoint RK scratch | Map shared with synchronized convenience calls; one explicit workspace per concurrent period action |
+| `ResponseWorkspace` | Restarted-GMRES and/or exponential-action storage for one prepared source | Reuse sequentially; one workspace per concurrent response task |
 | `ParameterScanPlan`, `ParameterScanWorkspace` | Immutable scan recipe and mutable continuation/solver scratch | Plan shared read-only; one workspace per serial caller or threaded worker |
-| `HEOMPlan`, HEOM workspaces | Immutable ADO topology/couplings and application/RK4 scratch | Plan shared read-only; one workspace per concurrent application/evolution |
+| `HEOMPlan`, HEOM workspaces | Immutable scaled/unscaled ADO topology/couplings and application/RK4 scratch | Plan shared read-only; one workspace per concurrent application/evolution |
+| `WeakPITrajectoryPlan`, weak-PI workspaces | Immutable Schur-Kraus unraveling and task-owned path/batch scratch | Plan shared read-only; one workspace and RNG per concurrent worker |
 | `QuditHusimiPlan` | Dense coherent vectors for one exact basis, point set, and sector selection | Share read-only across states; setup can dominate |
 | `DiffusiveBatchPlan`, batch workspaces | Prepared trajectory request and worker-local path/RNG buffers | Plan shared read-only; workspace reused sequentially only |
 | `ConvergenceStudyResult` | All raw refinement results, estimates, diagnostics, and decisions | Immutable record; memory includes every retained evaluator result |
@@ -535,6 +542,14 @@ global sparse matrix would dominate memory, for driven models, or for Krylov
 methods. Explicit `apply!` and `apply_adjoint!` calls should reuse a caller-
 owned workspace in hot or parallel loops. The convenient compatibility calls
 are synchronized and safe, but concurrent calls serialize.
+
+When a small model needs several one-body/Appendix-D geometry families,
+compilation automatically shares one bounded, transient `OneBoxCGCache`
+during lowering. For repeated independent compilations, prepare a basis-owned
+cache at the greatest required body order and pass it as `coefficient_cache`
+to `LiouvillianPlan`, `compile`, `liouvillian`, `steady_state`, or
+`compile_family`. It is read-only in use and never becomes process-global
+state; incompatible basis, depth, or precision requests raise.
 
 Prepared observables and reductions follow the same pattern: construct the
 read-only plan once, then reuse it for many states. Qudit `ReductionPlan`
@@ -606,17 +621,20 @@ show literature models and their numerical checks.
 | Adaptive or stiff dynamics | `dynamics_problem` | Add and configure a SciML solver |
 | Autonomous steady state | `stationary_state` | Inspect residual, trace, and possible degeneracy |
 | Slow modes or Liouvillian gap | `liouvillian_spectrum`, `pi_liouvillian_gap` | A selected Krylov window is not a complete spectrum |
-| Periodic dynamics | `floquet_propagator`, `floquet_steady_state` | Converge the one-period integration |
+| Periodic dynamics and selected multipliers | `floquet_map`, `selected_floquet_multipliers`, `floquet_steady_state` | Converge the one-period integration separately from Krylov residuals |
 | Quantum-jump ensembles | `quantum_trajectories` | Rates nonnegative; converge tolerances and ensemble size |
-| Confidence-controlled ensembles | `adaptive_quantum_trajectories`, `adaptive_diffusive_trajectories` | Sampling certificate only; separately converge the path integrator |
-| Pure Schur pseudo-ket ensembles | `WeakPITrajectoryPlan`, `weak_pi_quantum_trajectories` | Auxiliary weak-PI states, not labeled-particle wavefunctions; fixed operators and fixed-step integration |
+| Trajectory estimate of an autonomous steady state | `trajectory_steady_state` | Converge settling time, within-path spacing, path integration, and independent-path count; residual is not a convergence proof |
+| Confidence-controlled ensembles | `adaptive_quantum_trajectories`, `adaptive_weak_pi_quantum_trajectories`, `adaptive_diffusive_trajectories` | Sampling certificate only; separately converge the path integrator |
+| Pure Schur pseudo-ket ensembles | `WeakPITrajectoryPlan`, `weak_pi_quantum_trajectories` | Auxiliary weak-PI states, not labeled-particle wavefunctions; fixed operators; converge fixed-step or event-driven controls |
+| Weak-PI trajectory estimate of an autonomous steady state | `weak_pi_trajectory_steady_state` | Density outer products precede path averaging; converge burn-in, sampling window, selected path integrator, and independent-path count |
 | Observable-only output | `solve_dynamics(...; observables=..., save_states=false)` | The state history is deliberately unavailable |
 | State-free trajectory statistics | `quantum_trajectories(...; observables=..., save_states=false)` | Waiting-time output still scales with recorded jumps unless disabled |
 | Two-time correlations and spectra | `CorrelationPlan`, `two_time_correlation`, `stationary_correlation_spectrum` | Autonomous QRT; converge RK4 or GMRES controls |
+| Resolvents, adjoint evolution, and susceptibility | `ResponseWorkspace`, `resolvent_norm`, `adjoint_evolve`, `steady_state_susceptibility` | Matrix-free routes require an adjoint where applicable; iterative estimates retain residual diagnostics |
 | Several PI ensembles or a finite ancilla | `CompositePIBasis`, `CompositeSuperoperator`, `CompositeTrajectoryPlan` | Cross maps and monitored gains are factorized; composite paths are density-valued |
 | Related steady states or spectra | `ParameterScanPlan`, `parameter_scan` | Serial continuation is path dependent; independent points may be threaded/distributed |
 | Structured matrix-free linear families | `block_gmres`, `multishift_gmres`, `recycled_gmres`, `krylov_expv` | Inspect raw residuals/error estimates and reuse task-owned workspaces |
-| Finite-memory bosonic bath | `HEOMBath`, `HEOMPlan`, `heom_evolve` | Converge bath poles, hierarchy depth, and time/Krylov discretization separately |
+| Finite-memory bosonic bath | `HEOMBath`, `HEOMPlan`, `heom_evolve`, `heom_steady_state` | Prefer exact scaled ADOs when conditioning benefits; converge bath poles, hierarchy depth, and time/Krylov discretization separately |
 | Generalized qudit coherent-state Q | `QuditHusimiPlan`, `qudit_husimi_q` | Normalized Haar data on supplied points; no qudit Wigner convention inferred |
 | Numerical refinement evidence | `convergence_study` and specialized wrappers | Final refinement agreement is distinct from inner solver convergence |
 | Large-\(N\) product prediction | `MeanFieldPlan`, `solve_meanfield` | Approximate after correlations develop |
@@ -663,8 +681,10 @@ Remaining research-scale limitations are also structured rather than hidden:
 large qudit irreps can make sparse Littlewood--Richardson factorization
 expensive; a single very large Schur block still needs dense linear algebra
 for some diagnostics; the Evans test can be inconclusive for unsupported
-direct microscopic recouplings; and the current Floquet eigensolver
-materializes the PI-dimensional one-period map.
+direct microscopic recouplings; and complete Floquet spectra or the dense
+spectral-visualization source convenience still materialize the
+PI-dimensional one-period map. Selected multiplier, periodic-state, and
+stroboscopic calculations can instead use `FloquetMap` without that matrix.
 
 Continue with [Architecture and efficient workflows](architecture.md) for
 backend and concurrency details, [Mathematics and API](mathematics.md) for

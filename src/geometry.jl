@@ -1,19 +1,462 @@
+struct _PackedOneBoxTransitions{T<:AbstractFloat}
+    offsets::Vector{Int}
+    # (upper-pattern index, one-based local label, coefficient), grouped by
+    # lower-pattern index.  Structural zeros are not retained.
+    terms::Vector{Tuple{Int,Int,T}}
+end
+
 """
-    OneBodyGeometry(basis; T=Float64)
+    OneBoxCGCache(basis; max_depth=min(1, basis.N), T=Float64,
+                  memory_budget=64 * 1024^2)
+
+Precompute the nonzero one-box Gelfand--Tsetlin Clebsch--Gordan transitions
+reachable from the sectors of `basis` through at most `max_depth` successive
+box removals.  Compatible parent candidates are selected by their content;
+the cache retains packed sparse transition tuples, never dense Cartesian
+tables of structural zeros.
+
+The cache is immutable in use, belongs to the exact `basis` object supplied
+at construction, and may be shared by read-only geometry constructors.  Its
+floating type is fixed by `T`.  A `BigFloat` cache also records the active
+precision and rounding mode and refuses reuse under different arithmetic
+settings, preventing an apparently high-precision computation from consuming
+incompatibly rounded stored coefficients.  `max_depth=0` is valid and stores
+no transitions.
+
+Construction is guarded by `memory_budget` (64 MiB by default); pass `Inf` to
+opt out explicitly.  `candidate_count`, `coefficient_count`, and
+`estimated_bytes` report respectively the compatible candidates evaluated,
+the retained nonzeros, and a conservative retained-storage estimate.  No
+global mutable cache is used.
+"""
+struct OneBoxCGCache{T,D,L,B<:PIBasis{D,L},Q}
+    basis::B
+    max_depth::Int
+    precision_bits::Int
+    rounding_mode::Q
+    patterns::Dict{Partition{D},Vector{GTPattern{D,L}}}
+    pattern_indices::Dict{Partition{D},Dict{GTPattern{D,L},Int}}
+    depths::Dict{Partition{D},Int}
+    transitions::Dict{Tuple{Partition{D},Partition{D}},
+                      _PackedOneBoxTransitions{T}}
+    candidate_count::Int
+    coefficient_count::Int
+    estimated_bytes::BigInt
+end
+
+_cgc_cache_scalar_type(::OneBoxCGCache{T}) where T=T
+_cgc_cache_scalar_type(cache)=throw(ArgumentError(
+    "cache must be a OneBoxCGCache or nothing, got $(typeof(cache))"))
+_resolve_cgc_scalar_type(::Nothing,::OneBoxCGCache{T}) where T=T
+function _resolve_cgc_scalar_type(::Type{T},
+        ::OneBoxCGCache{R}) where {T<:AbstractFloat,R<:AbstractFloat}
+    isconcretetype(T)||throw(ArgumentError(
+        "T must be a concrete AbstractFloat type, got $T"))
+    T===R||throw(ArgumentError(
+        "OneBoxCGCache stores $R coefficients but T=$T was requested"))
+    # Return the cache's type parameter, which remains inferable even though
+    # Julia keyword NamedTuples type a supplied `T` value only as `DataType`.
+    R
+end
+geometry_scalar_type(::OneBoxCGCache{T}) where T=T
+
+function _onebox_memory_budget(memory_budget)
+    memory_budget isa Real&&!isa(memory_budget,Bool)||throw(ArgumentError(
+        "memory_budget must be a nonnegative byte count or Inf"))
+    isnan(memory_budget)&&throw(ArgumentError("memory_budget must not be NaN"))
+    memory_budget<0&&throw(ArgumentError("memory_budget must be nonnegative"))
+    isinf(memory_budget)&&return nothing
+    try
+        floor(BigInt,memory_budget)
+    catch error
+        throw(ArgumentError("memory_budget is not a representable byte count: "*
+                            sprint(showerror,error)))
+    end
+end
+
+function _check_onebox_memory_budget(estimated::BigInt,memory_budget)
+    budget=_onebox_memory_budget(memory_budget)
+    budget===nothing&&return estimated
+    estimated<=budget||throw(ArgumentError(
+        "OneBoxCGCache requires an estimated $estimated retained bytes, "*
+        "exceeding memory_budget=$budget; reduce max_depth, use a restricted "*
+        "PIBasis, increase memory_budget, or pass memory_budget=Inf explicitly"))
+    estimated
+end
+
+function _onebox_domain(b::PIBasis{D},max_depth::Int) where D
+    levels=Vector{Vector{Partition{D}}}(undef,max_depth+1)
+    levels[1]=copy(b.sectors)
+    depths=Dict{Partition{D},Int}(p=>0 for p in levels[1])
+    edges=Vector{Tuple{Partition{D},Partition{D}}}()
+    for depth in 1:max_depth
+        next=Partition{D}[]
+        seen=Set{Partition{D}}()
+        for upper in levels[depth],corner in removable_corners(upper)
+            lower=remove_corner(upper,corner)
+            push!(edges,(lower,upper))
+            if !(lower in seen)
+                push!(seen,lower);push!(next,lower)
+            end
+        end
+        sort!(next;by=p->p.parts,rev=true)
+        levels[depth+1]=next
+        for partition in next
+            depths[partition]=depth
+        end
+    end
+    unique!(edges)
+    levels,depths,edges
+end
+
+function _onebox_pattern_storage_estimate(::Type{R},::Val{L},pattern_count,
+        edge_count,candidate_count,partition_count,precision_bits) where
+        {R<:AbstractFloat,L}
+    int_bytes=big(sizeof(Int));pointer_bytes=big(sizeof(Ptr{Cvoid}))
+    scalar_bytes=_scalar_retained_bytes(R;
+        bigfloat_precision=precision_bits)
+    # Includes packed tuples and offsets plus deliberately conservative
+    # dictionary/load-factor and container allowances for patterns and edges.
+    structural=big(candidate_count)*(2int_bytes+scalar_bytes)+
+        big(pattern_count)*(big(L)*int_bytes+12int_bytes+4pointer_bytes)+
+        big(edge_count)*(8int_bytes+4pointer_bytes)+
+        big(partition_count)*(big(L)*int_bytes+12int_bytes+4pointer_bytes)
+    # `summarysize` also counts dictionary hash tables, bucket slack, array
+    # headers, and allocator alignment whose exact sizes vary across supported
+    # Julia releases. A factor-two envelope plus a fixed small-cache allowance
+    # keeps the public estimate conservative without inspecting or allocating
+    # the coefficient table first.
+    2structural+65536
+end
+
+# Allocation-free structural upper bound used by guarded high-level model
+# preparation.  Content filtering makes the retained table much smaller in
+# practice; the dense compatible-parent bound is deliberately conservative so
+# the automatic small-system cache never hides memory outside the command's
+# declared budget.
+function _estimate_onebox_cache_upper(b::PIBasis{D,L},max_depth::Integer,
+        ::Type{R};precision_bits::Integer=
+            (R===BigFloat ? precision(BigFloat) : precision(R))) where
+        {D,L,R<:AbstractFloat}
+    0<=max_depth<=b.N||throw(ArgumentError(
+        "max_depth must satisfy 0 ≤ max_depth ≤ N=$(b.N)"))
+    levels,_,edges=_onebox_domain(b,Int(max_depth))
+    partitions_at_depth=reduce(vcat,levels;init=Partition{D}[])
+    dimensions=Dict(p=>unitary_group_dimension(p)
+                    for p in partitions_at_depth)
+    pattern_count=sum(values(dimensions);init=big(0))
+    candidate_upper=sum((big(D)*dimensions[lower]*dimensions[upper]
+                         for (lower,upper) in edges);init=big(0))
+    _onebox_pattern_storage_estimate(R,Val(L),pattern_count,length(edges),
+        candidate_upper,length(partitions_at_depth),Int(precision_bits))
+end
+
+function _onebox_candidate_count(lower_patterns,upper_patterns)
+    D=length(shape(first(lower_patterns)))
+    upper_by_weight=Dict{NTuple{D,Int},Int}()
+    for upper in upper_patterns
+        key=content(upper)
+        upper_by_weight[key]=get(upper_by_weight,key,0)+1
+    end
+    count=0
+    for lower in lower_patterns
+        lower_weight=content(lower)
+        for local_label in 1:D
+            parent_weight=ntuple(k->lower_weight[k]+(k==local_label),D)
+            count=Base.checked_add(count,get(upper_by_weight,parent_weight,0))
+        end
+    end
+    count
+end
+
+function _build_onebox_transitions(lower_patterns::Vector{GTPattern{D,L}},
+        upper_patterns::Vector{GTPattern{D,L}},::Type{R}) where
+        {D,L,R<:AbstractFloat}
+    upper_by_weight=Dict{NTuple{D,Int},Vector{Int}}()
+    for (upper_index,upper) in pairs(upper_patterns)
+        push!(get!(()->Int[],upper_by_weight,content(upper)),upper_index)
+    end
+    offsets=Vector{Int}(undef,length(lower_patterns)+1);offsets[1]=1
+    terms=Tuple{Int,Int,R}[]
+    for (lower_index,lower) in pairs(lower_patterns)
+        lower_weight=content(lower)
+        for local_label in 1:D
+            parent_weight=ntuple(k->lower_weight[k]+(k==local_label),D)
+            upper_indices=get(upper_by_weight,parent_weight,nothing)
+            upper_indices===nothing&&continue
+            for upper_index in upper_indices
+                value=_cgc_uncached(lower,local_label-1,
+                    upper_patterns[upper_index],R)
+                iszero(value)||push!(terms,(upper_index,local_label,value))
+            end
+        end
+        offsets[lower_index+1]=length(terms)+1
+    end
+    _PackedOneBoxTransitions{R}(offsets,terms)
+end
+
+OneBoxCGCache(b::PIBasis;max_depth::Integer=min(1,b.N),T=Float64,
+        memory_budget=64*1024^2)=
+    OneBoxCGCache(b,T;max_depth,memory_budget)
+
+function OneBoxCGCache(b::B,::Type{R};max_depth::Integer=min(1,b.N),
+        memory_budget=64*1024^2) where
+        {D,L,B<:PIBasis{D,L},R<:AbstractFloat}
+    isconcretetype(R)||throw(ArgumentError(
+        "T must be a concrete AbstractFloat type, got $R"))
+    0<=max_depth<=b.N||throw(ArgumentError(
+        "max_depth must satisfy 0 ≤ max_depth ≤ N=$(b.N)"))
+    depth=Int(max_depth);precision_bits=R===BigFloat ? precision(BigFloat) :
+        precision(R)
+    rounding_mode=R===BigFloat ? rounding(BigFloat) : nothing
+    levels,depths,edges=_onebox_domain(b,depth)
+    partitions_at_depth=reduce(vcat,levels;init=Partition{D}[])
+
+    # Guard the unavoidable pattern/index storage before enumerating any
+    # descendant GT-pattern table. Top-level patterns remain basis-owned.
+    exact_pattern_count=sum((unitary_group_dimension(p)
+                             for p in partitions_at_depth);init=big(0))
+    exact_pattern_count<=typemax(Int)||throw(ArgumentError(
+        "OneBoxCGCache pattern count exceeds Int indexing; reduce max_depth "*
+        "or restrict the basis"))
+    minimum_estimate=_onebox_pattern_storage_estimate(R,Val(L),
+        exact_pattern_count,length(edges),0,length(partitions_at_depth),
+        precision_bits)
+    _check_onebox_memory_budget(minimum_estimate,memory_budget)
+
+    patterns=Dict{Partition{D},Vector{GTPattern{D,L}}}()
+    for p in partitions_at_depth
+        sector_index=get(b.index,p,0)
+        patterns[p]=get(depths,p,typemax(Int))==0&&sector_index>0 ?
+            b.patterns[sector_index] : gt_patterns(p)
+    end
+    candidate_count=0
+    for (lower,upper) in edges
+        candidate_count=Base.checked_add(candidate_count,
+            _onebox_candidate_count(patterns[lower],patterns[upper]))
+    end
+    estimate=_onebox_pattern_storage_estimate(R,Val(L),
+        exact_pattern_count,length(edges),candidate_count,
+        length(partitions_at_depth),precision_bits)
+    _check_onebox_memory_budget(estimate,memory_budget)
+
+    indices=Dict{Partition{D},Dict{GTPattern{D,L},Int}}(
+        p=>Dict(pattern=>index for (index,pattern) in pairs(patterns[p]))
+        for p in partitions_at_depth)
+    transitions=Dict{Tuple{Partition{D},Partition{D}},
+                     _PackedOneBoxTransitions{R}}()
+    coefficient_count=0
+    for edge in edges
+        lower,upper=edge
+        table=_build_onebox_transitions(patterns[lower],patterns[upper],R)
+        transitions[edge]=table
+        coefficient_count=Base.checked_add(coefficient_count,length(table.terms))
+    end
+    OneBoxCGCache{R,D,L,B,typeof(rounding_mode)}(
+        b,depth,precision_bits,rounding_mode,patterns,indices,depths,
+        transitions,candidate_count,coefficient_count,estimate)
+end
+
+function _check_onebox_cache_precision(cache::OneBoxCGCache{R},
+                                       ::Type{T}) where
+        {R<:AbstractFloat,T<:AbstractFloat}
+    R===T||throw(ArgumentError(
+        "OneBoxCGCache stores $R coefficients but T=$T was requested"))
+    if R===BigFloat&&cache.precision_bits!=precision(BigFloat)
+        throw(ArgumentError(
+            "OneBoxCGCache was constructed at BigFloat precision "*
+            "$(cache.precision_bits), but the active precision is "*
+            "$(precision(BigFloat)); rebuild the cache at the requested precision"))
+    end
+    if R===BigFloat&&cache.rounding_mode!=rounding(BigFloat)
+        throw(ArgumentError(
+            "OneBoxCGCache was constructed with BigFloat rounding mode "*
+            "$(cache.rounding_mode), but the active mode is "*
+            "$(rounding(BigFloat)); rebuild the cache with the requested "*
+            "rounding mode"))
+    end
+    cache
+end
+
+function _check_onebox_coefficient_cache(cache::OneBoxCGCache,b::PIBasis,
+        required_depth::Integer,::Type{R}) where R<:AbstractFloat
+    cache.basis===b||throw(ArgumentError(
+        "OneBoxCGCache was constructed for a different PIBasis; construct "*
+        "or reuse a cache owned by this exact basis"))
+    cache.max_depth>=required_depth||throw(ArgumentError(
+        "OneBoxCGCache max_depth=$(cache.max_depth) does not cover required "*
+        "depth $required_depth"))
+    _check_onebox_cache_precision(cache,R)
+end
+
+_check_onebox_coefficient_cache(cache,b::PIBasis,required_depth::Integer,
+        ::Type{R}) where R<:AbstractFloat=throw(ArgumentError(
+    "coefficient_cache must be a OneBoxCGCache or nothing, got "*
+    "$(typeof(cache))"))
+
+function _cached_partition_depth(cache::OneBoxCGCache,p::Partition,role)
+    depth=get(cache.depths,p,nothing)
+    depth!==nothing&&return depth
+    implied=cache.basis.N-weight(p)
+    if implied<0||implied>cache.max_depth
+        throw(ArgumentError(
+            "$role partition $p lies at depth $implied outside "*
+            "OneBoxCGCache max_depth=$(cache.max_depth)"))
+    end
+    throw(ArgumentError(
+        "$role partition $p is not reachable from the retained sectors of "*
+        "the exact PIBasis owned by this OneBoxCGCache"))
+end
+
+function _cached_cgc(cache::OneBoxCGCache{R,D,L},mu::GTPattern{D,L},
+        j::Integer,lam::GTPattern{D,L},::Type{T}) where
+        {R<:AbstractFloat,T<:AbstractFloat,D,L}
+    _check_onebox_cache_precision(cache,T)
+    lower=shape(mu);upper=shape(lam)
+    _cached_partition_depth(cache,lower,"lower")
+    _cached_partition_depth(cache,upper,"upper")
+    0<=j<D||return zero(T)
+    weight(upper)==weight(lower)+1||return zero(T)
+    table=get(cache.transitions,(lower,upper),nothing)
+    table===nothing&&return zero(T)
+    lower_index=get(cache.pattern_indices[lower],mu,0)
+    upper_index=get(cache.pattern_indices[upper],lam,0)
+    (lower_index>0&&upper_index>0)||throw(ArgumentError(
+        "CG pattern is outside the canonical pattern tables of this cache"))
+    @inbounds for term_index in
+            table.offsets[lower_index]:(table.offsets[lower_index+1]-1)
+        candidate_upper,candidate_label,value=table.terms[term_index]
+        candidate_upper==upper_index&&candidate_label==j+1&&return value
+    end
+    zero(T)
+end
+
+function _cached_cgc(cache::OneBoxCGCache,mu::GTPattern,j::Integer,
+                     lam::GTPattern,::Type{T}) where T<:AbstractFloat
+    _check_onebox_cache_precision(cache,T)
+    throw(ArgumentError(
+        "CG patterns have a local dimension incompatible with this OneBoxCGCache"))
+end
+
+function Base.show(io::IO,cache::OneBoxCGCache{T}) where T
+    print(io,"OneBoxCGCache(N=$(cache.basis.N), d=$(cache.basis.d), "*
+        "max_depth=$(cache.max_depth), T=$T, "*
+        "coefficients=$(cache.coefficient_count))")
+end
+
+struct _OneBodyContractionView{T} <: AbstractVector{Tuple{Int,Int,T}}
+    terms::Vector{Tuple{Int,Int,T}}
+    first::Int
+    last::Int
+end
+
+Base.IndexStyle(::Type{<:_OneBodyContractionView})=IndexLinear()
+Base.size(view::_OneBodyContractionView)=(length(view),)
+Base.length(view::_OneBodyContractionView)=max(view.last-view.first+1,0)
+@inline function Base.getindex(view::_OneBodyContractionView,index::Int)
+    @boundscheck checkbounds(view,index)
+    @inbounds view.terms[view.first+index-1]
+end
+@inline function Base.iterate(view::_OneBodyContractionView,
+                              position::Int=view.first)
+    position>view.last&&return nothing
+    @inbounds (view.terms[position],position+1)
+end
+
+# One table replaces a matrix of heap-allocated tiny vectors by two contiguous
+# arrays.  `table[a,c]` remains an `AbstractVector`, so contraction hot paths
+# and the public read-only geometry semantics do not change.
+struct _PackedOneBodyContractions{T} <:
+       AbstractMatrix{_OneBodyContractionView{T}}
+    nrows::Int
+    ncols::Int
+    offsets::Vector{Int}
+    terms::Vector{Tuple{Int,Int,T}}
+end
+
+Base.IndexStyle(::Type{<:_PackedOneBodyContractions})=IndexLinear()
+Base.size(table::_PackedOneBodyContractions)=(table.nrows,table.ncols)
+@inline function Base.getindex(table::_PackedOneBodyContractions{T},
+                               index::Int) where T
+    @boundscheck checkbounds(table,index)
+    @inbounds _OneBodyContractionView{T}(
+        table.terms,table.offsets[index],table.offsets[index+1]-1)
+end
+@inline function Base.getindex(table::_PackedOneBodyContractions,
+                               row::Int,column::Int)
+    @boundscheck checkbounds(table,row,column)
+    @inbounds table[row+(column-1)*table.nrows]
+end
+
+struct _OneBodyConnections{D}
+    nonempty::Dict{Tuple{Int,Int},Vector{Partition{D}}}
+    empty::Vector{Partition{D}}
+    nsectors::Int
+end
+
+function Base.getindex(connections::_OneBodyConnections,
+                       key::Tuple{Int,Int})
+    1<=key[1]<=connections.nsectors&&1<=key[2]<=connections.nsectors||
+        throw(KeyError(key))
+    get(connections.nonempty,key,connections.empty)
+end
+Base.length(connections::_OneBodyConnections)=connections.nsectors^2
+
+function _pack_onebody_contractions(left,right,nrows::Int,ncols::Int,
+                                    ::Type{T}) where T
+    ncells=Base.checked_mul(nrows,ncols)
+    counts=zeros(Int,ncells)
+    @inbounds for child_index in eachindex(left)
+        for (a,i,x) in left[child_index],(c,j,y) in right[child_index]
+            value=x*y
+            iszero(value)&&continue
+            counts[a+(c-1)*nrows]+=1
+        end
+    end
+    offsets=Vector{Int}(undef,ncells+1);offsets[1]=1
+    @inbounds for index in 1:ncells
+        offsets[index+1]=Base.checked_add(offsets[index],counts[index])
+    end
+    terms=Vector{Tuple{Int,Int,T}}(undef,offsets[end]-1)
+    cursor=copy(@view offsets[1:end-1])
+    @inbounds for child_index in eachindex(left)
+        for (a,i,x) in left[child_index],(c,j,y) in right[child_index]
+            value=x*y
+            iszero(value)&&continue
+            cell=a+(c-1)*nrows
+            terms[cursor[cell]]=(i,j,value)
+            cursor[cell]+=1
+        end
+    end
+    _PackedOneBodyContractions{T}(nrows,ncols,offsets,terms)
+end
+
+"""
+    OneBodyGeometry(basis; T=Float64, coefficient_cache=nothing)
 
 Precompute the one-box Clebsch--Gordan contractions, multiplicity scales, and
 sector connections shared by local and collective one-particle operations.
+Contraction tables retain one contiguous tuple array and column-major offsets;
+logical empty cells and absent sector pairs therefore require no individual
+heap vectors or dictionary entries.
 The cache is read-only after construction and is tied to the exact `PIBasis`
 object supplied at construction; it may be reused to prepare many operators.
+Pass a basis-owned [`OneBoxCGCache`](@ref) with `max_depth >= 1` for `N > 0`
+through `coefficient_cache` to reuse precomputed CG coefficients across
+several geometry constructions. A zero-particle basis requires depth zero.
+The default preserves call-local construction and does not create global
+state.
 """
 struct OneBodyGeometry{T,D,L,B<:PIBasis{D,L}}
     basis::B
-    # (lambda sector, mu partition, nu sector) => matrices indexed (a,c), each a sparse dyadic tuple (i,j,value)
-    contractions::Dict{Tuple{Int,Partition{D},Int},Array{Vector{Tuple{Int,Int,T}},2}}
+    # (lambda sector, mu partition, nu sector) => packed tables indexed (a,c),
+    # each exposing a sparse dyadic vector (i,j,value) without per-cell storage.
+    contractions::Dict{Tuple{Int,Partition{D},Int},_PackedOneBodyContractions{T}}
     scales::Dict{Tuple{Int,Partition{D},Int},T}
-    connections::Dict{Tuple{Int,Int},Vector{Partition{D}}}
+    connections::_OneBodyConnections{D}
 end
-OneBodyGeometry(b::PIBasis;T=Float64)=OneBodyGeometry(b,T)
+OneBodyGeometry(b::PIBasis;T=Float64,coefficient_cache=nothing)=
+    OneBodyGeometry(b,T;coefficient_cache)
 
 # For a fixed child pattern and local label, content conservation leaves only
 # parent patterns of one known weight.  Building these sparse transitions once
@@ -33,8 +476,11 @@ function _onebody_transitions(parent_patterns::Vector{GTPattern{D,L}},
         for local_label in 0:D-1
             parent_weight=ntuple(
                 level->child_weight[level]+(level==local_label+1),D)
-            for parent_index in get(parent_by_weight,parent_weight,Int[])
-                value=cgc(child,local_label,parent_patterns[parent_index];T=R)
+            parent_indices=get(parent_by_weight,parent_weight,nothing)
+            parent_indices===nothing&&continue
+            for parent_index in parent_indices
+                value=_cgc_uncached(
+                    child,local_label,parent_patterns[parent_index],R)
                 iszero(value)||push!(transitions[child_index],
                                      (parent_index,local_label+1,value))
             end
@@ -43,9 +489,39 @@ function _onebody_transitions(parent_patterns::Vector{GTPattern{D,L}},
     transitions
 end
 
-function OneBodyGeometry(b::B,::Type{R}) where {D,L,B<:PIBasis{D,L},R<:AbstractFloat}
+function _onebody_transitions(parent_patterns::Vector{GTPattern{D,L}},
+        child_patterns::Vector{GTPattern{D,L}},::Type{R},
+        cache::OneBoxCGCache{R,D,L}) where {D,L,R<:AbstractFloat}
+    parent_partition=shape(first(parent_patterns))
+    child_partition=shape(first(child_patterns))
+    cached_parent=get(cache.patterns,parent_partition,nothing)
+    cached_child=get(cache.patterns,child_partition,nothing)
+    cached_parent==parent_patterns&&cached_child==child_patterns||throw(
+        ArgumentError("OneBoxCGCache pattern ordering is incompatible with geometry"))
+    table=get(cache.transitions,(child_partition,parent_partition),nothing)
+    table===nothing&&throw(ArgumentError(
+        "OneBoxCGCache does not contain required transition "*
+        "$child_partition -> $parent_partition"))
+    Transition=Tuple{Int,Int,R}
+    transitions=[Transition[] for _ in eachindex(child_patterns)]
+    @inbounds for child_index in eachindex(child_patterns)
+        for term_index in
+                table.offsets[child_index]:(table.offsets[child_index+1]-1)
+            push!(transitions[child_index],table.terms[term_index])
+        end
+    end
+    transitions
+end
+
+_onebody_transitions(parent_patterns,child_patterns,::Type{R},::Nothing) where
+    {R<:AbstractFloat}=_onebody_transitions(parent_patterns,child_patterns,R)
+
+function OneBodyGeometry(b::B,::Type{R};coefficient_cache=nothing) where
+        {D,L,B<:PIBasis{D,L},R<:AbstractFloat}
+    coefficient_cache===nothing||_check_onebox_coefficient_cache(
+        coefficient_cache,b,iszero(b.N) ? 0 : 1,R)
     Term=Tuple{Int,Int,R}
-    dict=Dict{Tuple{Int,Partition{D},Int},Array{Vector{Term},2}}()
+    dict=Dict{Tuple{Int,Partition{D},Int},_PackedOneBodyContractions{R}}()
     scales=Dict{Tuple{Int,Partition{D},Int},R}()
     removed=[[remove_corner(p,r) for r in removable_corners(p)] for p in b.sectors]
     pattern_cache=Dict{Partition{D},Vector{GTPattern{D,L}}}()
@@ -57,31 +533,18 @@ function OneBodyGeometry(b::B,::Type{R}) where {D,L,B<:PIBasis{D,L},R<:AbstractF
     for (sector_index,children) in pairs(removed),mu in children
         child_patterns=get!(() -> gt_patterns(mu),pattern_cache,mu)
         transition_cache[(sector_index,mu)]=
-            _onebody_transitions(b.patterns[sector_index],child_patterns,R)
+            _onebody_transitions(b.patterns[sector_index],child_patterns,R,
+                                 coefficient_cache)
     end
 
-    connections=Dict{Tuple{Int,Int},Vector{Partition{D}}}()
+    connection_data=Dict{Tuple{Int,Int},Vector{Partition{D}}}()
     for (li,l) in pairs(b.sectors),(ni,n) in pairs(b.sectors)
         common=Partition{D}[mu for mu in removed[li] if mu in removed[ni]]
-        connections[(li,ni)]=common
+        isempty(common)||setindex!(connection_data,common,(li,ni))
         for mu in common
             left=transition_cache[(li,mu)];right=transition_cache[(ni,mu)]
-            # All structurally empty cells share one empty read-only vector.
-            # A private vector is created only when the first term is found.
-            empty_terms=Term[]
-            arr=fill(empty_terms,length(b.patterns[li]),length(b.patterns[ni]))
-            for child_index in eachindex(left)
-                for (a,i,x) in left[child_index],(c,j,y) in right[child_index]
-                    value=x*y
-                    iszero(value)&&continue
-                    terms=arr[a,c]
-                    if terms===empty_terms
-                        terms=Term[]
-                        arr[a,c]=terms
-                    end
-                    push!(terms,(i,j,value))
-                end
-            end
+            arr=_pack_onebody_contractions(left,right,
+                length(b.patterns[li]),length(b.patterns[ni]),R)
             key=(li,mu,ni);dict[key]=arr
             left_weight=_one_box_branch_weight(l,mu)
             right_weight=_one_box_branch_weight(n,mu)
@@ -91,6 +554,8 @@ function OneBodyGeometry(b::B,::Type{R}) where {D,L,B<:PIBasis{D,L},R<:AbstractF
                 context="one-body Schur branching scale")
         end
     end
+    connections=_OneBodyConnections{D}(
+        connection_data,Partition{D}[],length(b.sectors))
     OneBodyGeometry{R,D,L,B}(b,dict,scales,connections)
 end
 
@@ -105,9 +570,10 @@ end
 #
 # Tuple/vector overhead is deliberately conservative and describes peak live
 # structural storage, excluding the already caller-owned basis but not
-# heap-backed scalar payloads.  Backing-store allowances use eight entries per
-# retained candidate; this bounds both the small-vector initial capacity and
-# geometric growth.  It is not cumulative garbage-collector allocation volume.
+# heap-backed scalar payloads.  Backing-store allowances cover dictionary and
+# transition-vector capacity; packed contraction tuples themselves are stored
+# in exactly sized contiguous vectors.  This is not cumulative
+# garbage-collector allocation volume.
 function _estimate_onebody_geometry(b::PIBasis{D,L},
                                     ::Type{R}=Float64;
                                     bigfloat_precision::Integer=
@@ -140,17 +606,23 @@ function _estimate_onebody_geometry(b::PIBasis{D,L},
         transition_vector_count+=length(child_patterns)
     end
 
-    connection_count=big(0);cell_count=big(0);term_upper=big(0)
+    connection_count=big(0);connected_pair_count=big(0)
+    cell_count=big(0);term_upper=big(0);largest_cell_count=big(0)
     for li in eachindex(b.sectors),ni in eachindex(b.sectors)
+        pair_connected=false
         for mu in removed[li]
             mu in removed[ni]||continue
+            pair_connected=true
             connection_count+=1
-            cell_count+=big(length(b.patterns[li]))*length(b.patterns[ni])
+            table_cells=big(length(b.patterns[li]))*length(b.patterns[ni])
+            cell_count+=table_cells
+            largest_cell_count=max(largest_cell_count,table_cells)
             left_counts=candidate_counts[(li,mu)]
             right_counts=candidate_counts[(ni,mu)]
             term_upper+=sum((big(left)*right for (left,right) in
                              zip(left_counts,right_counts));init=big(0))
         end
+        connected_pair_count+=pair_connected
     end
     removal_count=sum(length,removed;init=0)
     unique_children=collect(keys(pattern_cache))
@@ -165,22 +637,23 @@ function _estimate_onebody_geometry(b::PIBasis{D,L},
     tuple_bytes=2int_bytes+value_bytes
     partition_bytes=big(D)*int_bytes
     pattern_bytes_per_entry=big(L)*int_bytes
-    nonempty_upper=min(cell_count,term_upper)
     sector_pairs=big(length(b.sectors))^2
 
-    # Retained contraction arrays and their per-cell sparse tuple vectors.
+    # Retained contraction tables use one offset per logical matrix cell and
+    # one contiguous tuple array.  There are no per-cell Vector headers or
+    # pointers.  The constant allowances cover Julia container headers and
+    # dictionary load-factor slack without relying on allocator internals.
     contraction_dictionary=container_header+connection_count*(
         dictionary_entry+2int_bytes+partition_bytes+pointer_bytes)
-    contraction_arrays=connection_count*container_header+pointer_bytes*cell_count
-    contraction_vectors=container_header*(connection_count+nonempty_upper)+
-        initial_capacity*tuple_bytes*term_upper
+    contraction_tables=connection_count*(2container_header+4int_bytes)+
+        int_bytes*(cell_count+connection_count)+2tuple_bytes*term_upper
     scale_dictionary=container_header+connection_count*(
         dictionary_entry+2int_bytes+partition_bytes+value_bytes)
-    connection_dictionary=container_header+sector_pairs*(
+    connection_dictionary=container_header+connected_pair_count*(
         dictionary_entry+2int_bytes+container_header)+
-        initial_capacity*partition_bytes*connection_count
-    retained_bytes=container_header+contraction_dictionary+contraction_arrays+
-        contraction_vectors+scale_dictionary+connection_dictionary
+        partition_bytes*(connection_count+initial_capacity*connected_pair_count)
+    retained_bytes=container_header+contraction_dictionary+
+        contraction_tables+scale_dictionary+connection_dictionary
 
     # Construction scratch retained until the constructor returns: every
     # (sector,child) transition table, the unique child GT-pattern cache, and
@@ -199,12 +672,15 @@ function _estimate_onebody_geometry(b::PIBasis{D,L},
     parent_weight_scratch=container_header+big(largest_parent_pattern_count)*(
         dictionary_entry+big(D)*int_bytes+pointer_bytes+container_header+
         initial_capacity*int_bytes)
+    packing_scratch=2int_bytes*largest_cell_count+container_header
     removed_storage=container_header+container_header*big(length(b.sectors))+
         initial_capacity*partition_bytes*big(removal_count)
     setup_bytes=retained_bytes+transition_dictionary+transition_tables+
-        pattern_dictionary+pattern_storage+parent_weight_scratch+removed_storage
+        pattern_dictionary+pattern_storage+parent_weight_scratch+
+        removed_storage+packing_scratch
     (sector_pairs=big(length(b.sectors))^2,
-     removal_count=big(removal_count),connection_count,cell_count,
+     removal_count=big(removal_count),connection_count,connected_pair_count,
+     cell_count,
      contraction_terms_upper=term_upper,
      transition_terms_upper=transition_candidate_count,
      cgc_evaluations_upper=transition_candidate_count,

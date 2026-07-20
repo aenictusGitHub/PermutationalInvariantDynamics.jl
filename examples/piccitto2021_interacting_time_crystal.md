@@ -67,7 +67,7 @@ not fit that exponent from three small systems.
 Complete dense spectra are used only because these symmetric-sector problems
 are modest and the comparison needs to identify a particular complex branch.
 For larger `N`, compile matrix-free and use
-`liouvillian_spectrum(...; target=:largest_real, algorithm=:krylov)` with a
+`liouvillian_spectrum(...; target=:largest_real, algorithm=:arnoldi)` with a
 converged Krylov dimension. Harmonic extraction *near zero* can miss the slow
 oscillatory branch because its imaginary part remains finite.
 

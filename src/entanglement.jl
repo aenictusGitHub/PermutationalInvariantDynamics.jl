@@ -233,6 +233,21 @@ end
 
 """Exact product-Schur partial-transpose trace norm for a general PI qubit state."""
 function _qubit_negativity(rho::PIState,k::Integer;atol::Real=1e-12)
+    b=rho.basis
+    (k==0 || k==b.N) && return 0.0
+    # Every recoupling coefficient below draws factorials from the same
+    # bounded range.  Preparing that range once avoids rebuilding identical
+    # BigInt factorials for every product-basis entry while retaining the
+    # exact-cancellation route used for large doubled spins.
+    factorials=_SU2FactorialCache(b.N+1)
+    _qubit_negativity(rho,k,factorials;atol=atol)
+end
+
+# The explicit cache argument keeps an uncached oracle available to focused
+# tests and benchmarks without changing the public negativity API.
+function _qubit_negativity(rho::PIState,k::Integer,
+                           factorials::Union{Nothing,_SU2FactorialCache};
+                           atol::Real=1e-12)
     b=rho.basis; na=k; nb=b.N-k
     (na==0 || nb==0) && return 0.0
     total_norm=0.0
@@ -258,7 +273,8 @@ function _qubit_negativity(rho::PIState,k::Integer;atol::Real=1e-12)
             U=zeros(Float64,da*db,j+1)
             for (ia,m1) in pairs(ma),(ib,m2) in pairs(mb)
                 m=m1+m2; abs(m)<=j || continue
-                U[ia+(ib-1)*da,m_to_i[m]]=_su2_cgc(ja,m1,jb,m2,j,m)
+                U[ia+(ib-1)*da,m_to_i[m]]=
+                    _su2_cgc(factorials,ja,m1,jb,m2,j,m)
             end
             block .+= U*C*U'
         end
@@ -541,8 +557,8 @@ function show(io::IO,p::ReductionPlan)
 end
 
 """
-    ReductionWorkspace(plan; T=Float64)
-    ReductionWorkspace(plan, rho)
+    ReductionWorkspace(plan; T=Float64, mode=:both)
+    ReductionWorkspace(plan, rho; mode=:both)
 
 Allocate mutable scratch for repeated applications of a [`ReductionPlan`](@ref).
 The workspace reuses the largest product-Schur block, multiplication
@@ -553,6 +569,13 @@ so repeated applications do not redo `BigInt`/rational setup or trigger
 mixed-eltype matrix-multiplication fallbacks. The immutable plan keeps its
 compact recoupling representation (real for qubits); an already type-matched
 plan matrix is shared rather than copied into the workspace.
+Use `mode=:reduction` when only reduced states or purities are required, or
+`mode=:negativity` when only negativity is required. These modes omit the
+same-size partial-transpose matrix or the partial-trace/reduced-block storage,
+respectively. The default `mode=:both` preserves the general-purpose
+workspace. A mode-specific workspace raises if passed to an incompatible
+operation instead of allocating missing scratch implicitly.
+
 It belongs to the exact `ReductionPlan` used at construction and must be used
 by only one task at a time.
 
@@ -572,19 +595,24 @@ mutable struct ReductionWorkspace{T,P<:ReductionPlan,S}
     recoupling_intertwiners::Vector{Vector{Vector{Matrix{T}}}}
     reduction_parent_scales::S
     negativity_parent_scales::S
+    mode::Symbol
 end
 
 _workspace_intertwiner(::Type{T},U::Matrix{T}) where T=U
 _workspace_intertwiner(::Type{T},U::AbstractMatrix) where T=Matrix{T}(U)
 
-function ReductionWorkspace(plan::ReductionPlan{G};T::Type{R}=Float64) where {G,R<:AbstractFloat}
+function ReductionWorkspace(plan::ReductionPlan{G};T::Type{R}=Float64,
+                            mode::Symbol=:both) where {G,R<:AbstractFloat}
+    mode in (:both,:reduction,:negativity)||throw(ArgumentError(
+        "ReductionWorkspace mode must be :both, :reduction, or :negativity"))
     CT=promote_type(Complex{R},G)
     max_product=maximum((c.da*c.db for c in plan.couplings);init=1)
     max_parent=maximum((size(U,2) for c in plan.couplings for (_,Us) in c.intertwiners
                                   for U in Us);init=1)
     max_output=maximum((length(patterns) for patterns in plan.output_basis.patterns);init=1)
-    reduced=[zeros(CT,length(patterns),length(patterns))
-             for patterns in plan.output_basis.patterns]
+    reduced=mode===:negativity ? Matrix{CT}[] :
+        [zeros(CT,length(patterns),length(patterns))
+         for patterns in plan.output_basis.patterns]
     recouplers=Vector{Vector{Vector{Matrix{CT}}}}(undef,length(plan.couplings))
     Scale=_PreparedExactScale{_real_float_type(CT),true}
     reduction_scales=Vector{Vector{Scale}}(undef,length(plan.couplings))
@@ -603,29 +631,34 @@ function ReductionWorkspace(plan::ReductionPlan{G};T::Type{R}=Float64) where {G,
                 [_workspace_intertwiner(CT,U) for U in intertwiners]
             denominator=symmetric_group_dimension(
                 plan.basis.sectors[sector_index])
-            push!(reduction_scales[coupling_index],_prepare_exact_scale(
-                _real_float_type(CT),reduction_numerator,denominator,Val(true);
-                context="prepared reduced-state parent scale"))
-            push!(negativity_scales[coupling_index],_prepare_exact_scale(
-                _real_float_type(CT),negativity_numerator,denominator,Val(true);
-                context="prepared partial-transpose parent scale"))
+            if mode!==:negativity
+                push!(reduction_scales[coupling_index],_prepare_exact_scale(
+                    _real_float_type(CT),reduction_numerator,denominator,Val(true);
+                    context="prepared reduced-state parent scale"))
+            end
+            if mode!==:reduction
+                push!(negativity_scales[coupling_index],_prepare_exact_scale(
+                    _real_float_type(CT),negativity_numerator,denominator,Val(true);
+                    context="prepared partial-transpose parent scale"))
+            end
         end
     end
     ReductionWorkspace{CT,typeof(plan),typeof(reduction_scales)}(
         plan,CT,zeros(CT,max_product,max_product),
         zeros(CT,max_product,max_parent),zeros(CT,max_parent,max_parent),
-        zeros(CT,max_output,max_output),
-        zeros(CT,max_product,max_product),reduced,recouplers,
-        reduction_scales,negativity_scales)
+        mode===:negativity ? zeros(CT,0,0) : zeros(CT,max_output,max_output),
+        mode===:reduction ? zeros(CT,0,0) : zeros(CT,max_product,max_product),
+        reduced,recouplers,reduction_scales,negativity_scales,mode)
 end
 
-function ReductionWorkspace(plan::ReductionPlan,rho::PIState)
+function ReductionWorkspace(plan::ReductionPlan,rho::PIState;
+                            mode::Symbol=:both)
     _check_reduction_plan(plan,rho.basis,plan.k)
-    ReductionWorkspace(plan;T=_real_float_type(eltype(rho.data)))
+    ReductionWorkspace(plan;T=_real_float_type(eltype(rho.data)),mode)
 end
 
 function show(io::IO,w::ReductionWorkspace)
-    print(io,"ReductionWorkspace(k=$(w.plan.k), scalar_type=$(w.Ttype), " *
+    print(io,"ReductionWorkspace(k=$(w.plan.k), mode=$(w.mode), scalar_type=$(w.Ttype), " *
              "max_product_dimension=$(size(w.product_block,1)))")
 end
 
@@ -710,6 +743,16 @@ function _check_reduction_workspace(work::ReductionWorkspace,plan::ReductionPlan
     _check_reduction_plan(plan,rho.basis,plan.k)
     promote_type(work.Ttype,eltype(rho.data))===work.Ttype||throw(ArgumentError(
         "ReductionWorkspace scalar type $(work.Ttype) cannot represent state scalar type $(eltype(rho.data))"))
+    work
+end
+
+function _require_reduction_workspace_mode(work::ReductionWorkspace,
+                                           operation::Symbol)
+    required=operation===:reduction ? (:both,:reduction) :
+             operation===:negativity ? (:both,:negativity) : ()
+    work.mode in required||throw(ArgumentError(
+        "ReductionWorkspace(mode=$(work.mode)) cannot perform $operation; " *
+        "construct it with mode=:$operation or mode=:both"))
     work
 end
 
@@ -854,6 +897,7 @@ end
 function _accumulate_reduced_blocks!(rho::PIState,plan::ReductionPlan,
                                      work::ReductionWorkspace;
                                      atol::Real,rtol::Real)
+    _require_reduction_workspace_mode(work,:reduction)
     for R in work.reduced_blocks;fill!(R,zero(eltype(R)));end
     for (coupling_index,c) in pairs(plan.couplings)
         # The output stores C_alpha=sqrt(f_alpha)R_alpha.  Fuse its complete
@@ -887,6 +931,7 @@ end
 
 function _plan_negativity(rho::PIState,plan::ReductionPlan,
                           work::ReductionWorkspace;atol::Real,rtol::Real)
+    _require_reduction_workspace_mode(work,:negativity)
     (plan.k==0||plan.k==rho.basis.N)&&return zero(_real_float_type(work.Ttype))
     R=_real_float_type(work.Ttype);total_norm=zero(R)
     for (coupling_index,c) in pairs(plan.couplings)

@@ -76,6 +76,29 @@ density_statistics = trajectory_statistics(
     density_paths; observables, nchannels=2)
 density_average = density_statistics.average_states
 
+# The same Schur-Kraus plan supports continuous-hazard event times. This
+# small state-free batch demonstrates confidence-controlled stopping; its
+# deliberately loose cap is not used for the quantitative curves below.
+adaptive_weak = adaptive_weak_pi_quantum_trajectories(
+    weak_plan, psi0, times;
+    observables, algorithm=:event, dt=0.02, dtmax=0.05,
+    abstol=1e-9, reltol=1e-7,
+    min_trajectories=16, max_trajectories=32, batch_size=8,
+    atol=0.75, rtol=0, seed=3026, threaded=use_threads,
+)
+
+# A history-free stationary estimate averages density reconstructions inside
+# each independent path. Complete time batches add an autocorrelation-aware
+# diagnostic without replacing the primary across-path standard error.
+weak_stationary = weak_pi_trajectory_steady_state(
+    weak_plan, psi0;
+    trajectories=8, settling_time=5.0,
+    samples_per_trajectory=8, sampling_interval=0.1, batch_size=4,
+    algorithm=:event, dt=0.02, dtmax=0.05,
+    abstol=1e-9, reltol=1e-7,
+    seed=4026, threaded=use_threads, return_info=true,
+)
+
 # Decay from the excited state remains diagonal in the Schur/GT basis.  The
 # certified population backend is therefore an independent reduced reference.
 population_plan = PopulationPlan(model)
@@ -182,6 +205,10 @@ println("history-size ratio density/weak: ",
         density_history_bytes / weak_history_bytes)
 println("N=50 coordinate counts (weak PI, PI density, full ket): ",
         (Int(weak_dimensions[50]), Int(pi_density_dimensions[50]), 2^BigInt(50)))
+println("adaptive event-driven weak-PI paths: ", adaptive_weak.trajectory_count,
+        "; converged sampling target: ", adaptive_weak.converged)
+println("weak-PI stationary batch means: ",
+        weak_stationary.metadata.batch_means)
 
 @assert weak_pi_dimension(basis)<length(basis)
 @assert weak_pi_dimension(basis)<2^N
@@ -208,6 +235,11 @@ println("N=50 coordinate counts (weak PI, PI density, full ket): ",
 @assert density_state_error<0.12
 @assert population_state_error<2e-11
 @assert all(state->abs(trace(state)-1)<5e-12,weak_average)
+@assert adaptive_weak.backend == :weak_pi
+@assert adaptive_weak.metadata.algorithm == :event
+@assert weak_stationary.metadata.algorithm == :event
+@assert weak_stationary.metadata.batch_means.batch_count == 16
+@assert abs(trace(weak_stationary.state)-1) < 5e-11
 
 if render_plots && ExampleMakie.makie_available()
     M = ExampleMakie.makie_module()

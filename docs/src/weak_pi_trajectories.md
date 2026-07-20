@@ -118,11 +118,44 @@ summary = weak_pi_trajectory_statistics(
 rho_mean = summary.average_states[end]
 ```
 
+Use continuous hazard roots by selecting the adaptive algorithm:
+
+```julia
+event_paths = weak_pi_quantum_trajectories(
+    plan, psi0, times, 500;
+    algorithm=:event, dt=0.02, dtmax=0.05,
+    abstol=1e-9, reltol=1e-7,
+    event_time_tolerance=1e-10,
+    seed=2026, workspace=batch,
+)
+```
+
+The aliases `:adaptive` and `:event_driven` select the same algorithm. An
+embedded Dormand--Prince 5(4) trial advances the normalized pseudo-ket and
+the integrated jump hazard with common stages. A crossing is located from
+the unchanged step-start state, then the ordinary sector-resolved Kraus
+branch is sampled at the physical event time. Event times are therefore not
+restricted to step endpoints.
+
 Plans are immutable and shareable. A `WeakPITrajectoryWorkspace` owns the
 Runge--Kutta, intensity, and selected-branch scratch for one path. A
 `WeakPITrajectoryBatchWorkspace` gives every worker independent scratch and an
 independent RNG while retaining trajectory-index-derived seeds. Serial and
 threaded batches are therefore reproducible for a fixed seed.
+
+`WeakPITrajectoryWorkspace(mode=:full)` is the default and supports both
+algorithms. Fixed propagation uses three full-vector RK4 registers.
+`mode=:fixed` omits `k3`, `k4`, and the six adaptive-only vectors and rejects
+an event-driven call rather than allocating scratch lazily. Batch workspaces
+accept the same mode keyword.
+
+Every no-jump stage first combines the rate-weighted channel loss blocks into
+one effective Schur operator, requiring one matrix-vector action per sector.
+Individual channel and Kraus-branch intensities are evaluated only after an
+event must be selected. For event-driven paths, the accepted seven DOPRI
+stages supply a quartic continuous extension. Four scalar hazard coefficients
+are retained for bisection and the root pseudo-ket is reconstructed once from
+the retained stages; root localization performs no additional RHS trials.
 
 `WeakPIJumpRecord` stores the model channel, flattened Kraus branch, source
 partition, target partition, and the ``N-1`` child partition for a local
@@ -131,19 +164,163 @@ the sampled Schur-sector transition counts. Observable statistics accept the
 same Hermitian local matrices and PI operators as the density trajectory
 tools. `weak_pi_expectation` evaluates one pseudo-ket directly.
 
+## History-free stationary density estimate
+
+For an autonomous model, `weak_pi_trajectory_steady_state` estimates the
+initial-state-selected stationary density operator without retaining
+pseudo-ket histories or jump records:
+
+```julia
+estimate = weak_pi_trajectory_steady_state(
+    plan, psi0;
+    trajectories=2_000,
+    settling_time=50.0,
+    samples_per_trajectory=11,
+    sampling_interval=2.0,
+    dt=0.002,
+    max_jump_probability=0.03,
+    seed=2026,
+    threaded=Threads.nthreads() > 1,
+    workspace=batch,
+    observables=(excitation=adjoint(sm) * sm,),
+    return_info=true,
+)
+rho_stationary = estimate.state
+```
+
+The estimator also accepts `algorithm=:event`. For a time-series error
+diagnostic, request complete batches:
+
+```julia
+estimate = weak_pi_trajectory_steady_state(
+    plan, psi0;
+    trajectories=500,
+    settling_time=50.0,
+    samples_per_trajectory=40,
+    sampling_interval=0.5,
+    batch_size=10,
+    dt=0.01,
+    return_info=true,
+)
+batch_report = estimate.metadata.batch_means
+batch_report.standard_error
+batch_report.effective_independent_samples
+```
+
+`batch_size` requires `return_info=true`, because the diagnostic is returned
+only through `estimate.metadata.batch_means`. The primary
+`estimate.standard_error` continues to use independently seeded path means.
+The optional report first averages `batch_size` consecutive time
+samples and treats the complete batch means as approximately independent.
+Increase the batch length and total window until the estimate stabilizes.
+This does not certify burn-in or finite-window bias; those qualifications are
+recorded explicitly in `batch_report.assumptions`.
+
+The density conversion must precede every average. For independent path
+``r`` and its ``K`` selected post-settling times, the path mean is
+
+```math
+\overline C^{(r)}_\nu
+=\frac{1}{K}\sum_{k=1}^K
+  \frac{|\psi^{(r)}_\nu(t_k)\rangle
+        \langle\psi^{(r)}_\nu(t_k)|}{\sqrt{f^\nu}},
+\qquad
+\widehat C_\nu=\frac{1}{M}\sum_{r=1}^M\overline C^{(r)}_\nu.
+```
+
+It would be incorrect to average pseudo-ket amplitudes before taking their
+outer products: the density map is nonlinear, sector-relative phases are
+unphysical, and the stationary estimate is generally mixed. The function
+therefore returns a `PIState`, never a `WeakPIPseudoKet`.
+
+Time samples from one realization can be autocorrelated. They are first
+combined into ``\overline C^{(r)}``, and only the ``M`` independent path means
+enter the uncertainty estimate. Because the equation-(7) PI coefficient basis
+is Hilbert--Schmidt orthonormal,
+
+```math
+s_{\mathrm{HS}}
+=\sqrt{\frac{1}{M-1}\sum_{r=1}^M
+ \left\|\overline C^{(r)}-\widehat C\right\|_2^2},
+\qquad
+\mathrm{SE}_{\mathrm{HS}}=\frac{s_{\mathrm{HS}}}{\sqrt M}.
+```
+
+At least two independent paths are required. With `return_info=true`, the
+shared `TrajectorySteadyStateResult` reports this sample spread and standard
+error, optional Hermitian-observable statistics across the same path means,
+the density Liouvillian residual, relative residual, and trace error. These
+are diagnostics, not a `converged` claim. The averaged state is not silently
+normalized, symmetrized, or positivity-repaired.
+
+Its `metadata` identifies `backend=:weak_pi` and the selected algorithm,
+records the effective worker and sampling controls, and exposes
+`pseudo_ket_dimension` and `density_dimension`. The reduction and uncertainty
+labels are respectively `:post_settling_density_mean` and
+`:independent_path_mean`.
+
+The state/density reduction is history-free: each worker retains one weak
+pseudo-ket, one PI-coordinate path mean, and online accumulators,
+independently of the number of paths and sampling times. Reproducible
+trajectory-indexed streams retain one `UInt64` seed per path. Producing a full
+density estimate still requires forming every retained Schur outer product at
+each requested sample. Optional observables are reduced from the same path
+density mean and therefore use the same independent-path sampling unit.
+
+## Confidence-controlled weak-PI ensembles
+
+Observable-only calculations can stop at deterministic batch boundaries once
+all simultaneous empirical-Bernstein widths meet their target:
+
+```julia
+adaptive = adaptive_weak_pi_quantum_trajectories(
+    plan, psi0, times;
+    observables=(excitation=adjoint(sm) * sm,),
+    algorithm=:event, dt=0.02,
+    min_trajectories=128,
+    max_trajectories=10_000,
+    batch_size=64,
+    confidence=0.95,
+    atol=2e-3,
+    rtol=1e-2,
+    seed=2026,
+)
+```
+
+Observables are contracted directly from pseudo-kets; no state history or
+sampled PI density operator is retained. Each separately seeded trajectory
+is one independent sample for the stopping certificate, reported by
+`adaptive.metadata.effective_independent_samples`. The certificate controls
+Monte Carlo dispersion only. It does not cover integrator, finite-time
+initialization, finite-window, or model-truncation bias.
+
 ## Scope and convergence
 
-The current weak-PI integrator is fixed-step RK4 with a maximum jump
-probability. Converge both `dt` and `max_jump_probability` before interpreting
-Monte Carlo error bars. Rates must evaluate to finite, nonnegative real values
-representable in the prepared precision; time grids and controls may not
-silently narrow. Hamiltonian rates must likewise be finite and real.
+The fixed weak-PI integrator is RK4 with a maximum jump probability; the event
+integrator is adaptive Dormand--Prince with continuous hazard roots. Converge
+the controls of the selected algorithm before interpreting Monte Carlo error
+bars. Rates must evaluate to finite, nonnegative real values representable in
+the prepared precision; time grids and controls may not silently narrow.
+Hamiltonian rates must likewise be finite and real.
 
 Fixed operator-valued collective/direct jumps and fixed one-body local jumps
 are supported. Operator-valued schedules and `LocalPBodyJump` are rejected.
 The composite backend can represent a finite cavity and density-valued
 tensor-product quantum jumps, but a composite pseudo-ket trajectory compiler
 is still separate future work.
+
+The stationary estimator additionally requires an autonomous source and a
+`WeakPIPseudoKet` initial state. A `PIState` can be converted with
+`weak_pi_pseudoket` only when every occupied multiplicity-weighted block has
+rank at most one; a general mixed state is not silently purified. Separately
+refine the settling time, within-path sampling interval and window length,
+the selected integration controls, and independent trajectory count. The
+primary Monte Carlo uncertainty does not include burn-in, finite-window,
+integration, or model-truncation bias. Optional batch means diagnose temporal
+autocorrelation only under their explicit approximately-independent-batches
+assumption. A nonunique stationary manifold can retain dependence on the initial state or
+strong-symmetry component. Kraus rotations preserve the ensemble master
+equation but can alter finite-sample variance.
 
 The runnable
 [`weak_pi_trajectories.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/weak_pi_trajectories.jl) example
@@ -160,8 +337,9 @@ representation-size scaling, and a warmed per-path timing from the current
 run. An equal-ensemble retained-history panel complements the asymptotic
 coordinate counts; it excludes plans, worker scratch, and transient peak RAM.
 For observable-only work, the density-valued backend can instead use
-`save_states=false`; the current weak-PI batch interface retains paths before
-forming statistics.
+`save_states=false`; the ordinary weak-PI batch/statistics interface retains
+paths before forming statistics. `weak_pi_trajectory_steady_state` is the
+history-free weak-PI route when the full stationary density is required.
 The timing is descriptive rather than a regression threshold. The scaling
 panel uses the exact complete-qubit counts
 

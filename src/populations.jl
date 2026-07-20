@@ -184,6 +184,66 @@ function _population_raw_action(kernel::LocalJumpPIKernel,b,map,::Type{T}) where
     sparse(I,J,V,length(b),length(map.diagonal_indices))
 end
 
+function _population_raw_action(kernel::FactorizedLocalJumpPIKernel,b,map,
+                                ::Type{T}) where T
+    I=Int[];J=Int[];V=T[]
+    @inbounds for branch_index in eachindex(kernel.branches.entries)
+        branch=kernel.branches.entries[branch_index]
+        li=branch.output_sector;ni=branch.input_sector
+        nl=length(b.patterns[li]);nn=length(b.patterns[ni])
+        contraction=kernel.contractions[branch_index]
+        population_offset=map.sector_offsets[ni]
+        for source in 1:nn
+            column=population_offset+source-1
+            factor=branch.scale*map.inverse_scales[column]
+            for output_column in 1:nl,output_row in 1:nl
+                value=factor*contraction[output_row,source]*
+                    conj(contraction[output_column,source])
+                coordinate=b.offsets[li]+output_row-1+(output_column-1)*nl
+                _push_population_raw!(I,J,V,coordinate,column,value,T)
+            end
+        end
+    end
+    for sector_index in eachindex(b.sectors)
+        _append_anticommutator_raw!(I,J,V,kernel.qblocks[sector_index],
+                                    b,map,sector_index,T)
+    end
+    sparse(I,J,V,length(b),length(map.diagonal_indices))
+end
+
+function _population_raw_action(kernel::FactorizedLocalPBodyJumpPIKernel,b,map,
+                                ::Type{T}) where T
+    I=Int[];J=Int[];V=T[]
+    @inbounds for (li,ni,first_pair,last_pair) in kernel.groups
+        nl=length(b.patterns[li]);nn=length(b.patterns[ni])
+        population_offset=map.sector_offsets[ni]
+        for source in 1:nn
+            column=population_offset+source-1
+            inverse_scale=map.inverse_scales[column]
+            for pair in first_pair:last_pair
+                contraction=kernel.contractions[pair]
+                exact_scale=kernel.pair_scales[pair]
+                for output_column in 1:nl,output_row in 1:nl
+                    primitive=contraction[output_row,source]*
+                        conj(contraction[output_column,source])
+                    value=inverse_scale*(exact_scale.direct ?
+                        exact_scale.factor*primitive :
+                        _apply_prepared_exact_scale(primitive,exact_scale;
+                            context="population local p-body gain"))
+                    coordinate=b.offsets[li]+output_row-1+
+                        (output_column-1)*nl
+                    _push_population_raw!(I,J,V,coordinate,column,value,T)
+                end
+            end
+        end
+    end
+    for sector_index in eachindex(b.sectors)
+        _append_anticommutator_raw!(I,J,V,kernel.qblocks[sector_index],
+                                    b,map,sector_index,T)
+    end
+    sparse(I,J,V,length(b),length(map.diagonal_indices))
+end
+
 function _population_kernel_scale(kernel::HamiltonianPIKernel,t,p,::Type{T}) where T
     value=value_at(kernel.scale,t,p)
     value isa Number||throw(ArgumentError(
@@ -195,7 +255,8 @@ function _population_kernel_scale(kernel::HamiltonianPIKernel,t,p,::Type{T}) whe
         "Hamiltonian rate must evaluate to a finite number"))
     converted
 end
-function _population_kernel_scale(kernel::Union{DissipatorPIKernel,LocalJumpPIKernel},
+function _population_kernel_scale(kernel::Union{DissipatorPIKernel,LocalJumpPIKernel,
+        FactorizedLocalJumpPIKernel,FactorizedLocalPBodyJumpPIKernel},
                                   t,p,::Type{T}) where T
     value=_evaluated_dissipative_rate(kernel.scale,t,p)
     promote_type(T,typeof(value))===T||throw(ArgumentError(
@@ -319,6 +380,13 @@ function _compile_population_plan(plan::LiouvillianPlan;atol=nothing,rtol=nothin
     components=plan.kernels===nothing ? 0 : length(plan.kernels)
     plan.kernels===nothing&&return (nothing,nothing,
         _missing_population_report(b,R,components,:uncompiled_operator_schedule))
+    # A caller may hand us an already fused autonomous plan without its source
+    # model. Probe only the physical population columns matrix-free; model and
+    # compiled-model constructors below deliberately rebuild term-resolved
+    # kernels so their stricter component diagnostics remain available.
+    if any(kernel->kernel isa FusedStaticPIKernel,plan.kernels)
+        return _compile_population_operator(plan,b;atol,rtol)
+    end
     all(kernel->kernel isa AbstractStaticPIKernel,plan.kernels)||return (nothing,nothing,
         _missing_population_report(b,R,components,:operator_time_dependence))
     coordinate_map=_population_coordinate_map(b,R)
@@ -353,10 +421,15 @@ function _raw_from_operator(L,b,map,::Type{T}) where T
     size(L)==(length(b),length(b))||throw(DimensionMismatch(
         "Liouvillian dimensions do not match the PI basis"))
     input=zeros(T,length(b));output=similar(input)
+    work=L isa LiouvillianPlan ? LiouvillianWorkspace(L) : nothing
     I=Int[];J=Int[];V=T[]
     for column in eachindex(map.diagonal_indices)
         fill!(input,zero(T));input[map.diagonal_indices[column]]=map.inverse_scales[column]
-        mul!(output,L,input)
+        if work===nothing
+            mul!(output,L,input)
+        else
+            apply!(output,L,input,work)
+        end
         for row in eachindex(output)
             iszero(output[row])&&continue
             push!(I,row);push!(J,column);push!(V,output[row])
@@ -419,8 +492,12 @@ function _population_plan(plan::LiouvillianPlan;atol=nothing,rtol=nothing)
     PopulationPlan(plan.basis,kernels,plan.Ttype,plan.autonomous,report)
 end
 
-PopulationPlan(model::PIModel;kwargs...)=_population_plan(LiouvillianPlan(model);kwargs...)
-PopulationPlan(compiled::CompiledPIModel;kwargs...)=_population_plan(compiled.plan;kwargs...)
+PopulationPlan(model::PIModel;kwargs...)=
+    _population_plan(_term_resolved_liouvillian_plan(model);kwargs...)
+PopulationPlan(compiled::CompiledPIModel;kwargs...)=_population_plan(
+    compiled.plan.kernels!==nothing&&
+    any(kernel->kernel isa FusedStaticPIKernel,compiled.plan.kernels) ?
+        _term_resolved_liouvillian_plan(compiled.model) : compiled.plan;kwargs...)
 PopulationPlan(plan::LiouvillianPlan;kwargs...)=_population_plan(plan;kwargs...)
 function PopulationPlan(L::MatrixFreeLiouvillian,b::PIBasis=L.plan===nothing ?
                         throw(ArgumentError("a custom matrix-free Liouvillian requires an explicit PI basis")) : L.plan.basis;
@@ -463,10 +540,14 @@ Defaults are structurally strict; nonzero `atol` or `rtol` explicitly permit
 an approximate projection and are reflected in the report's `reason`.
 """
 function population_invariance(model::PIModel;kwargs...)
-    _,_,report=_compile_population_plan(LiouvillianPlan(model);kwargs...);report
+    _,_,report=_compile_population_plan(
+        _term_resolved_liouvillian_plan(model);kwargs...);report
 end
 function population_invariance(compiled::CompiledPIModel;kwargs...)
-    _,_,report=_compile_population_plan(compiled.plan;kwargs...);report
+    plan=compiled.plan.kernels!==nothing&&
+        any(kernel->kernel isa FusedStaticPIKernel,compiled.plan.kernels) ?
+            _term_resolved_liouvillian_plan(compiled.model) : compiled.plan
+    _,_,report=_compile_population_plan(plan;kwargs...);report
 end
 function population_invariance(plan::LiouvillianPlan;kwargs...)
     _,_,report=_compile_population_plan(plan;kwargs...);report
@@ -490,7 +571,13 @@ function population_invariance(L::AbstractMatrix,b::PIBasis;kwargs...)
     _,_,report=_compile_population_operator(L,b;kwargs...);report
 end
 
-"""Reusable scratch for population-generator application and fixed-step RK4 evolution."""
+"""
+Reusable scratch for population-generator application and fixed-step RK4
+evolution. New workspaces retain three full integration arrays (`stage`, `k1`,
+and `k2`) plus the independent kernel-application buffer. The legacy `k3` and
+`k4` fields are empty compatibility placeholders; full-sized legacy values are
+also accepted.
+"""
 struct PopulationWorkspace{V}
     stage::V
     k1::V
@@ -501,19 +588,19 @@ struct PopulationWorkspace{V}
 end
 
 function PopulationWorkspace(plan::PopulationPlan)
-    vectors=ntuple(_->zeros(eltype(plan),size(plan,1)),6)
-    PopulationWorkspace(vectors...)
+    T=eltype(plan);n=size(plan,1)
+    PopulationWorkspace(zeros(T,n),zeros(T,n),zeros(T,n),T[],T[],zeros(T,n))
 end
 function PopulationWorkspace(plan::PopulationPlan,source::AbstractVector)
     length(source)==size(plan,1)||throw(DimensionMismatch("population vector has the wrong length"))
-    T=promote_type(eltype(plan),eltype(source))
-    vectors=ntuple(_->zeros(T,size(plan,1)),6)
-    PopulationWorkspace(vectors...)
+    T=promote_type(eltype(plan),eltype(source));n=size(plan,1)
+    PopulationWorkspace(zeros(T,n),zeros(T,n),zeros(T,n),T[],T[],zeros(T,n))
 end
 
 function _check_population_workspace(work::PopulationWorkspace,plan,source,destination)
     n=size(plan,1)
-    all(vector->length(vector)==n,(work.stage,work.k1,work.k2,work.k3,work.k4,work.kernel))||
+    all(vector->length(vector)==n,(work.stage,work.k1,work.k2,work.kernel))&&
+        all(vector->length(vector) in (0,n),(work.k3,work.k4))||
         throw(DimensionMismatch("population workspace has the wrong dimension"))
     required=promote_type(eltype(plan),eltype(source))
     promote_type(eltype(work.kernel),required)===eltype(work.kernel)||throw(ArgumentError(
@@ -798,6 +885,15 @@ end
 
 function _check_population_evolution_workspace(work,plan,source,destination)
     _check_population_workspace(work,plan,source,destination)
+    active=(work.stage,work.k1,work.k2,work.kernel)
+    for i in eachindex(active)
+        Base.mightalias(active[i],destination)&&throw(ArgumentError(
+            "population evolution destination must not alias workspace scratch"))
+        for j in 1:i-1
+            Base.mightalias(active[i],active[j])&&throw(ArgumentError(
+                "population workspace scratch arrays must not alias"))
+        end
+    end
     nothing
 end
 
@@ -805,9 +901,10 @@ end
     evolve_populations!(destination, plan, source, tspan; steps=256,
                         parameters=nothing, workspace=nothing)
 
-Propagate a population vector with preallocated fourth-order Runge--Kutta
-stages. `destination` may alias `source`; one workspace may be reused
-sequentially but not concurrently.
+Propagate a population vector with preallocated three-scratch fourth-order
+Runge--Kutta evolution. `destination` may alias `source`, but it must not alias
+workspace scratch; one workspace may be reused sequentially but not
+concurrently.
 """
 function evolve_populations!(destination::AbstractVector,plan::PopulationPlan,
                              source::AbstractVector,tspan;steps::Integer=256,
@@ -831,18 +928,24 @@ function evolve_populations!(destination::AbstractVector,plan::PopulationPlan,
             "$name is not represented exactly and finitely in $R"))
     end
     work=workspace===nothing ? PopulationWorkspace(plan,source) : workspace
+    destination===source||!Base.mightalias(destination,source)||throw(
+        ArgumentError("population evolution permits exact in-place use but not partially overlapping source and destination storage"))
     _check_population_evolution_workspace(work,plan,source,destination)
     destination===source||copyto!(destination,source)
     time=convert(R,t0);step=(convert(R,t1)-time)/R(steps)
     for _ in 1:steps
         apply!(work.k1,plan,destination,time,parameters,work)
+        copyto!(work.k2,work.k1)
         @. work.stage=destination+(step/2)*work.k1
-        apply!(work.k2,plan,work.stage,time+step/2,parameters,work)
-        @. work.stage=destination+(step/2)*work.k2
-        apply!(work.k3,plan,work.stage,time+step/2,parameters,work)
-        @. work.stage=destination+step*work.k3
-        apply!(work.k4,plan,work.stage,time+step,parameters,work)
-        @. destination=destination+(step/6)*(work.k1+2work.k2+2work.k3+work.k4)
+        apply!(work.k1,plan,work.stage,time+step/2,parameters,work)
+        @. work.k2=work.k2+2work.k1
+        @. work.stage=destination+(step/2)*work.k1
+        apply!(work.k1,plan,work.stage,time+step/2,parameters,work)
+        @. work.k2=work.k2+2work.k1
+        @. work.stage=destination+step*work.k1
+        apply!(work.k1,plan,work.stage,time+step,parameters,work)
+        @. work.k2=work.k2+work.k1
+        @. destination=destination+(step/6)*work.k2
         time+=step
     end
     destination
@@ -861,11 +964,9 @@ Base.lastindex(solution::PopulationSolution)=lastindex(solution.populations)
 Base.iterate(solution::PopulationSolution,args...)=iterate(solution.populations,args...)
 state(solution::PopulationSolution,index::Integer)=
     state_from_populations(solution.plan.basis,solution.populations[index])
-function state(solution::PopulationSolution,time::Real)
-    index=findmin(abs.(solution.times.-time))[2]
-    isapprox(solution.times[index],time)||throw(ArgumentError("time $time was not saved"))
-    state(solution,index)
-end
+state_at(solution::PopulationSolution,time::Real)=
+    state(solution,_saved_time_index(solution.times,time))
+state(solution::PopulationSolution,time::Real)=state_at(solution,time)
 function show(io::IO,solution::PopulationSolution)
     print(io,"PopulationSolution($(length(solution)) vectors, dimension=$(size(solution.plan,1)), " *
              "t=$(first(solution.times))…$(last(solution.times)))")

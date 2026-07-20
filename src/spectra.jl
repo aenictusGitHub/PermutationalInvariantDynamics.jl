@@ -13,6 +13,85 @@ function _require_autonomous_spectral_input(x)
     nothing
 end
 
+function _selected_spectrum_workspace_bytes(L,method,krylovdim,nev;
+        vectors::Bool=false,projected::Bool=false,kwargs...)
+    n=size(L,1);workspace=get(kwargs,:workspace,nothing)
+    T=workspace isa ArnoldiWorkspace ? eltype(workspace.V) :
+      workspace isa BlockArnoldiWorkspace ? eltype(workspace.V) :
+      workspace isa JacobiDavidsonWorkspace ? eltype(workspace.arnoldi.V) :
+      _complex_float_type(eltype(L))
+    for key in (:target,:operator_scale,:initial_vector,:initial_subspace,
+                :preconditioner)
+        value=get(kwargs,key,nothing);value===nothing&&continue
+        if value isa Number
+            T=_advanced_promote_scalar_type(T,value)
+        else
+            S=try eltype(value) catch; Any end
+            S isa Type&&S<:Number&&(T=promote_type(T,_complex_float_type(S)))
+        end
+    end
+    effective_krylovdim=workspace isa ArnoldiWorkspace ?
+        size(workspace.V,2)-1 : workspace isa JacobiDavidsonWorkspace ?
+        size(workspace.arnoldi.V,2)-1 : workspace isa BlockArnoldiWorkspace ?
+        size(workspace.V,2) : krylovdim
+    estimate=if method in (:krylov,:arnoldi)
+        _performance_arnoldi_bytes(n,T,effective_krylovdim;mode=:ordinary)
+    elseif method in (:block_arnoldi,:block)
+        effective_block=workspace isa BlockArnoldiWorkspace ?
+            size(workspace.W,2) : Int(get(kwargs,:block_size,min(nev,4)))
+        workspace isa BlockArnoldiWorkspace ?
+            _block_arnoldi_workspace_owned_bytes(workspace)+
+                _performance_block_arnoldi_projected_bytes(
+                    effective_krylovdim,T) :
+            _performance_block_arnoldi_bytes(n,T,effective_krylovdim,
+                                             effective_block)
+    elseif method in (:harmonic,:iram,:implicit_qr)
+        _performance_arnoldi_bytes(n,T,effective_krylovdim;mode=:full)
+    else
+        correction_dim=workspace isa JacobiDavidsonWorkspace ?
+            size(workspace.correction.V,2)-1 :
+            get(kwargs,:correction_krylovdim,min(n,20))
+        _performance_arnoldi_bytes(n,T,effective_krylovdim;mode=:full)+
+            _performance_gmres_bytes(n,T,correction_dim)+
+            _performance_array_bytes(n,T,0;linear_arrays=8)
+    end
+    if method in (:block_arnoldi,:block)
+        estimate+=_performance_block_arnoldi_output_bytes(n,T,nev,
+            get(kwargs,:maxrestarts,20);vectors)
+    end
+    estimate+=_performance_source_action_bytes(L,T)
+    operator_workspace=get(kwargs,:operator_workspace,nothing)
+    estimate+=_block_operator_workspace_bytes(operator_workspace)
+    if method in (:block_arnoldi,:block)
+        effective_block=workspace isa BlockArnoldiWorkspace ?
+            size(workspace.W,2) : Int(get(kwargs,:block_size,min(nev,4)))
+        active_block=min(n,effective_krylovdim,effective_block)
+        estimate+=operator_workspace===nothing ?
+            _performance_batched_action_growth_bytes(L,active_block) :
+            _performance_batched_workspace_growth_bytes(
+                operator_workspace,active_block)
+    end
+    # Requested output modes and a matrix-free projector's explicit action
+    # buffers are live alongside the dominant solver workspace.
+    vectors&&!(method in (:block_arnoldi,:block))&&
+        (estimate+=_performance_entries_bytes(
+        BigInt(n)*min(BigInt(n),BigInt(nev)),T))
+    projected&&(estimate+=_performance_array_bytes(n,T,0;linear_arrays=4))
+    estimate
+end
+
+function _guard_selected_spectrum_workspace(L,method,krylovdim,nev,
+        vectors,memory_budget;projected::Bool=false,kwargs...)
+    estimate=_selected_spectrum_workspace_bytes(L,method,krylovdim,nev;
+        vectors,projected,kwargs...)
+    _require_performance_budget("selected Liouvillian spectral workspace",
+        estimate,memory_budget;guidance=
+        "Reduce krylovdim/nev or choose a larger explicit budget.")
+end
+
+_pi_spectrum_output(info,vectors::Bool,return_info::Bool)=
+    vectors ? info : return_info ? merge(info,(vectors=nothing,)) : info.values
+
 function _matrixfree_projector_for_spectrum(L,basis,symmetry,charge;atol,rtol,
                                              rng=Random.MersenneTwister(0))
     symmetry===nothing&&return (nothing,nothing,nothing)
@@ -36,10 +115,14 @@ function _matrixfree_projector_for_spectrum(L,basis,symmetry,charge;atol,rtol,
 end
 
 """
-    pi_liouvillian_spectrum(L; sortby=:real, rev=true, vectors=false)
+    pi_liouvillian_spectrum(L; sortby=:real, rev=true, vectors=false,
+                            return_info=false,
+                            memory_budget=512*1024^2)
 
 With `method=:dense`, compute the complete spectrum in the polynomial-size PI
 operator space. With `method=:krylov`, compute selected ordinary Ritz modes;
+`method=:block_arnoldi` advances several directions through one batched
+operator application and uses an explicitly named thick restart;
 `method=:harmonic` computes thick-restarted harmonic Ritz modes near zero,
 `method=:iram` applies implicit-QR restarting, and `method=:jd` uses
 hard-locking Jacobi--Davidson near `target`.
@@ -50,6 +133,12 @@ eigenvectors. Matrix-free inputs are materialized in PI coordinates, never in
 the full `d^(2N)` Liouville space, only when `method=:dense`; Krylov,
 harmonic, IRAM, and Jacobi--Davidson methods apply them without materializing
 the PI Liouvillian.
+
+Complete dense diagonalization is guarded by a conservative work-array
+estimate. Increase `memory_budget` only when the required RAM is available,
+or pass `memory_budget=Inf` as an explicit opt-in. `return_info=true` keeps
+solver diagnostics but, independently of that choice, right eigenvectors are
+retained only when `vectors=true`.
 """
 function pi_liouvillian_spectrum(x;sortby=:real,rev::Bool=true,vectors::Bool=false,
                                  method=:dense,nev::Integer=6,krylovdim::Integer=max(20,2nev+4),
@@ -58,14 +147,23 @@ function pi_liouvillian_spectrum(x;sortby=:real,rev::Bool=true,vectors::Bool=fal
                                  symmetry=nothing,charge=1,thickdim::Integer=max(nev+2,2nev),
                                  maxrestarts::Integer=20,target=nothing,
                                  retained_dimension::Integer=max(nev,min(2nev,krylovdim-1)),
-                                 rng=Random.MersenneTwister(0),kwargs...)
-    method in (:dense,:krylov,:arnoldi,:harmonic,:iram,:implicit_qr,
-               :jd,:jacobi_davidson)||throw(ArgumentError(
-        "method must be :dense, :krylov, :harmonic, :iram, or :jd"))
+                                 rng=Random.MersenneTwister(0),
+                                 return_info::Bool=false,
+                                 memory_budget=_DEFAULT_HIGHLEVEL_MEMORY_BUDGET,
+                                 kwargs...)
+    method isa Symbol||throw(ArgumentError("method must be a Symbol"))
+    method=_canonical_spectrum_algorithm(method)
+    method===:auto&&throw(ArgumentError(
+        "pi_liouvillian_spectrum requires an explicit method; use liouvillian_spectrum for automatic selection"))
     _require_autonomous_spectral_input(x)
     x isa PIModel&&basis===nothing&&(basis=x.basis)
+    x isa PIModel&&_require_model_preparation_budget(x,memory_budget;
+        operation="Liouvillian spectral model preparation")
     if method===:harmonic
-        L=x isa PIModel ? liouvillian(x;representation=:matrixfree) : x
+        L=x isa PIModel ? liouvillian(
+            x;representation=:matrixfree,memory_budget) : x
+        _guard_selected_spectrum_workspace(L,method,krylovdim,nev,vectors,
+            memory_budget;projected=symmetry!==nothing,target,kwargs...)
         P,sname,scheck=_matrixfree_projector_for_spectrum(L,basis,symmetry,charge;
             atol=atol,rtol=rtol,rng=rng)
         info=harmonic_arnoldi_spectrum(L;nev=nev,krylovdim=krylovdim,
@@ -75,47 +173,87 @@ function pi_liouvillian_spectrum(x;sortby=:real,rev::Bool=true,vectors::Bool=fal
         info=merge(info,(symmetry_used=P!==nothing,symmetry_name=sname,
                          symmetry_charge=P===nothing ? nothing : P.charge,
                          symmetry_residual=scheck))
-        return vectors ? info : info.values
+        return _pi_spectrum_output(info,vectors,return_info)
     end
-    if method in (:iram,:implicit_qr)
+    if method===:iram
         symmetry===nothing||throw(ArgumentError("implicit-QR Arnoldi does not implement matrix-free symmetry projection; use method=:harmonic"))
         haskey(kwargs,:which)&&throw(ArgumentError("pi_liouvillian_spectrum maps sortby to implicit-QR selection; pass sortby instead of which"))
         sortby in (:real,:magnitude)||throw(ArgumentError("implicit-QR spectra support sortby=:real or :magnitude"))
         which=sortby===:real ? (rev ? :LR : throw(ArgumentError("ascending-real implicit-QR selection is not supported"))) : (rev ? :LM : :SM)
-        L=x isa PIModel ? liouvillian(x;representation=:matrixfree) : x
+        L=x isa PIModel ? liouvillian(
+            x;representation=:matrixfree,memory_budget) : x
+        _guard_selected_spectrum_workspace(L,method,krylovdim,nev,vectors,
+            memory_budget;target,kwargs...)
         info=implicitly_restarted_arnoldi_spectrum(L;nev=nev,krylovdim=krylovdim,
             retained_dimension=retained_dimension,maxrestarts=maxrestarts,which=which,
             target=target,vectors=vectors,atol=atol,rtol=rtol,
             require_convergence=require_convergence,rng=rng,kwargs...)
         info=merge(info,(method=:iram,selection=target===nothing ? which : :near_target))
-        return vectors ? info : info.values
+        return _pi_spectrum_output(info,vectors,return_info)
     end
-    if method in (:jd,:jacobi_davidson)
+    if method===:jd
         symmetry===nothing||throw(ArgumentError("Jacobi--Davidson does not implement matrix-free symmetry projection; use method=:harmonic"))
         haskey(kwargs,:subspace_dim)&&throw(ArgumentError("pi_liouvillian_spectrum maps krylovdim to the Jacobi--Davidson subspace; pass krylovdim instead of subspace_dim"))
-        L=x isa PIModel ? liouvillian(x;representation=:matrixfree) : x
+        L=x isa PIModel ? liouvillian(
+            x;representation=:matrixfree,memory_budget) : x
+        _guard_selected_spectrum_workspace(L,method,krylovdim,nev,vectors,
+            memory_budget;target,kwargs...)
         info=jacobi_davidson_spectrum(L;nev=nev,target=target===nothing ? 0 : target,
             subspace_dim=krylovdim,vectors=vectors,atol=atol,rtol=rtol,
             require_convergence=require_convergence,rng=rng,kwargs...)
         info=merge(info,(method=:jd,selection=:near_target))
-        return vectors ? info : info.values
+        return _pi_spectrum_output(info,vectors,return_info)
+    end
+    if method===:block_arnoldi
+        symmetry===nothing||throw(ArgumentError(
+            "block Arnoldi does not implement matrix-free symmetry projection; use method=:harmonic"))
+        sortby in (:real,:magnitude)||throw(ArgumentError(
+            "block-Arnoldi spectra support sortby=:real or :magnitude"))
+        which=sortby===:real ? (rev ? :LR : throw(ArgumentError(
+            "ascending-real block-Arnoldi selection is not supported"))) :
+            (rev ? :LM : :SM)
+        L=x isa PIModel ? liouvillian(
+            x;representation=:matrixfree,memory_budget) : x
+        _guard_selected_spectrum_workspace(L,:block_arnoldi,krylovdim,nev,
+            vectors,memory_budget;target,maxrestarts,kwargs...)
+        info=block_arnoldi_spectrum(L;nev,krylovdim,which,target,
+            vectors,atol,rtol,maxrestarts,retained_dimension,
+            require_convergence,rng,memory_budget,kwargs...)
+        return _pi_spectrum_output(info,vectors,return_info)
     end
     if method in (:krylov,:arnoldi)
         symmetry===nothing||throw(ArgumentError("use method=:harmonic for matrix-free symmetry projection"))
         sortby in (:real,:magnitude)||throw(ArgumentError("Krylov spectra support sortby=:real or :magnitude"))
         which=sortby===:real ? (rev ? :LR : throw(ArgumentError("ascending-real Krylov selection is not supported"))) : (rev ? :LM : :SM)
-        L=x isa PIModel ? liouvillian(x;representation=:matrixfree) : x
+        L=x isa PIModel ? liouvillian(
+            x;representation=:matrixfree,memory_budget) : x
+        _guard_selected_spectrum_workspace(L,method,krylovdim,nev,vectors,
+            memory_budget;kwargs...)
         info=krylov_liouvillian_spectrum(L;nev=nev,krylovdim=krylovdim,which=which,
             vectors=vectors,atol=atol,rtol=rtol,require_convergence=require_convergence,rng=rng,kwargs...)
-        return vectors ? info : info.values
+        info=merge(info,(method=:arnoldi,))
+        return _pi_spectrum_output(info,vectors,return_info)
     end
-    L=x isa PIModel ? liouvillian(x;representation=:sparse) : x
+    # Prepare model geometry without assembling its PI-coordinate matrix, then
+    # reject an oversized dense request before the first n-by-n allocation.
+    L=x isa PIModel ? LiouvillianPlan(x) : x
+    n=size(L,1);size(L,2)==n||throw(DimensionMismatch(
+        "Liouvillian must be square"))
+    T=promote_type(_complex_float_type(eltype(L)),ComplexF64)
+    estimate=_performance_array_bytes(n,T,vectors ? 7 : 5;
+                                       linear_arrays=6)
+    _require_performance_budget("complete Liouvillian eigendecomposition",
+        estimate,memory_budget;guidance=
+        "Use method=:krylov, :block_arnoldi, :harmonic, :iram, or :jd for selected modes.")
     M=_materialize(L);size(M,1)==size(M,2)||throw(DimensionMismatch("Liouvillian must be square"))
     if vectors
         E=eigen(Matrix(M));order=_spectrum_order(E.values,sortby,rev)
         return (values=E.values[order],vectors=E.vectors[:,order],dimension=size(M,1))
     end
-    values=eigvals(Matrix(M));values[_spectrum_order(values,sortby,rev)]
+    values=eigvals(Matrix(M))
+    ordered=values[_spectrum_order(values,sortby,rev)]
+    return_info ? (values=ordered,vectors=nothing,dimension=size(M,1),
+                   method=:dense,partial_scope=false) : ordered
 end
 
 @doc """
@@ -255,30 +393,41 @@ function pi_liouvillian_gap(x;atol::Real=1e-12,rtol::Real=1e-10,
                             maxrestarts::Integer=20,
                             retained_dimension::Integer=max(nev,min(2nev,krylovdim-1)),
                             initial_vector=nothing,
-                            rng=Random.MersenneTwister(0),kwargs...)
+                            rng=Random.MersenneTwister(0),
+                            memory_budget=_DEFAULT_HIGHLEVEL_MEMORY_BUDGET,
+                            kwargs...)
     symmetry_kind===:unitary||throw(ArgumentError("only unitary weak symmetries define linear charge blocks for gap reduction"))
     _require_autonomous_spectral_input(x)
     x isa PIModel&&basis===nothing&&(basis=x.basis)
-    method in (:dense,:krylov,:arnoldi,:harmonic,:iram,:implicit_qr,
-               :jd,:jacobi_davidson)||throw(ArgumentError(
-        "method must be :dense, :krylov, :harmonic, :iram, or :jd"))
-    method in (:jd,:jacobi_davidson)&&throw(ArgumentError(
+    x isa PIModel&&_require_model_preparation_budget(x,memory_budget;
+        operation="Liouvillian-gap model preparation")
+    method isa Symbol||throw(ArgumentError("method must be a Symbol"))
+    method=_canonical_spectrum_algorithm(method)
+    method===:auto&&throw(ArgumentError(
+        "pi_liouvillian_gap requires an explicit method"))
+    method===:block_arnoldi&&throw(ArgumentError(
+        "block Arnoldi does not currently provide the global-gap certification used by pi_liouvillian_gap"))
+    method===:jd&&throw(ArgumentError(
         "near-target Jacobi--Davidson cannot certify the global largest-real Liouvillian gap; use method=:iram or :krylov"))
-    method in (:iram,:implicit_qr)&&(haskey(kwargs,:target)||haskey(kwargs,:which))&&throw(ArgumentError(
+    method===:iram&&(haskey(kwargs,:target)||haskey(kwargs,:which))&&throw(ArgumentError(
         "a Liouvillian gap requires largest-real implicit-QR selection; do not pass target or which"))
     if method===:harmonic
-        L=x isa PIModel ? liouvillian(x;representation=:matrixfree) : x
+        L=x isa PIModel ? liouvillian(
+            x;representation=:matrixfree,memory_budget) : x
+        _guard_selected_spectrum_workspace(L,method,krylovdim,nev,false,
+            memory_budget;projected=symmetry!==nothing,target=0,
+            initial_vector,kwargs...)
         P,sname,scheck=_matrixfree_projector_for_spectrum(L,basis,symmetry,charge;
             atol=atol,rtol=rtol,rng=rng)
         P===nothing&&throw(ArgumentError("method=:harmonic selects modes nearest zero in modulus and cannot certify the global largest-real Liouvillian gap; use method=:krylov or supply a unitary symmetry and request return_info=true for a charge-sector estimate with explicit certification metadata"))
-        sector_dimension=sum(count(mask) for mask in P.masks)
+        sector_dimension=_projector_range_dimension(P,size(L,1))
         sector_nev=min(Int(nev),sector_dimension)
         har=harmonic_arnoldi_spectrum(L;nev=sector_nev,krylovdim=krylovdim,
             thickdim=thickdim,maxrestarts=maxrestarts,projector=P,
             initial_vector=initial_vector,atol=atol,rtol=rtol,
             require_convergence=require_convergence,rng=rng)
         qtol=atol+rtol
-        require_stationary=abs(P.charge-one(P.charge))<=qtol
+        require_stationary=_projector_has_only_trivial_charges(P,qtol)
         info=_sector_decay_info(har.values;atol=atol,rtol=rtol,
             check_stability=check_stability,require_stationary=require_stationary)
         complete_sector=length(har.values)==sector_dimension&&all(har.converged)
@@ -304,7 +453,10 @@ function pi_liouvillian_gap(x;atol::Real=1e-12,rtol::Real=1e-10,
     end
     if method in (:krylov,:arnoldi,:iram,:implicit_qr)
         symmetry===nothing||throw(ArgumentError("use method=:harmonic for matrix-free symmetry projection"))
-        L=x isa PIModel ? liouvillian(x;representation=:matrixfree) : x
+        L=x isa PIModel ? liouvillian(
+            x;representation=:matrixfree,memory_budget) : x
+        _guard_selected_spectrum_workspace(L,method,krylovdim,nev,false,
+            memory_budget;initial_vector,kwargs...)
         arn = if method in (:iram,:implicit_qr)
             implicitly_restarted_arnoldi_spectrum(L;nev=nev,krylovdim=krylovdim,
                 retained_dimension=retained_dimension,maxrestarts=maxrestarts,which=:LR,
@@ -319,7 +471,7 @@ function pi_liouvillian_gap(x;atol::Real=1e-12,rtol::Real=1e-10,
         # A partial spectrum certifies the returned slow mode, but not that all
         # stationary modes have been counted if the requested window is full.
         stationary_complete=info.stationary_multiplicity<nev
-        selected_method=method in (:iram,:implicit_qr) ? :iram : :krylov
+        selected_method=method===:iram ? :iram : :arnoldi
         info=merge(info,(dimension=size(L,1),symmetry_used=false,symmetry_name=nothing,
             symmetry_sectors=nothing,symmetry_residual=nothing,method=selected_method,
             ritz_residuals=arn.residuals,stationary_multiplicity_certified=stationary_complete,
@@ -328,7 +480,18 @@ function pi_liouvillian_gap(x;atol::Real=1e-12,rtol::Real=1e-10,
             stability_certified=stationary_complete))
         return return_info ? info : info.gap
     end
-    L=x isa PIModel ? liouvillian(x;representation=:sparse) : x;M=_materialize(L)
+    L=x isa PIModel ? LiouvillianPlan(x) : x
+    n=size(L,1);size(L,2)==n||throw(DimensionMismatch(
+        "Liouvillian must be square"))
+    T=promote_type(_complex_float_type(eltype(L)),ComplexF64)
+    # Weak-symmetry discovery can retain the Liouvillian, conjugation map,
+    # eigensystem, and dense charge blocks simultaneously. The larger factor
+    # also safely covers the ordinary complete-gap path.
+    estimate=_performance_array_bytes(n,T,12;linear_arrays=8)
+    _require_performance_budget("complete Liouvillian gap analysis",estimate,
+        memory_budget;guidance=
+        "Use method=:krylov or :iram for a bounded largest-real calculation.")
+    M=_materialize(L)
     size(M,1)==size(M,2)||throw(DimensionMismatch("Liouvillian must be square"))
     selected_name=nothing;selected=symmetry;selected_S=nothing
     if symmetry===:auto

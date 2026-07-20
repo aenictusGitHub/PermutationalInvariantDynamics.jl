@@ -68,9 +68,9 @@ per-path wall times a useful local comparison of the prepared backends. The
 timing is deliberately not an assertion: it depends on hardware, thread
 count, jump history, and Julia version. One path is run first to compile the
 typed kernels, and the measurement excludes plan construction, statistics,
-and plotting. The density-valued backend also supports adaptive continuous-
-event trajectories; that different integrator is not used in the timing
-panel. The retained-history comparison uses `Base.summarysize` on the two
+and plotting. Both backends support adaptive continuous-event trajectories;
+that different integrator is not used in the timing panel. The retained-
+history comparison uses `Base.summarysize` on the two
 equal-size returned batches; it includes saved state wrappers and jump records
 but excludes prepared plans, reusable worker scratch, and transient peak RAM.
 It is a like-for-like history comparison, not the minimum possible output
@@ -169,6 +169,46 @@ numerical-only compatibility or timing run:
 ```sh
 PI_EXAMPLE_PLOTS=0 julia --project=. examples/weak_pi_trajectories.jl
 ```
+
+## Event-driven, confidence-controlled, and stationary paths
+
+The executable also exercises the advanced weak-PI routes on small batches.
+Continuous event times use adaptive Dormand--Prince propagation of the
+normalized pseudo-ket and accumulated hazard:
+
+```julia
+adaptive = adaptive_weak_pi_quantum_trajectories(
+    weak_plan, psi0, times;
+    observables, algorithm=:event, dt=0.02, dtmax=0.05,
+    min_trajectories=16, max_trajectories=32, batch_size=8,
+    atol=0.75, rtol=0, seed=3026)
+```
+
+Observables are contracted directly from pseudo-kets; no path or PI-density
+history is retained. The simultaneous empirical-Bernstein rule controls
+Monte Carlo dispersion only. `adaptive.converged=false` at the configured
+maximum is a valid result and means that more independent paths are required.
+Integration and finite-time biases remain separate.
+
+For an autonomous model, a density-valued stationary estimate can be streamed
+from weak-PI paths:
+
+```julia
+stationary = weak_pi_trajectory_steady_state(
+    weak_plan, psi0;
+    trajectories=8, settling_time=5.0,
+    samples_per_trajectory=8, sampling_interval=0.1, batch_size=4,
+    algorithm=:event, dt=0.02, dtmax=0.05,
+    return_info=true)
+```
+
+Each path first averages its post-settling density reconstructions; the
+primary standard error is then computed across the eight independent path
+means. `metadata.batch_means` separately treats the sixteen complete temporal
+batches as approximately independent and reports an autocorrelation-aware
+diagnostic. Its assumptions explicitly leave burn-in, finite-window, and
+integration bias uncontrolled. Batch-length and total-window refinements are
+therefore required before interpreting it as a stationary error bar.
 
 ## Interpretation boundary
 

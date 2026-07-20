@@ -97,10 +97,12 @@ master equation already stored in the model.
 
 ## Confidence-controlled stopping
 
-`adaptive_quantum_trajectories` and `adaptive_diffusive_trajectories` process
-deterministic batches until every requested observable at every saved time has
-a confidence half-width below `atol + rtol*abs(mean)`. They retain only online
-means and variances, not trajectory state histories. The result reports
+`adaptive_quantum_trajectories`,
+`adaptive_weak_pi_quantum_trajectories`, and
+`adaptive_diffusive_trajectories` process deterministic batches until every
+requested observable at every saved time has a confidence half-width below
+`atol + rtol*abs(mean)`. They retain only online means and variances, not
+trajectory state histories. The result reports
 `converged=false` and `stopping_reason=:maximum_trajectories` when the sample
 cap is reached; it never silently accepts the cap as convergence.
 
@@ -115,6 +117,9 @@ controls the complete adaptive stopping request; the pointwise normal
 intervals retained in `result.observables` remain useful descriptive output
 but are not the stopping certificate. The simultaneous half-width and worst
 tolerance ratio used at each check are stored in `convergence_history`.
+`metadata.effective_independent_samples` is the number of separately seeded
+trajectories used by the bound; this independence statement does not cover
+time-integration or finite-time initialization bias.
 Every sampled value is checked against the padded spectral bound. A value
 outside it raises instead of producing an invalid confidence claim. This
 observed-value check is not, by itself, a bounded-support proof for the
@@ -145,8 +150,8 @@ quantum-jump integrator or diffusive Euler--Maruyama step separately, and do
 not reuse sampling convergence as evidence for a hierarchy, finite-size, or
 model approximation. Optional quantum-jump summaries can still retain pooled
 waiting times; disable them when that jump-count-scaled storage is
-unnecessary. Adaptive stopping currently covers density-valued PI jump paths
-and collective diffusive paths, not weak-PI pseudo-kets or Distributed
+unnecessary. Adaptive stopping currently covers density-valued PI jump paths,
+weak-PI pseudo-kets, and collective diffusive paths, but not Distributed
 workers.
 
 The runnable
@@ -170,5 +175,6 @@ diffusive_trajectories
 diffusive_average
 AdaptiveTrajectoryResult
 adaptive_quantum_trajectories
+adaptive_weak_pi_quantum_trajectories
 adaptive_diffusive_trajectories
 ```

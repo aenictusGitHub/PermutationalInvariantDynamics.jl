@@ -71,6 +71,20 @@
         CorrelatedLocalJumps((ComplexF32.(sm),ComplexF32.(sz)),schedule32;
                              rate=0.4f0),)))
     @test eltype(dynamic_plan32)===ComplexF32
+    risk_basis=PIBasis(34,2)
+    risk_schedule=InPlaceTimeOperator(Matrix{Float16}(I,2,2),
+                                      (destination,t,p)->nothing)
+    risk_error=try
+        LiouvillianPlan(PIModel(risk_basis,(
+            CorrelatedLocalJumps((Float16.(real.(sm)),Float16.(real.(sz))),
+                                 risk_schedule),)))
+        nothing
+    catch caught
+        caught
+    end
+    @test risk_error isa ArgumentError
+    @test occursin("wider InPlaceTimeOperator prototype",
+                   sprint(showerror,risk_error))
     wider_rate_plan=LiouvillianPlan(PIModel(basis,(
         CorrelatedCollectiveJumps((ComplexF32.(sm),ComplexF32.(sz)),gamma32;
                                   rate=(t,p)->0.4),)))
@@ -129,6 +143,15 @@
         plan=LiouvillianPlan(model);workspace=LiouvillianWorkspace(plan)
         @test plan.kernels!==nothing
         @test !isautonomous(plan)
+        if correlated===CorrelatedLocalJumps
+            kernel=only(plan.kernels)
+            prepared=only(workspace.kernel_workspaces)
+            @test !hasfield(typeof(kernel),:I)
+            @test !hasfield(typeof(kernel),:J)
+            @test !hasfield(typeof(prepared),:values)
+            @test length(prepared.contractions)==
+                  length(kernel.branches.entries)*length(kernel.operators)
+        end
         before=calls[]
         apply!(output,plan,input,time,nothing,workspace)
         @test calls[]==before+1
@@ -140,8 +163,16 @@
         apply!(outputs,plan,inputs,time,nothing,workspace)
         @test calls[]==before+1
         @test outputs≈frozen*inputs atol=5e-12 rtol=5e-12
+        apply_adjoint!(outputs,plan,inputs,time,nothing,workspace)
+        @test outputs≈adjoint(frozen)*inputs atol=6e-12 rtol=6e-12
         apply!(output,plan,input,time,nothing,workspace) # warm allocation path
         @test (@allocated apply!(output,plan,input,time,nothing,workspace))<=512
+        apply!(outputs,plan,inputs,time,nothing,workspace)
+        @test (@allocated apply!(outputs,plan,inputs,time,nothing,
+                                 workspace))<=2048
+        apply_adjoint!(outputs,plan,inputs,time,nothing,workspace)
+        @test (@allocated apply_adjoint!(outputs,plan,inputs,time,nothing,
+                                         workspace))<=2048
     end
 
     raw_calls=Ref(0)
