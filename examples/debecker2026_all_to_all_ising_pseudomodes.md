@@ -316,8 +316,41 @@ pseudomodes have been traced out. Applying the package's supersite
 `negativity` directly would answer a different question because each side
 would still contain a truncated mode.
 
-The example instead evaluates all 16 distinct-particle Pauli moments with
-operators `sigma_mu tensor I_mode` and reconstructs
+The repeated map now prepares the exact local-factor trace once:
+
+```julia
+trace_plan = LocalFactorTracePlan(
+    basis, (2, operators.levels); traced_factor=2)
+trace_work = LocalFactorTraceWorkspace(trace_plan)
+rho_spin = PIState(trace_plan.output_basis)
+
+local_factor_trace!(
+    rho_spin, rho_supersite, trace_plan, trace_work)
+```
+
+`local_factor_trace!` keeps all `N` particles but changes the local dimension
+from `2*operators.levels` to `2`. Its plan constructs normalized symmetric
+occupations of local matrix units directly in Schur coordinates and never
+forms a `d^N` state. Each later state uses two dense matrix-vector products
+and one output-sized workspace vector.
+
+For the plotted two-spin quantity, a prepared particle reduction then keeps
+two spins and applies the ordinary qubit negativity plan:
+
+```julia
+pair_plan = ReductionPlan(trace_plan.output_basis, 2)
+pair_work = ReductionWorkspace(pair_plan; mode=:reduction)
+rho_pair = PIState(pair_plan.output_basis)
+reduced_state!(rho_pair, rho_spin, pair_plan, pair_work)
+
+cut = ReductionPlan(pair_plan.output_basis, 1)
+cut_work = ReductionWorkspace(cut; mode=:negativity)
+N_pair = negativity(rho_pair, 1; plan=cut, workspace=cut_work)
+```
+
+As an independent small-system oracle at one reference point, the example
+still evaluates all 16 distinct-particle Pauli moments with operators
+`sigma_mu tensor I_mode` and reconstructs
 
 ```math
 \rho_{\mathrm{spin}}^{(2)}
@@ -326,8 +359,9 @@ operators `sigma_mu tensor I_mode` and reconstructs
 \sigma_\mu\otimes\sigma_\nu.
 ```
 
-It checks Hermiticity, unit trace, and positivity before partially
-transposing the second physical qubit. The plotted value is
+The oracle checks Hermiticity, unit trace, and positivity before partially
+transposing the second physical qubit, and it agrees with the prepared
+local-factor route. The plotted value is
 
 ```math
 \mathcal N

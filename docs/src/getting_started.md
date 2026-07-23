@@ -341,7 +341,10 @@ blocks = schur_block_structure(rho_ss; metric=:population)
 ```
 
 Prepare `CollectiveObservablePlan` or `ReductionPlan` when repeating the same
-analysis for many states.
+analysis for many states. If one PI particle is itself a tensor product, such
+as `spin tensor local_mode`, prepare `LocalFactorTracePlan` to remove the same
+internal factor from every supersite before applying the ordinary
+particle-bipartition tools.
 
 ## Step 9: check numerical convergence
 

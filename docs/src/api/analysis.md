@@ -94,6 +94,10 @@ check_generator
 ## Reduced states and entanglement
 
 ```@docs
+LocalFactorTracePlan
+LocalFactorTraceWorkspace
+local_factor_trace
+local_factor_trace!
 negativity
 logarithmic_negativity
 ReductionPlan

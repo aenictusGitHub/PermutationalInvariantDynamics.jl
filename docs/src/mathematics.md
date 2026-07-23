@@ -220,6 +220,60 @@ The supplied `d^p × d^p` operator must be invariant under permutations of its
 support all three terms. At fixed `d` and `p`, path enumeration remains
 polynomial in `N`; the unavoidable local contraction cost grows with `d^(2p)`.
 
+## Tracing an internal factor of every supersite
+
+`local_factor_trace` changes the local PI dimension while keeping all `N`
+particles. For a local factorization
+``\mathbb C^{d_1}\otimes\mathbb C^{d_2}``, it applies the same partial trace
+inside every supersite. This is not the particle reduction performed by
+`reduced_state`.
+
+Let ``E_{ab}`` be the matrix-unit basis on the kept factor and let
+``\mathbf n`` contain the occupation counts of its ``d_{\rm keep}^2``
+letters. The normalized symmetric operator
+
+```math
+B_{\mathbf n}
+=\frac{1}{\sqrt{M_{\mathbf n}}}
+ \sum_{\text{distinct strings}}
+ E_{r_1}\otimes\cdots\otimes E_{r_N},
+\qquad
+M_{\mathbf n}=\frac{N!}{\prod_r n_r!},
+```
+
+is one member of an orthonormal basis of the kept-factor PI operator space.
+There are exactly
+``\binom{N+d_{\rm keep}^2-1}{N}`` such occupations. If
+``q_{\mathbf n}`` is its kept-factor Schur-coordinate vector and
+``\ell_{\mathbf n}`` is the source-coordinate vector after the adjoint
+insertion ``E_{ab}\mapsto E_{ab}\otimes I`` (or
+``I\otimes E_{ab}``), then
+
+```math
+x_{\rm kept}
+=Q L^\dagger x_{\rm source},
+\qquad
+Q=[q_{\mathbf n}],\quad L=[\ell_{\mathbf n}].
+```
+
+The columns are constructed by polarizing the same one-box Schur recurrence
+used for tensor-power states. If ``P_{\lambda,\mathbf n}`` is the coefficient
+of the corresponding matrix-unit monomial in the physical irrep block, its
+stored equation-(7) block is
+
+```math
+C_{\lambda,\mathbf n}
+=\sqrt{\frac{f^\lambda}{M_{\mathbf n}}}\,
+ P_{\lambda,\mathbf n}.
+```
+
+Thus setup never enumerates ``d^N`` local words. A
+`LocalFactorTracePlan` retains ``L`` and ``Q``; a
+`LocalFactorTraceWorkspace` owns the one short occupation vector used by the
+two matrix-vector contractions. The complete kept-factor output basis is
+required even for a sector-restricted source because local tracing can
+populate several output Young sectors.
+
 ## Entanglement negativity
 
 `negativity(rho, k)` and `logarithmic_negativity(rho, k)` compute the exact

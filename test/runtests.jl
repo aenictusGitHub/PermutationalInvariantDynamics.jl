@@ -41,6 +41,7 @@ const TEST_FILES=(
     (:nonmarkovian,"test_correlations.jl"),
     (:workflows,"test_research_utilities.jl"),
     (:literature,"test_published_models.jl"),
+    (:analysis,"test_local_factor_trace.jl"),
     (:analysis,"test_entanglement.jl"),
     (:analysis,"test_genuine_entanglement.jl"),
     (:analysis,"test_quantum_fisher.jl"),

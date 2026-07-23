@@ -48,6 +48,7 @@ include("krylov_extensions.jl")
 include("symmetries.jl")
 include("spectra.jl")
 include("evans.jl")
+include("local_factor_trace.jl")
 include("entanglement.jl")
 include("genuine_entanglement.jl")
 include("observables.jl")
@@ -204,6 +205,8 @@ export Partition, partitions, weight, length_nonzero, removable_corners,
        SpinPhaseSpaceData, spin_husimi_q, spin_wigner,
        QuditHusimiPlan, QuditHusimiData, qudit_husimi_q,
        hermiticity_error, minimum_sector_eigenvalue, check_generator,
+       LocalFactorTracePlan, LocalFactorTraceWorkspace,
+       local_factor_trace, local_factor_trace!,
        negativity, logarithmic_negativity, ReductionPlan, ReductionWorkspace,
        PPTMixturePlan, PPTMixtureResult, ppt_mixture_test,
        reduced_state, reduced_state!, reduced_purity,

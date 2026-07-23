@@ -318,6 +318,14 @@ This conversion increases retained qubit workspace memory in exchange for a
 homogeneous hot loop. Use `reduced_state!` when the output `PIState` should
 also be reused.
 
+When each PI particle is a composite supersite, `LocalFactorTracePlan`
+instead traces the same internal factor from every particle and returns a
+complete PI state at the kept local dimension. Its prepared rectangular
+occupation transforms avoid both full-Hilbert reconstruction and an
+exponential list of lifted local observables. Reuse one
+`LocalFactorTraceWorkspace` per task, then apply `ReductionPlan` to the
+resulting state if a particle bipartition is also required.
+
 For repeated one-body marginals, `one_body_rdm(rho; cache=geometry)` contracts
 all matrix units in one pass instead of preparing `d^2` independent collective
 operators.

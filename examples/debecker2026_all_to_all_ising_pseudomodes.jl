@@ -63,8 +63,8 @@ function transpose_second_qubit(rho)
     result
 end
 
-"""Negativity of the two physical spins, not of two full supersites."""
-function spin_pair_negativity(rho,operators,geometry)
+"""Small two-spin Pauli reconstruction retained as an independent oracle."""
+function spin_pair_negativity_from_moments(rho,operators,geometry)
     spin_pair=spin_pair_density_matrix(rho,operators,geometry)
     transposed=transpose_second_qubit(spin_pair)
     residual=norm(transposed-adjoint(transposed))
@@ -72,6 +72,45 @@ function spin_pair_negativity(rho,operators,geometry)
         "spin-pair partial transpose is not Hermitian: residual=$residual")
     eigenvalues=eigvals(Hermitian(transposed))
     sum((-value for value in eigenvalues if value<0);init=0.0)
+end
+
+"""
+Prepare the fast spin-only route once for every stationary and trajectory
+state. The first reduction traces the local pseudomode from all supersites;
+the second keeps two spins, and the final qubit plan evaluates their 1|1
+negativity.
+"""
+function prepared_spin_pair_analysis(basis,operators)
+    local_trace=LocalFactorTracePlan(
+        basis,(2,operators.levels);traced_factor=2)
+    local_trace_workspace=LocalFactorTraceWorkspace(local_trace)
+    spin_state=PIState(local_trace.output_basis;T=Float64)
+    pair_reduction=ReductionPlan(local_trace.output_basis,2)
+    pair_reduction_workspace=ReductionWorkspace(
+        pair_reduction;T=Float64,mode=:reduction)
+    pair_state=PIState(pair_reduction.output_basis;T=Float64)
+    pair_cut=ReductionPlan(pair_reduction.output_basis,1)
+    pair_cut_workspace=ReductionWorkspace(
+        pair_cut;T=Float64,mode=:negativity)
+    (;local_trace,local_trace_workspace,spin_state,
+      pair_reduction,pair_reduction_workspace,pair_state,
+      pair_cut,pair_cut_workspace)
+end
+
+"""Negativity of two physical spins after tracing every pseudomode."""
+function spin_pair_negativity(rho,analysis)
+    # Every caller has already checked the supersite state. reduced_state! and
+    # negativity validate the generated spin states, so the trace contraction
+    # itself can use its allocation-free checked-ownership path.
+    local_factor_trace!(
+        analysis.spin_state,rho,analysis.local_trace,
+        analysis.local_trace_workspace;check=false)
+    reduced_state!(
+        analysis.pair_state,analysis.spin_state,
+        analysis.pair_reduction,analysis.pair_reduction_workspace)
+    negativity(
+        analysis.pair_state,1;plan=analysis.pair_cut,
+        workspace=analysis.pair_cut_workspace)
 end
 
 function all_to_all_model(basis,operators;J,omega_c,gamma,kappa,
@@ -239,7 +278,8 @@ function dynamics_case(basis,operators,pair_xx,top_level_sum,rho0;
       trace_error=report.trace_error)
 end
 
-function stationary_point(basis,operators,geometry;J,omega_c,gamma,kappa)
+function stationary_point(
+        basis,operators,geometry,spin_analysis;J,omega_c,gamma,kappa)
     model=all_to_all_model(
         basis,operators;J,omega_c,gamma,kappa,coupling=:minus)
     # For the default N=3 calculation there are only 816 PI coordinates.
@@ -260,7 +300,7 @@ function stationary_point(basis,operators,geometry;J,omega_c,gamma,kappa)
     cxx=checked_real(two_body_expectation(
         result.state,operators.x_site,operators.x_site;cache=geometry),
         "stationary pair correlation")
-    negativity=spin_pair_negativity(result.state,operators,geometry)
+    negativity=spin_pair_negativity(result.state,spin_analysis)
     top=checked_real(collective_expectation(
         result.state,operators.mode_top;cache=geometry),
         "stationary top-level population")/basis.N
@@ -338,6 +378,7 @@ function main(;N::Int=parse(Int,get(ENV,"PI_PSEUDOMODE_N","3")),
     geometry=OneBodyGeometry(basis)
     pair_geometry=PBodyGeometry(basis,2)
     pair_xx=pair_observable(basis,operators,pair_geometry)
+    spin_analysis=prepared_spin_pair_analysis(basis,operators)
     top_level_sum=collective_operator(
         basis,operators.mode_top;cache=geometry)
     rho0=vacuum_product_state(basis,operators)
@@ -399,7 +440,7 @@ function main(;N::Int=parse(Int,get(ENV,"PI_PSEUDOMODE_N","3")),
     for (jindex,J) in pairs(J_values)
         for kindex in eachindex(kappa_values)
             point=stationary_point(
-                basis,operators,geometry;
+                basis,operators,geometry,spin_analysis;
                 J,omega_c,gamma,kappa=kappa_values[kindex])
             cxx_map[jindex,kindex]=point.cxx
             negativity_map[jindex,kindex]=point.negativity
@@ -412,8 +453,13 @@ function main(;N::Int=parse(Int,get(ENV,"PI_PSEUDOMODE_N","3")),
     # matrix-free GMRES solutions.  Evaluate the direct reference explicitly
     # instead of assuming that an optional scan grid contains this point.
     direct_reference=stationary_point(
-        basis,operators,geometry;
+        basis,operators,geometry,spin_analysis;
         J=J_dynamic,omega_c,gamma,kappa=2.0)
+    moment_negativity=spin_pair_negativity_from_moments(
+        direct_reference.state,operators,geometry)
+    spin_trace_oracle_error=abs(
+        moment_negativity-direct_reference.negativity)
+    @assert spin_trace_oracle_error<3e-9
     krylov_prepared=compile(reference_model;backend=:matrixfree)
     krylov=stationary_state(
         krylov_prepared;
@@ -474,7 +520,7 @@ function main(;N::Int=parse(Int,get(ENV,"PI_PSEUDOMODE_N","3")),
         expectation(trajectory_stationary.state,top_level_sum),
         "trajectory stationary top-level population")/N
     trajectory_negativity=spin_pair_negativity(
-        trajectory_stationary.state,operators,geometry)
+        trajectory_stationary.state,spin_analysis)
     trajectory_state_error=norm(
         trajectory_stationary.state.data-direct_reference.state.data)
     trajectory_cxx_error=abs(trajectory_cxx-direct_reference.cxx)
@@ -520,7 +566,7 @@ function main(;N::Int=parse(Int,get(ENV,"PI_PSEUDOMODE_N","3")),
         expectation(weak_trajectory_stationary.state,top_level_sum),
         "weak-PI stationary top-level population")/N
     weak_trajectory_negativity=spin_pair_negativity(
-        weak_trajectory_stationary.state,operators,geometry)
+        weak_trajectory_stationary.state,spin_analysis)
     weak_trajectory_state_error=norm(
         weak_trajectory_stationary.state.data-direct_reference.state.data)
     weak_trajectory_cxx_error=abs(
@@ -663,6 +709,8 @@ function main(;N::Int=parse(Int,get(ENV,"PI_PSEUDOMODE_N","3")),
     println("dynamics Liouvillian applications = ",
             Tuple(curve.operator_applications for curve in dynamics))
     println("direct/GMRES stationary Cxx error = ",solver_agreement)
+    println("prepared local-factor trace / Pauli-oracle negativity error = ",
+            spin_trace_oracle_error)
     println("trajectory stationary state error = ",trajectory_state_error,
             "; HS standard error = ",trajectory_stationary.standard_error)
     println("trajectory stationary Cxx = ",trajectory_cxx,
@@ -752,6 +800,7 @@ function main(;N::Int=parse(Int,get(ENV,"PI_PSEUDOMODE_N","3")),
             "; wider top-level population = ",maximum(cutoff_2.top))
 
     (;N,nmax,pi_dimension=length(basis),weak_pi_dimension=weak_dimension,
+      spin_trace_oracle_error,
       omega_c,gamma,J_dynamic,
       dynamics_times,dynamics,
       J_values,kappa_values,dimensionless_J,dimensionless_kappa,

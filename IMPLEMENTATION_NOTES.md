@@ -853,3 +853,24 @@ compact ADO shifts, with reciprocal-condition and transformed-residual checks;
 unsafe shifts and generic precision fall back to duplicate-aware LU. The safe
 route retains `O(nPI^2+nADO)` data. Its two Schur scratch vectors are locked,
 so one shared preconditioner serializes concurrent applications.
+
+## Prepared local-factor trace (2026-07-23)
+
+`LocalFactorTracePlan` traces the same internal tensor factor from every PI
+supersite while retaining all particles. For each normalized occupation of
+kept-factor matrix units, setup constructs its complete output
+Schur-coordinate column and the source column obtained from the adjoint
+identity insertion. The exact map is their product `Q*L'`. This polarized
+one-box recurrence visits PI occupations rather than the exponentially many
+local strings, and it correctly maps a sector-restricted supersite basis into
+a complete kept-factor basis.
+
+The plan retains
+`input_dimension*output_dimension + output_dimension^2` complex
+coefficients. Its 512 MiB preflight is evaluated from the exact kept-factor PI
+dimension before constructing that basis, enumerating occupations, or
+allocating the two transforms. Repeated applications use two matrix-vector
+products and one output-sized task-owned `LocalFactorTraceWorkspace`. In
+particular, spin-only pseudomode observables should trace the mode once in PI
+coordinates and then reuse the ordinary qubit `ReductionPlan`; enumerating
+all lifted Pauli strings is retained only as a small-system oracle.

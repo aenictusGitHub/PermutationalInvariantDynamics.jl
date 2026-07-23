@@ -270,12 +270,15 @@ of the spatial chain. All distinct pairs share one `Cxx`; there is no distance
 coordinate or spatial correlation length. The finite-size stationary heat
 maps must likewise not be advertised as a thermodynamic phase diagram.
 
-The example reconstructs the two-spin density matrix from 16 Pauli moments
-whose mode factor is the identity. Its partial-transpose negativity therefore
-measures the two physical spins after tracing both pseudomodes, rather than
-the entanglement of two spin--mode supersites. For longitudinal coupling it
-similarly uses full `N`-particle moments with the mode identity to evaluate
-the relative-phase-optimized spin x-GHZ fidelity
+For the repeated stationary maps, the example prepares one
+`LocalFactorTracePlan(basis,(2,levels); traced_factor=2)`. It traces every
+pseudomode directly in PI coordinates, then uses `ReductionPlan` first to keep
+two spins and again to evaluate their `1|1` negativity. A 16-Pauli-moment
+reconstruction remains as an independent reference-point oracle. The plotted
+quantity therefore measures two physical spins after tracing both
+pseudomodes, rather than two spin--mode supersites. For longitudinal coupling
+the example still uses full `N`-particle moments with the mode identity to
+evaluate the relative-phase-optimized spin x-GHZ fidelity
 
 ```math
 F_{\mathrm{GHZ}_x}^{\max}

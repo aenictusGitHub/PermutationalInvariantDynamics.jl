@@ -545,8 +545,8 @@ PIBasis -> PIModel -> compile -> CompiledPIModel -> solver or analysis
 | `QuditHusimiPlan` | Dense coherent vectors for one exact basis, point set, and sector selection | Share read-only across states; setup can dominate |
 | `DiffusiveBatchPlan`, batch workspaces | Prepared trajectory request and worker-local path/RNG buffers | Plan shared read-only; workspace reused sequentially only |
 | `ConvergenceStudyResult` | All raw refinement results, estimates, diagnostics, and decisions | Immutable record; memory includes every retained evaluator result |
-| `CollectiveObservablePlan`, `ReductionPlan` | Prepared observable or bipartition geometry | Share read-only; tied to the exact basis object |
-| `ReductionWorkspace` | Mutable partial-trace and partial-transpose scratch | One per concurrent task |
+| `CollectiveObservablePlan`, `LocalFactorTracePlan`, `ReductionPlan` | Prepared observable, internal local-factor trace, or particle-bipartition geometry | Share read-only; tied to the exact basis object |
+| `LocalFactorTraceWorkspace`, `ReductionWorkspace` | Mutable occupation or product-Schur reduction scratch | One per concurrent task |
 | `CorrelationPlan`, `CorrelationWorkspace` | Prepared quantum-regression insertions and their evolution/GMRES scratch | Plan shared read-only; one workspace per task |
 | `CompositeSuperoperator`, `CompositeSuperoperatorWorkspace` | Sum of factorized maps and its tensor-fibre scratch | Generator shared read-only; one workspace per task |
 | `CompositeTrajectoryPlan`, composite trajectory workspaces | Explicit monitored tensor-product channels and density-valued conditional evolution | Plan shared read-only; one workspace and RNG per concurrent path worker |
@@ -571,12 +571,16 @@ to `LiouvillianPlan`, `compile`, `liouvillian`, `steady_state`, or
 state; incompatible basis, depth, or precision requests raise.
 
 Prepared observables and reductions follow the same pattern: construct the
-read-only plan once, then reuse it for many states. Qudit `ReductionPlan`
-objects can be much larger than collective-observable plans because they may
-retain many dense subduction intertwiners. Benchmark their setup and retained
-memory before caching many bipartitions. The detailed stable, advanced, and
-experimental interfaces are listed in [API tiers and prepared
-analysis](api_tiers.md).
+read-only plan once, then reuse it for many states. `LocalFactorTracePlan`
+traces one internal tensor factor from every supersite and returns a complete
+PI basis at the kept local dimension. Its prepared occupation transforms are
+rectangular and memory-guarded. `ReductionPlan` instead traces or partially
+transposes groups of particles at fixed local dimension. Qudit
+`ReductionPlan` objects can be much larger than collective-observable plans
+because they may retain many dense subduction intertwiners. Benchmark setup
+and retained memory before caching many reductions. The detailed stable,
+advanced, and experimental interfaces are listed in
+[API tiers and prepared analysis](api_tiers.md).
 
 ## A complete qubit example
 
@@ -658,6 +662,7 @@ show literature models and their numerical checks.
 | Numerical refinement evidence | `convergence_study` and specialized wrappers | Final refinement agreement is distinct from inner solver convergence |
 | Large-\(N\) product prediction | `MeanFieldPlan`, `solve_meanfield` | Approximate after correlations develop |
 | Repeated collective observable | `CollectiveObservablePlan` | Reuse one plan for many states |
+| Trace a mode/ancilla inside every PI supersite | `LocalFactorTracePlan`, `LocalFactorTraceWorkspace` | Complete kept-factor PI output; setup has a rectangular-transform memory guard |
 | Repeated marginal or negativity | `ReductionPlan`, `ReductionWorkspace` | Setup can be large for qudits |
 
 For product-state predictions at \(N\) beyond a practical PI basis, the

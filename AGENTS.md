@@ -226,6 +226,7 @@ pattern.
   `spectra.jl`, `evans.jl`, `symmetries.jl`, and
   `restricted_symmetries.jl`.
 - State analysis: `observables.jl`, `entanglement.jl`,
+  `local_factor_trace.jl`,
   `genuine_entanglement.jl`, `information.jl`, `nonstabilizerness.jl`,
   `symmetry_information.jl`, `populations.jl`, and
   `research_utilities.jl`.
@@ -390,6 +391,13 @@ the Kossakowski matrix.
 - Prepare `CollectiveObservablePlan` once per observable and `ReductionPlan`
   once per `(basis,k)`. Plans are tied to the exact basis; workspaces are
   task-owned.
+- `LocalFactorTracePlan` traces the same internal tensor factor from every
+  supersite while retaining all particles. It owns normalized matrix-unit
+  occupation transforms from the exact source basis to a complete
+  kept-factor `PIBasis`; `LocalFactorTraceWorkspace` owns the short occupation
+  vector. This is distinct from particle reduction through `ReductionPlan`.
+  Enforce its rectangular-transform setup budget and never replace it with
+  local-string or full-Hilbert reconstruction.
 - `ReductionWorkspace` modes (`:reduction`, `:negativity`, `:both`) omit
   incompatible buffers. A mode mismatch must raise rather than allocate.
 - A reduction workspace owns scalar-compatible recoupling matrices. Convert

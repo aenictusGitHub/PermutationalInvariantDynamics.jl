@@ -22,7 +22,7 @@ They validate basis ownership and return package-level state or result objects.
 | Stationary and spectral analysis | `stationary_state`, `liouvillian_spectrum`, `pi_liouvillian_gap`, `diagnostics`, `recommend_solver` |
 | Observables and information | `collective_expectation`, `collective_variance`, `qfi`, `qfim`, `stabilizer_renyi_entropy`, `two_time_correlation`, `delayed_second_order_correlation`, `stationary_correlation_spectrum`, entropy and distance functions |
 | Visualization | `schur_block_structure`, `visualize_schur_blocks`, `spin_husimi_q`, `spin_wigner`, `qudit_husimi_q`, `visualize_spin_phase_space`, and the density/Liouvillian/Floquet spectrum data and renderers |
-| Reductions and entanglement | `one_body_rdm`, `reduced_state`, `reduced_state!`, `reduced_purity`, `negativity`, `partial_transpose_spectrum`, `ppt_mixture_test` |
+| Reductions and entanglement | `one_body_rdm`, `local_factor_trace`, `local_factor_trace!`, `reduced_state`, `reduced_state!`, `reduced_purity`, `negativity`, `partial_transpose_spectrum`, `ppt_mixture_test` |
 | Validation | `state_diagnostics`, `positivity_diagnostics`, `validate_state` |
 
 Prefer these commands in new code. In particular, `stationary_state` returns a
@@ -35,9 +35,12 @@ Advanced objects expose memory ownership and numerical algorithms explicitly.
 They are supported and tested, but callers must obey their compatibility and
 threading contracts.
 
-- `OneBodyGeometry`, `PBodyGeometry`, `CollectiveObservablePlan`, and
-  `ReductionPlan` own prepared representation data. They can only be used with
-  the exact `PIBasis` object from which they were constructed.
+- `OneBodyGeometry`, `PBodyGeometry`, `CollectiveObservablePlan`,
+  `LocalFactorTracePlan`, and `ReductionPlan` own prepared representation
+  data. They can only be used with the exact `PIBasis` object from which they
+  were constructed. `LocalFactorTracePlan` changes the local dimension by
+  tracing the same internal factor from every supersite; it is distinct from
+  the particle bipartition represented by `ReductionPlan`.
 - `PPTMixturePlan` owns the sparse real conic map for the PI qubit
   PPT-mixture test. It is tied to one exact basis and is safe to share across
   state scans; Clarabel solver state is call-local. Even for a
@@ -126,6 +129,27 @@ threading contracts.
 Prepared plans are read-only during application and may be shared between
 tasks. Mutable workspaces must not be shared concurrently; allocate one per
 task or thread.
+
+For repeated supersite reductions, prepare the local trace and the subsequent
+spin bipartition separately:
+
+```julia
+trace_plan = LocalFactorTracePlan(supersite_basis, (2, mode_levels);
+    traced_factor=2)
+trace_work = LocalFactorTraceWorkspace(trace_plan)
+rho_spin = local_factor_trace(rho_supersite, trace_plan;
+    workspace=trace_work)
+
+cut = ReductionPlan(trace_plan.output_basis, fld(N, 2))
+cut_work = ReductionWorkspace(cut, rho_spin; mode=:negativity)
+spin_negativity = negativity(
+    rho_spin, fld(N, 2); plan=cut, workspace=cut_work)
+```
+
+The trace plan retains
+`length(supersite_basis)*length(trace_plan.output_basis)` dominant
+coefficients and has a 512 MiB setup guard. Reuse is therefore important, and
+large local dimensions can still make setup memory the limiting resource.
 
 Mean-field propagation is a controlled product-state closure, not exact PI
 dynamics after correlations form. See [Mean-field predictions](meanfield.md)
