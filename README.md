@@ -1,7 +1,7 @@
 # PermutationalInvariantDynamics.jl
 
 [![CI](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/actions/workflows/ci.yml/badge.svg)](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/actions/workflows/ci.yml)
-[![Documentation](https://img.shields.io/badge/docs-stable-blue.svg)](https://aenictusgithub.github.io/PermutationalInvariantDynamics.jl/stable/)
+[![Documentation](https://img.shields.io/badge/docs-dev-blue.svg)](https://aenictusgithub.github.io/PermutationalInvariantDynamics.jl/dev/)
 [![Coverage](https://codecov.io/gh/aenictusGitHub/PermutationalInvariantDynamics.jl/graph/badge.svg)](https://codecov.io/gh/aenictusGitHub/PermutationalInvariantDynamics.jl)
 [![License: GPL v3](https://img.shields.io/badge/license-GPL--3.0--only-blue.svg)](LICENSE)
 
@@ -42,9 +42,9 @@ supported.
 
 ## Documentation
 
-Read the [hosted documentation](https://aenictusgithub.github.io/PermutationalInvariantDynamics.jl/stable/),
+Read the [hosted documentation](https://aenictusgithub.github.io/PermutationalInvariantDynamics.jl/dev/),
 starting with the step-by-step
-[model-to-solution tutorial](https://aenictusgithub.github.io/PermutationalInvariantDynamics.jl/stable/getting_started/).
+[model-to-solution tutorial](https://aenictusgithub.github.io/PermutationalInvariantDynamics.jl/dev/getting_started/).
 The browser-only
 [PI model code generator](https://aenictusgithub.github.io/PermutationalInvariantDynamics.jl/dev/model_code_generator/)
 turns a supported LaTeX subset into a commented stationary-state or

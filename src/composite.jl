@@ -1889,8 +1889,8 @@ _linear_operator_batch_workspace(
     CompositeSuperoperatorBatchWorkspace(S;capacity=columns,T)
 
 const _CompositeMatrixFreeLiouvillian=
-    MatrixFreeLiouvillian{F,T,V,P,W,K,A,B,C} where
-        {F,T,V,P,W<:CompositeSuperoperatorWorkspace,K,A,B,C}
+    MatrixFreeLiouvillian{F,T,V,Nothing,W,K,A,B,C} where
+        {F,T,V,W<:CompositeSuperoperatorWorkspace,K,A,B,C}
 
 # `composite_matrixfree` is a plan-less compatibility wrapper, but its retained
 # vector workspace still identifies the exact immutable composite plan.  Let

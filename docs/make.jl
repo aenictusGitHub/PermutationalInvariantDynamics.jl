@@ -27,7 +27,7 @@ makedocs(sitename="PermutationalInvariantDynamics.jl", modules=[PermutationalInv
          checkdocs=:exports,
          remotes=Dict(PACKAGE_ROOT => (REMOTE, SOURCE_REVISION)),
          format=Documenter.HTML(
-             canonical="https://aenictusgithub.github.io/PermutationalInvariantDynamics.jl/stable/",
+             canonical="https://aenictusgithub.github.io/PermutationalInvariantDynamics.jl/dev/",
              edit_link="main",
              repolink=REPOSITORY,
              assets=[
