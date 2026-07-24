@@ -8,6 +8,8 @@ const _SPECTRUM_ALGORITHM_NAMES=(
     :auto,:dense,:arnoldi,:krylov,:ordinary_arnoldi,
     :block_arnoldi,:block,:harmonic,:iram,:implicit_qr,
     :jd,:jacobi_davidson)
+const _DYNAMICS_ALGORITHM_NAMES=(
+    :auto,:rk4,:adaptive_or_rk4,:dynamics,:expv,:krylov_expv)
 
 function _canonical_stationary_algorithm(method::Symbol)
     method in (:shift_invert,:inverse_iteration)&&return :shiftinvert
@@ -35,7 +37,8 @@ end
 
 function _canonical_dynamics_algorithm(method::Symbol)
     method in (:adaptive_or_rk4,:dynamics)&&return :rk4
-    method in (:auto,:rk4)&&return method
+    method===:krylov_expv&&return :expv
+    method in (:auto,:rk4,:expv)&&return method
     throw(ArgumentError(
-        "unsupported dynamics algorithm $method; choose :auto or :rk4"))
+        "unsupported dynamics algorithm $method; choose one of $(_DYNAMICS_ALGORITHM_NAMES)"))
 end

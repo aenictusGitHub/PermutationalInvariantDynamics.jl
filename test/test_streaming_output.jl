@@ -54,6 +54,17 @@ _stream_record_allocations(buffers,ops,rho)=@allocated(
         @test with_states[2]===with_states.states[2]
         @test state(with_states,0.1)===with_states.states[3]
 
+        expv_streamed=solve_dynamics(
+            prepared,rho0,(first(times),last(times));
+            saveat=times,algorithm=ExpvAlgorithm(
+                krylovdim=10,atol=1e-12,rtol=1e-10),
+            observables=(excitation=observable,),save_states=false)
+        @test expv_streamed.states===nothing
+        @test expv_streamed.algorithm===:expv
+        @test expv_streamed.observables[:excitation]≈
+              [expectation(state,observable)
+               for state in reference.states] atol=2e-9
+
         @test_throws ArgumentError solve_dynamics(prepared,rho0,(0.0,0.1);
             save_states=false)
         @test_throws ArgumentError solve_dynamics(prepared,rho0,(0.0,0.1);
@@ -167,5 +178,17 @@ _stream_record_allocations(buffers,ops,rho)=@allocated(
             save_states=false)
         @test eltype(deterministic32.times)===Float32
         @test eltype(deterministic32.observables[:lowering])===ComplexF32
+
+        expv32=solve_dynamics(model32,rho32,(0f0,0.2f0);
+            saveat=times32,
+            algorithm=ExpvAlgorithm(
+                krylovdim=5,atol=2f-6,rtol=2f-5),
+            observables=(lowering=PIOperator(b32,ComplexF32.(
+                collective_operator(b32,sm32).data)),),
+            save_states=false)
+        @test eltype(expv32.times)===Float32
+        @test eltype(expv32.observables[:lowering])===ComplexF32
+        @test expv32.observables[:lowering]≈
+              deterministic32.observables[:lowering] atol=2f-5 rtol=2f-5
     end
 end

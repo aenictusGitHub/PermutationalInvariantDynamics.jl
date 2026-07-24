@@ -162,6 +162,52 @@ end
     allocated = @allocated PID._sparse_dissipator_block(ladder, loss)
     dense_temporary_bytes = m^4 * sizeof(ComplexF64)
     @test allocated < dense_temporary_bytes
+
+    # Fixed one-body lifts are assembled directly on exact CSC support rather
+    # than allocating a dense Schur block and sparsifying it afterwards.
+    sparse_basis = PIBasis(128, 2; sectors=[(128, 0)])
+    sparse_operator = ComplexF64[0 1; 0 0]
+    sparse_context = PID.TermCompileContext(PIModel(
+        sparse_basis, (CollectiveJump(sparse_operator),)))
+    direct_sparse = PID._sparse_collective_blocks(
+        sparse_operator, sparse_context)
+    @test all(issparse, direct_sparse)
+    @test nnz(only(direct_sparse)) == 128
+    @test Matrix(only(direct_sparse)) ≈
+          _collective_fastpath_occupation_block(
+              sparse_basis, sparse_operator)
+    PID._sparse_collective_blocks(sparse_operator, sparse_context)
+    GC.gc()
+    sparse_setup_allocation = @allocated PID._sparse_collective_blocks(
+        sparse_operator, sparse_context)
+    dense_schur_bytes = 129^2 * sizeof(ComplexF64)
+    @test sparse_setup_allocation < dense_schur_bytes
+
+    # The same direct construction covers every retained Schur sector.  Its
+    # values agree entry-for-entry with the dense public block route.
+    mixed_basis = PIBasis(5, 2)
+    mixed_operator = ComplexF64[0.2 0.7 - 0.3im;
+                                -0.4 + 0.1im -0.6]
+    mixed_context = PID.TermCompileContext(PIModel(
+        mixed_basis, (CollectiveJump(mixed_operator),)))
+    dense_blocks = PID._collective_blocks(mixed_operator, mixed_context)
+    sparse_blocks = PID._sparse_collective_blocks(
+        mixed_operator, mixed_context)
+    @test all(issparse, sparse_blocks)
+    @test all(zip(dense_blocks, sparse_blocks)) do (dense, sparse_block)
+        Matrix(sparse_block) == dense
+    end
+    mixed_operator32 = ComplexF32.(mixed_operator)
+    mixed_context32 = PID.TermCompileContext(PIModel(
+        mixed_basis, (CollectiveJump(mixed_operator32),)))
+    mixed_dense32 = PID._collective_blocks(
+        mixed_operator32, mixed_context32)
+    mixed_sparse32 = PID._sparse_collective_blocks(
+        mixed_operator32, mixed_context32)
+    @test all(zip(mixed_dense32, mixed_sparse32)) do (dense, sparse_block)
+        issparse(sparse_block) && eltype(sparse_block) === ComplexF32 &&
+            Matrix(sparse_block) == dense
+    end
 end
 
 @testset "collective sparse resource safeguards" begin
@@ -214,27 +260,41 @@ end
     @test prepared_report.resources.setup.bytes ==
           prepared_bounds.peak_bytes - prepared_bounds.operator_bytes
 
-    # Local gains and multi-sector collective terms still need the complete
-    # one-box geometry.  A budget that covers the lightweight symmetric setup
-    # is intentionally not presented as sufficient for that general route.
+    # Mixed-sector collective terms use diagonal-only one-box geometry, while
+    # local gains retain the complete sector-changing geometry.
     small_symmetric_basis = PIBasis(12, 2; sectors=[(12, 0)])
     symmetric_model = PIModel(small_symmetric_basis,
         (CollectiveJump(spin.jm),))
     full_basis = PIBasis(12, 2)
+    mixed_collective_model = PIModel(
+        full_basis, (CollectiveJump(spin.jm),))
     local_model = PIModel(full_basis, (LocalJump(spin.jm),))
     symmetric_preparation = PID._model_preparation_bytes(symmetric_model)
+    mixed_collective_preparation =
+        PID._model_preparation_bytes(mixed_collective_model)
     local_preparation = PID._model_preparation_bytes(local_model)
-    @test symmetric_preparation < local_preparation
+    @test symmetric_preparation < mixed_collective_preparation <
+          local_preparation
     @test isnothing(PID._require_model_preparation_budget(
         symmetric_model, symmetric_preparation))
     @test_throws ArgumentError PID._require_model_preparation_budget(
         local_model, symmetric_preparation)
     symmetric_report = recommend_solver(symmetric_model; memory_budget=Inf)
+    mixed_collective_report = recommend_solver(
+        mixed_collective_model; memory_budget=Inf)
     local_report = recommend_solver(local_model; memory_budget=Inf)
     symmetric_geometry = PID._estimate_symmetric_collective_geometry(
         small_symmetric_basis)
     @test symmetric_report.geometry_setup_upper_bytes ==
           symmetric_geometry.setup_bytes
+    diagonal_geometry = PID._estimate_diagonal_onebody_geometry(full_basis)
+    @test diagonal_geometry.sector_pairs==length(full_basis.sectors)
+    @test estimate_geometry_bytes(full_basis).sector_pairs==
+          length(full_basis.sectors)^2
+    @test mixed_collective_report.geometry_setup_upper_bytes ==
+          diagonal_geometry.setup_bytes
+    @test diagonal_geometry.setup_bytes <
+          estimate_geometry_bytes(full_basis).setup_bytes
     @test local_report.geometry_setup_upper_bytes ==
           estimate_geometry_bytes(full_basis).setup_bytes
 
@@ -304,8 +364,8 @@ end
 @testset "collective fast-path precision and fallbacks" begin
     PID = _COLLECTIVE_FASTPATH_PID
 
-    # A mixed-sector collective model and every local gain model retain the
-    # complete one-box geometry.  Their numerical lowering remains unchanged.
+    # Mixed-sector collective models retain only sector-diagonal one-box
+    # contractions. Local gain models still retain the complete geometry.
     mixed_basis = PIBasis(4, 2)
     lowering = ComplexF64[0 1; 0 0]
     mixed_model = PIModel(mixed_basis, (
@@ -314,6 +374,15 @@ end
     ))
     mixed_context = PID.TermCompileContext(mixed_model)
     @test mixed_context.onebody isa OneBodyGeometry
+    @test all(key->key[1]==key[3],keys(mixed_context.onebody.contractions))
+    full_mixed_geometry=OneBodyGeometry(mixed_basis)
+    @test length(mixed_context.onebody.contractions)<
+          length(full_mixed_geometry.contractions)
+    @test Base.summarysize(mixed_context.onebody)<
+          Base.summarysize(full_mixed_geometry)
+    mixed_requirements=PID._model_onebox_requirements(mixed_model)
+    @test mixed_requirements.uses_diagonal_onebody
+    @test !mixed_requirements.needs_full_onebody
     mixed_reference =
         0.11 * _collective_fastpath_blockdiag_reference(
             mixed_basis, ComplexF64[0.2 0.3; 0.3 -0.1], :commutator) +
@@ -326,7 +395,10 @@ end
         LocalJump(lowering; rate=0.13),
         CollectiveJump(lowering; rate=0.07),
     ))
-    @test PID.TermCompileContext(local_model).onebody isa OneBodyGeometry
+    local_context=PID.TermCompileContext(local_model)
+    @test local_context.onebody isa OneBodyGeometry
+    @test any(key->key[1]!=key[3],keys(local_context.onebody.contractions))
+    @test PID._model_onebox_requirements(local_model).needs_full_onebody
     local_sparse = liouvillian(
         local_model; representation=:sparse, memory_budget=Inf)
     local_matrixfree = liouvillian(
@@ -349,11 +421,28 @@ end
     context32 = PID.TermCompileContext(model32)
     @test context32.onebody isa PID._SymmetricCollectiveGeometry
     block32 = only(PID._collective_blocks(operator32, context32))
+    sparse_block32 = only(PID._sparse_collective_blocks(
+        operator32, context32))
     @test eltype(block32) === ComplexF32
+    @test issparse(sparse_block32)
+    @test eltype(sparse_block32) === ComplexF32
+    @test Matrix(sparse_block32) == block32
     @test isapprox(block32,
         _collective_fastpath_occupation_block(basis32, operator32);
         atol=2f-5, rtol=2f-5)
-    @test eltype(LiouvillianPlan(model32)) === ComplexF32
+    plan32 = LiouvillianPlan(model32)
+    @test eltype(plan32) === ComplexF32
+    kernel32 = only(plan32.kernels)
+    @test all(issparse, kernel32.blocks)
+    @test all(issparse, kernel32.qblocks)
+    input32 = ComplexF32.(1:length(basis32))
+    output32 = similar(input32)
+    matrix32 = PID._matrix_from_plan(plan32)
+    apply!(output32, plan32, input32, LiouvillianWorkspace(plan32))
+    @test output32 ≈ matrix32 * input32 atol=3f-5 rtol=3f-5
+    apply_adjoint!(
+        output32, plan32, input32, LiouvillianWorkspace(plan32))
+    @test output32 ≈ adjoint(matrix32) * input32 atol=3f-5 rtol=3f-5
 
     setprecision(128) do
         basis_big = PIBasis(3, 2; sectors=[(3, 0)])
@@ -366,10 +455,36 @@ end
         context_big = PID.TermCompileContext(model_big)
         @test context_big.onebody isa PID._SymmetricCollectiveGeometry
         block_big = only(PID._collective_blocks(operator_big, context_big))
+        sparse_block_big = only(PID._sparse_collective_blocks(
+            operator_big, context_big))
         @test eltype(block_big) === Complex{BigFloat}
+        @test issparse(sparse_block_big)
+        @test eltype(sparse_block_big) === Complex{BigFloat}
+        @test Matrix(sparse_block_big) == block_big
         @test block_big ≈
               _collective_fastpath_occupation_block(basis_big, operator_big)
-        @test eltype(LiouvillianPlan(model_big)) === Complex{BigFloat}
+        plan_big = LiouvillianPlan(model_big)
+        @test eltype(plan_big) === Complex{BigFloat}
+        @test all(issparse, only(plan_big.kernels).blocks)
+        @test all(issparse, only(plan_big.kernels).qblocks)
+
+        mixed_basis_big = PIBasis(2, 2)
+        mixed_operator_big = Complex{BigFloat}[
+            big"0.125" complex(big"0.75", big"0.2")
+            complex(big"0.0", -big"0.4") -big"0.375"
+        ]
+        mixed_context_big = PID.TermCompileContext(PIModel(
+            mixed_basis_big, (CollectiveJump(mixed_operator_big),)))
+        mixed_dense_big = PID._collective_blocks(
+            mixed_operator_big, mixed_context_big)
+        mixed_sparse_big = PID._sparse_collective_blocks(
+            mixed_operator_big, mixed_context_big)
+        @test all(zip(mixed_dense_big, mixed_sparse_big)) do pair
+            dense, sparse_block = pair
+            issparse(sparse_block) &&
+                eltype(sparse_block) === Complex{BigFloat} &&
+                Matrix(sparse_block) == dense
+        end
     end
 
     # Float16 uses the native occupation path below the established

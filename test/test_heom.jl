@@ -803,7 +803,10 @@
         # matrix wrapper metadata beyond the local hot-call cost. This is
         # scalar/header storage only; all hierarchy-sized RK4 arrays and
         # Liouvillian batch buffers are reused.
-        allocation_limit=VERSION<v"1.11" ? 4608 : 2048
+        # The shared vector/matrix ADO core adds only bounded reshape-wrapper
+        # metadata on Julia 1.10; no hierarchy-sized or batch-capacity array
+        # is allocated.
+        allocation_limit=VERSION<v"1.11" ? 4864 : 2048
         @test (@allocated heom_evolve!(
             allocation_destination,plan,hierarchy.data,(0.0,0.001);
             steps=1,workspace=evolution_workspace))<=allocation_limit
@@ -928,5 +931,99 @@
               reduced.data atol=2e-11 rtol=2e-11
         @test_throws ArgumentError PIDHEOM.heom_steady_state(
             plan;preconditioner_regularization=1e-8)
+    end
+
+    @testset "flattened matrix RHS and schedule reuse" begin
+        basis=PIBasis(2,2)
+        spin=spin_matrices()
+        schedule_calls=Ref(0)
+        schedule=InPlaceTimeOperator(
+            spin.jx,(destination,time,parameters)->begin
+                schedule_calls[]+=1
+                @. destination=(1+time)*spin.jx
+                nothing
+            end)
+        model=PIModel(basis,(
+            CollectiveHamiltonian(schedule;rate=0.17),))
+        coupling=collective_operator(basis,spin.jz)
+        bath=PIDHEOM.HEOMBath(
+            coupling,0.11,0.9;right_coefficients=0.11)
+        plan=PIDHEOM.HEOMPlan(model,bath;max_depth=4)
+        @test PIDHEOM.heom_number_ados(plan)==5
+        rng=MersenneTwister(7703)
+        source=randn(rng,ComplexF64,size(plan,1),4)
+        forward=similar(source)
+        adjoint_image=similar(source)
+        scalar_work=PIDHEOM.HEOMWorkspace(plan)
+        @test scalar_work.system.batch.capacity==
+              min(PIDHEOM.heom_number_ados(plan),
+                  PIDHEOM._HEOM_SYSTEM_BATCH_WIDTH)
+        scalar_image=similar(source)
+        apply!(scalar_image,plan,source,0.23,nothing,scalar_work)
+        retained_capacity=scalar_work.system.batch.capacity
+        @test retained_capacity==PIDHEOM.heom_number_ados(plan)
+        @test (@allocated apply!(
+            scalar_image,plan,source,0.23,nothing,scalar_work))<=4096
+        @test scalar_work.system.batch.capacity==retained_capacity
+        work=PIDHEOM.HEOMWorkspace(plan;batch_columns=size(source,2))
+        @test work.system.batch.capacity==
+              PIDHEOM._HEOM_SYSTEM_BATCH_WIDTH
+
+        schedule_calls[]=0
+        apply!(forward,plan,source,0.23,nothing,work)
+        # Twenty flattened ADO/RHS columns cross the internal width-16
+        # chunk boundary, but the driven system schedule is prepared once.
+        @test schedule_calls[]==1
+        forward_reference=similar(source)
+        for column in axes(source,2)
+            apply!(view(forward_reference,:,column),plan,
+                   view(source,:,column),0.23,nothing,
+                   PIDHEOM.HEOMWorkspace(plan))
+        end
+        @test forward≈forward_reference atol=3e-13 rtol=3e-13
+
+        schedule_calls[]=0
+        apply_adjoint!(adjoint_image,plan,source,0.23,nothing,work)
+        @test schedule_calls[]==1
+        adjoint_reference=similar(source)
+        for column in axes(source,2)
+            apply_adjoint!(
+                view(adjoint_reference,:,column),plan,
+                view(source,:,column),0.23,nothing,
+                PIDHEOM.HEOMWorkspace(plan))
+        end
+        @test adjoint_image≈adjoint_reference atol=4e-13 rtol=4e-13
+
+        adapter=PIDHEOM.heom_liouvillian(plan)
+        @test getfield(adapter,:batched_action!)!==nothing
+        @test getfield(adapter,:batched_adjoint_action!)!==nothing
+        schedule_calls[]=0
+        adapter_image=similar(source)
+        apply!(adapter_image,adapter,source,0.23,nothing,
+               PIDHEOM.HEOMWorkspace(plan))
+        @test schedule_calls[]==1
+        @test adapter_image≈forward atol=3e-13 rtol=3e-13
+        schedule_calls[]=0
+        apply_adjoint!(adapter_image,adapter,source,0.23,nothing,
+                       PIDHEOM.HEOMWorkspace(plan))
+        @test schedule_calls[]==1
+        @test adapter_image≈adjoint_image atol=4e-13 rtol=4e-13
+
+        ordinary_bytes=PIDHEOM._performance_linear_operator_workspace_bytes(
+            adapter)
+        batch_bytes=PIDHEOM._performance_linear_operator_workspace_bytes(
+            adapter;batch_columns=4)
+        @test batch_bytes>ordinary_bytes
+        huge_work=PIDHEOM.HEOMWorkspace(
+            plan;batch_columns=typemax(Int))
+        @test huge_work.system.batch.capacity==
+              PIDHEOM._HEOM_SYSTEM_BATCH_WIDTH
+        @test PIDHEOM._performance_linear_operator_workspace_bytes(
+            adapter;batch_columns=typemax(Int))==batch_bytes
+        @test work.system.batch.capacity==
+              PIDHEOM._HEOM_SYSTEM_BATCH_WIDTH
+        @test_throws ArgumentError apply!(source,plan,source,0.23,nothing,work)
+        @test_throws ArgumentError apply_adjoint!(
+            source,plan,source,0.23,nothing,work)
     end
 end

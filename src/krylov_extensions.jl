@@ -1333,10 +1333,22 @@ function KrylovExpvWorkspace(A,krylovdim::Integer=30)
     KrylovExpvWorkspace(_complex_float_type(S),n,krylovdim)
 end
 
-function _expv_trial!(ws,A,h)
+function _performance_krylov_expv_workspace_bytes(
+        n::Integer,::Type{T},krylovdim::Integer;
+        bigfloat_precision::Integer=precision(BigFloat)) where T
+    n>0||throw(ArgumentError("dimension must be positive"))
+    krylovdim>0||throw(ArgumentError("krylovdim must be positive"))
+    m=min(BigInt(n),BigInt(krylovdim))
+    entries=BigInt(n)*(m+4)+(m+1)*m+(m+1)^2
+    _performance_entries_bytes(entries,T;bigfloat_precision)
+end
+
+function _expv_arnoldi_factorization!(ws,A)
     T=eltype(ws.V);RT=typeof(real(zero(T)))
     beta=_advanced_checked_norm(ws.current,"exponential-action state")
-    iszero(beta)&&(fill!(ws.trial,zero(T));return (zero(RT),0,0,true))
+    iszero(beta)&&return (;
+        beta,zero_state=true,k=0,used=0,completed=true,enlarged=false,
+        q=0,coeff_count=0,next_remainder=zero(RT))
     V=ws.V;H=ws.H;fill!(H,zero(T));V[:,1].=ws.current./beta
     m=size(H,2);k=0;exact_breakdown=false
     near_breakdown=false;breakfactor=sqrt(eps(RT))
@@ -1381,19 +1393,42 @@ function _expv_trial!(ws,A,h)
             "exponential-action enlarged Arnoldi remainder")
     end
 
-    E=exp(h*Matrix(S));coeff_count=enlarged ? q : k
-    coeff=view(E,1:coeff_count,1)
-    mul!(ws.trial,view(V,:,1:coeff_count),coeff);ws.trial .*= beta
+    coeff_count=enlarged ? q : k
     completed=exact_breakdown||(enlarged&&
         (q==size(V,1)||iszero(next_remainder)))
-    error=if completed
-        zero(RT)
-    elseif enlarged
-        RT(beta*abs(h)*next_remainder*abs(E[q,1]))
-    else
-        RT(beta*abs(E[k+1,1]))
+    (;beta,zero_state=false,k,used,completed,enlarged,q,coeff_count,
+     next_remainder)
+end
+
+function _expv_project_factorization!(ws,h,factorization)
+    T=eltype(ws.V);RT=typeof(real(zero(T)))
+    if factorization.zero_state
+        fill!(ws.trial,zero(T))
+        return (zero(RT),0,true)
     end
-    error,k,used,completed
+    k=factorization.k
+    q=factorization.q
+    S=view(ws.small,1:q,1:q)
+    E=exp(h*Matrix(S))
+    coeff_count=factorization.coeff_count
+    coeff=view(E,1:coeff_count,1)
+    mul!(ws.trial,view(ws.V,:,1:coeff_count),coeff)
+    ws.trial .*= factorization.beta
+    error=if factorization.completed
+        zero(RT)
+    elseif factorization.enlarged
+        RT(factorization.beta*abs(h)*factorization.next_remainder*
+           abs(E[q,1]))
+    else
+        RT(factorization.beta*abs(E[k+1,1]))
+    end
+    error,k,factorization.completed
+end
+
+function _expv_trial!(ws,A,h)
+    factorization=_expv_arnoldi_factorization!(ws,A)
+    error,k,completed=_expv_project_factorization!(ws,h,factorization)
+    error,k,factorization.used,completed
 end
 
 """
@@ -1403,9 +1438,13 @@ Compute `y = exp(t*A)*b` without materializing `A` or its exponential.
 Restarted Arnoldi time slices are accepted or rejected using the augmented
 Hessenberg defect estimate. `initial_step`, `minimum_step`, and `maximum_step`
 are expressed in the same units as the finite real time `t`.
+Rejected slices reuse their Arnoldi factorization because the current
+full-space state has not changed; only the projected matrix exponential is
+reevaluated at the shorter step.
 
 The result reports accepted/rejected steps, total matrix-free operator
-applications, the accumulated local error estimate, and `reached_time`.
+applications, Arnoldi factorizations, projected trial evaluations, the
+accumulated local error estimate, and `reached_time`.
 Exhausting `max_steps` or the minimum step raises unless
 `require_convergence=false`, in which case `converged=false` and
 `reached_time` make the partial result explicit.
@@ -1438,7 +1477,8 @@ function krylov_expv!(y::AbstractVector,A,b::AbstractVector,t::Real,
         copyto!(y,b)
         return (value=y,converged=true,reached_time=time,accepted_steps=0,
             rejected_steps=0,operator_applications=0,estimated_error=zero(RT),
-            krylov_dimension=size(ws.H,2),workspace_reused=true)
+            krylov_dimension=size(ws.H,2),arnoldi_factorizations=0,
+            trial_evaluations=0,workspace_reused=true)
     end
     hmax=maximum_step===nothing ? total :
         _advanced_expv_step_control(RT,maximum_step,"maximum_step";
@@ -1458,10 +1498,18 @@ function krylov_expv!(y::AbstractVector,A,b::AbstractVector,t::Real,
     h0>=hmin||throw(ArgumentError(
         "initial_step must not be smaller than minimum_step"))
     reached=zero(RT);accepted=0;rejected=0;applications=0;error_sum=zero(RT)
+    factorizations=0
     converged=false;attempts=0;direction=sign(time)
+    factorization=nothing
     while reached<total&&attempts<max_steps
         attempts+=1;h=min(h,total-reached)
-        error,k,used,breakdown=_expv_trial!(ws,A,direction*h);applications+=used
+        if factorization===nothing
+            factorization=_expv_arnoldi_factorization!(ws,A)
+            applications+=factorization.used
+            factorizations+=1
+        end
+        error,k,breakdown=_expv_project_factorization!(
+            ws,direction*h,factorization)
         finite_trial=all(z->isfinite(real(z))&&isfinite(imag(z)),ws.trial)&&
             isfinite(error)
         trial_norm=finite_trial ? _advanced_checked_norm(ws.trial,
@@ -1480,6 +1528,11 @@ function krylov_expv!(y::AbstractVector,A,b::AbstractVector,t::Real,
             reached=next_reached;accepted+=1;error_sum+=error
             isfinite(error_sum)||throw(ArgumentError(
                 "exponential-action accumulated defect overflowed; rescale the state or use wider precision"))
+            # The Arnoldi basis belongs to the state at the beginning of this
+            # accepted slice. A new basis is required only after that state
+            # changes; rejected trials below retain the same factorization and
+            # merely reevaluate its small exponential at a shorter step.
+            factorization=nothing
         else
             rejected+=1
         end
@@ -1510,6 +1563,7 @@ function krylov_expv!(y::AbstractVector,A,b::AbstractVector,t::Real,
     (value=y,converged,reached_time=direction*reached,accepted_steps=accepted,
      rejected_steps=rejected,operator_applications=applications,
      estimated_error=error_sum,krylov_dimension=size(ws.H,2),
+     arnoldi_factorizations=factorizations,trial_evaluations=attempts,
      workspace_reused=true)
 end
 

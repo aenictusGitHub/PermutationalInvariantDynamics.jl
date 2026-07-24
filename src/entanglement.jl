@@ -1,3 +1,19 @@
+function _checked_lr_product_dimension(da::Integer,db::Integer)
+    da>0&&db>0||throw(ArgumentError(
+        "Littlewood--Richardson factor dimensions must be positive"))
+    da<=typemax(Int)&&db<=typemax(Int)||throw(ArgumentError(
+        "a Littlewood--Richardson factor dimension exceeds Int indexing; "*
+        "reduce the retained sectors or subsystem size"))
+    try
+        Base.checked_mul(Int(da),Int(db))
+    catch error
+        error isa OverflowError||rethrow()
+        throw(ArgumentError(
+            "the Littlewood--Richardson product dimension exceeds Int "*
+            "indexing; reduce the retained sectors or subsystem size"))
+    end
+end
+
 @doc raw"""
     negativity(rho, k; atol=_analysis_atol(rho), rtol=_state_rtol(rho),
                plan=nothing,
@@ -30,6 +46,15 @@ function negativity(rho::PIState, k::Integer;
                     plan=nothing,workspace=nothing)
     b=rho.basis
     0 <= k <= b.N || throw(ArgumentError("bipartition size k must satisfy 0 ≤ k ≤ N"))
+    if workspace isa ReductionWorkspace&&
+            _real_float_type(workspace.Ttype)===BigFloat&&
+            (precision(BigFloat)!=workspace.precision_bits||
+             rounding(BigFloat)!=workspace.rounding_mode)
+        return _reduction_with_precision(workspace) do
+            negativity(
+                rho,k;atol,rtol,plan,workspace)
+        end
+    end
     validate_state(rho;atol=atol,rtol=rtol)
     if plan!==nothing||workspace!==nothing
         plan,workspace=_resolve_reduction_resources(b,k,plan,workspace;atol=atol)
@@ -60,7 +85,8 @@ function negativity(rho::PIState, k::Integer;
     ia=Dict(content(g)=>i for (i,g) in pairs(ga))
     ib=Dict(content(g)=>i for (i,g) in pairs(gb))
     da=length(ga); db=length(gb); dn=length(gn)
-    V=zeros(ComplexF64,da*db,dn)
+    dp=_checked_lr_product_dimension(da,db)
+    V=zeros(ComplexF64,dp,dn)
     denom=binomial(big(b.N),big(k))
     for (col,g) in pairs(gn)
         n=content(g)
@@ -84,7 +110,7 @@ function negativity(rho::PIState, k::Integer;
 
     rhoab=V*Matrix(physical_block(rho,sym))*V'
     tensor=reshape(rhoab,da,db,da,db)
-    pt=reshape(permutedims(tensor,(3,2,1,4)),da*db,da*db)
+    pt=reshape(permutedims(tensor,(3,2,1,4)),dp,dp)
     vals=eigvals(Hermitian((pt+pt')/2))
     max(0.0,(sum(abs,vals)-1)/2)
 end
@@ -259,7 +285,8 @@ function _qubit_negativity(rho::PIState,k::Integer,
         end
         isempty(parent_sectors)&&continue
         da=ja+1; db=jb+1
-        block=zeros(ComplexF64,da*db,da*db)
+        dp=_checked_lr_product_dimension(da,db)
+        block=zeros(ComplexF64,dp,dp)
         product_multiplicity=
             symmetric_group_dimension(pa)*symmetric_group_dimension(pb)
         scale_squared=product_multiplicity^2
@@ -270,7 +297,7 @@ function _qubit_negativity(rho::PIState,k::Integer,
             patterns=b.patterns[b.index[p]]
             m_to_i=Dict(_pattern_m2(g,b.N)=>i for (i,g) in pairs(patterns))
             # Isometry from the total-J GT basis into the product basis.
-            U=zeros(Float64,da*db,j+1)
+            U=zeros(Float64,dp,j+1)
             for (ia,m1) in pairs(ma),(ib,m2) in pairs(mb)
                 m=m1+m2; abs(m)<=j || continue
                 U[ia+(ib-1)*da,m_to_i[m]]=
@@ -279,7 +306,7 @@ function _qubit_negativity(rho::PIState,k::Integer,
             block .+= U*C*U'
         end
         tensor=reshape(block,da,db,da,db)
-        pt=reshape(permutedims(tensor,(3,2,1,4)),da*db,da*db)
+        pt=reshape(permutedims(tensor,(3,2,1,4)),dp,dp)
         vals=eigvals(Hermitian((pt+pt')/2))
         total_norm += sum(abs,vals)
     end
@@ -344,7 +371,8 @@ end
 
 function _weight_restricted_variables(ga,gb,gl)
     da=length(ga);db=length(gb);D=length(content(first(gl)))
-    product_weights=Vector{NTuple{D,Int}}(undef,da*db)
+    dp=_checked_lr_product_dimension(da,db)
+    product_weights=Vector{NTuple{D,Int}}(undef,dp)
     for ib in 1:db,ia in 1:da
         wa=content(ga[ia]);wb=content(gb[ib])
         product_weights[ia+(ib-1)*da]=ntuple(level->wa[level]+wb[level],D)
@@ -360,7 +388,8 @@ end
 
 function _sparse_lr_nullspace(genera,genb,genl,patterna,patternb,patternl,
                               expected::Int;atol::Real)
-    da=size(genera[1],1);db=size(genb[1],1);dl=size(genl[1],1);dp=da*db
+    da=size(genera[1],1);db=size(genb[1],1);dl=size(genl[1],1)
+    dp=_checked_lr_product_dimension(da,db)
     variables=_weight_restricted_variables(patterna,patternb,patternl)
     nvariables=length(variables)
     expected<=nvariables||throw(ErrorException(
@@ -427,7 +456,8 @@ function _sparse_lr_nullspace(genera,genb,genl,patterna,patternb,patternl,
 end
 
 function _dense_lr_nullspace(genera,genb,genl;atol::Real)
-    da=size(genera[1],1);db=size(genb[1],1);dl=size(genl[1],1);dp=da*db
+    da=size(genera[1],1);db=size(genb[1],1);dl=size(genl[1],1)
+    dp=_checked_lr_product_dimension(da,db)
     identitya=Matrix{ComplexF64}(I,da,da)
     identityb=Matrix{ComplexF64}(I,db,db)
     identityl=Matrix{ComplexF64}(I,dl,dl)
@@ -464,7 +494,9 @@ function _lr_intertwiners(alpha::Partition{D},beta::Partition{D},lambda::Partiti
     genera=get!(gencache,alpha) do; _irrep_generators(alpha); end
     genb=get!(gencache,beta) do; _irrep_generators(beta); end
     genl=get!(gencache,lambda) do; _irrep_generators(lambda); end
-    dl=size(genl[1],1);dp=size(genera[1],1)*size(genb[1],1)
+    dl=size(genl[1],1)
+    dp=_checked_lr_product_dimension(
+        size(genera[1],1),size(genb[1],1))
     selected=algorithm===:auto ? :sparse : algorithm
     Z = if selected===:dense
         _dense_lr_nullspace(genera,genb,genl;atol=atol)
@@ -515,7 +547,76 @@ littlewood_richardson_coefficient(alpha::Partition{D},beta::Partition{D},
                                   lambda::Partition{D};atol=nothing) where D =
     _lr_tableau_coefficient(alpha,beta,lambda)
 
-struct _ProductSchurCoupling{T,D}
+struct _PackedLRIntertwiner{T,Ti<:Integer} <: AbstractMatrix{T}
+    # One exact-support CSC block for every fixed discarded-factor label.
+    # Storing the blocks separately avoids retaining the forbidden
+    # parent/product weights and lets partial traces contract one block at a
+    # time without slicing or copying a global sparse matrix.
+    blocks::Vector{SparseMatrixCSC{T,Ti}}
+    da::Int
+    db::Int
+    parent_dimension::Int
+    product_dimension::Int
+end
+
+Base.size(U::_PackedLRIntertwiner)=
+    (U.product_dimension,U.parent_dimension)
+Base.axes(U::_PackedLRIntertwiner)=map(Base.OneTo,size(U))
+Base.IndexStyle(::Type{<:_PackedLRIntertwiner})=IndexCartesian()
+@inline function Base.getindex(U::_PackedLRIntertwiner,row::Int,column::Int)
+    @boundscheck checkbounds(U,row,column)
+    q=(row-1)÷U.da+1
+    local_row=(row-1)%U.da+1
+    @inbounds U.blocks[q][local_row,column]
+end
+
+function Base.Matrix(U::_PackedLRIntertwiner{T}) where T
+    output=zeros(T,size(U))
+    for q in 1:U.db
+        rows=(q-1)*U.da+1:q*U.da
+        output[rows,:].=U.blocks[q]
+    end
+    output
+end
+
+function _PackedLRIntertwiner(
+        blocks::Vector{SparseMatrixCSC{T,Ti}},da::Int,db::Int,
+        parent_dimension::Int) where {T,Ti<:Integer}
+    product_dimension=_checked_lr_product_dimension(da,db)
+    _PackedLRIntertwiner(
+        blocks,da,db,parent_dimension,product_dimension)
+end
+
+function _packed_lr_intertwiner(U::AbstractMatrix{T},da::Int,db::Int) where T
+    product_dimension=_checked_lr_product_dimension(da,db)
+    size(U,1)==product_dimension||throw(DimensionMismatch(
+        "LR intertwiner product dimension does not match da*db"))
+    blocks=Vector{SparseMatrixCSC{T,Int}}(undef,db)
+    for q in 1:db
+        first_row=(q-1)*da
+        rows=Int[]
+        columns=Int[]
+        values=T[]
+        @inbounds for column in axes(U,2),local_row in 1:da
+            value=U[first_row+local_row,column]
+            iszero(value)&&continue
+            push!(rows,local_row)
+            push!(columns,column)
+            push!(values,value)
+        end
+        blocks[q]=sparse(rows,columns,values,da,size(U,2))
+    end
+    _PackedLRIntertwiner(blocks,da,db,size(U,2))
+end
+
+_stored_intertwiner_values(U::AbstractMatrix)=U
+_stored_intertwiner_values(U::_PackedLRIntertwiner)=
+    Iterators.flatten((block.nzval for block in U.blocks))
+_stored_intertwiner_entries(U::AbstractMatrix)=length(U)
+_stored_intertwiner_entries(U::_PackedLRIntertwiner)=
+    sum(nnz,U.blocks;init=0)
+
+struct _ProductSchurCoupling{T,D,I<:AbstractMatrix{T}}
     alpha::Partition{D}
     beta::Partition{D}
     da::Int
@@ -524,7 +625,7 @@ struct _ProductSchurCoupling{T,D}
     beta_multiplicity::BigInt
     product_multiplicity::BigInt
     # Entries are `(parent-sector index, multiplicity-space intertwiners)`.
-    intertwiners::Vector{Tuple{Int,Vector{Matrix{T}}}}
+    intertwiners::Vector{Tuple{Int,Vector{I}}}
 end
 
 """
@@ -533,23 +634,26 @@ end
 Prepare product-Schur intertwiners for the fixed bipartition `k | N-k`.
 Reuse the plan with `reduced_state`, `reduced_purity`, `negativity`, and
 `partial_transpose_spectrum` for many states on the exact same `PIBasis`.
-Qubits store their multiplicity-free SU(2) recoupling matrices; qudits store
-the Littlewood--Richardson intertwiner spaces.  No full `d^N` object is built.
+Qubits store their multiplicity-free SU(2) recoupling matrices. Qudits retain
+the Littlewood--Richardson intertwiner spaces as exact-support sparse blocks,
+one per discarded-factor weight, while the public
+[`subduction_intertwiners`](@ref) function continues to return ordinary dense
+matrices. No full `d^N` object is built.
 
 The plan retains every required product-Schur intertwiner but no mutable
 application scratch.  It is therefore most useful for state or parameter
 scans at fixed `(basis,k)`. For qudits, exact lattice-tableau counts first
 remove forbidden weight spaces, after which sparse simple-root constraints
-are factorized with SPQR. The resulting intertwiner matrices are dense and can
-still require substantial temporary and retained memory; a one-off call may
-be cheaper without a retained plan.
+are factorized with SPQR. Dense nullspace matrices are temporary setup data;
+the prepared plan drops every exact structural zero before retention.
 """
-struct ReductionPlan{T,D,B<:PIBasis,O<:PIBasis}
+struct ReductionPlan{T,D,B<:PIBasis,O<:PIBasis,C}
     basis::B
     k::Int
     output_basis::O
-    couplings::Vector{_ProductSchurCoupling{T,D}}
+    couplings::C
     atol::Float64
+    estimates::NamedTuple
 end
 function show(io::IO,p::ReductionPlan)
     nintertwiners=sum(length(Ts) for c in p.couplings for (_,Ts) in c.intertwiners)
@@ -562,8 +666,9 @@ end
 
 Allocate mutable scratch for repeated applications of a [`ReductionPlan`](@ref).
 The workspace reuses the largest product-Schur block, multiplication
-intermediate, parent block, partial trace, partial transpose, and all
-reduced-sector blocks. It also prepares the exact parent multiplicity factors
+intermediate, parent block, partial transpose, and all reduced-sector blocks.
+Reduced-state contractions trace the discarded product factor before a full
+product block is formed. It also prepares the exact parent multiplicity factors
 and scalar-type-matched recoupling matrices once in the workspace precision,
 so repeated applications do not redo `BigInt`/rational setup or trigger
 mixed-eltype matrix-multiplication fallbacks. The immutable plan keeps its
@@ -582,8 +687,13 @@ by only one task at a time.
 `ReductionWorkspace(plan, rho)` selects a scalar type that can represent both
 the cached intertwiners and `rho`.  The keyword constructor interprets `T` as
 the real floating-point component type, consistently with `PIState(...; T=...)`.
+For `BigFloat`, the state constructor requires uniform source storage,
+captures that precision and the current rounding mode, and creates every
+recoupler, exact scale, and scratch value in the same context. Applications
+re-enter the captured context; mismatched source or output storage raises
+rather than being silently rounded.
 """
-mutable struct ReductionWorkspace{T,P<:ReductionPlan,S}
+mutable struct ReductionWorkspace{T,P<:ReductionPlan,S,Q,C}
     plan::P
     Ttype::Type{T}
     product_block::Matrix{T}
@@ -592,28 +702,143 @@ mutable struct ReductionWorkspace{T,P<:ReductionPlan,S}
     partial_trace::Matrix{T}
     partial_transpose::Matrix{T}
     reduced_blocks::Vector{Matrix{T}}
-    recoupling_intertwiners::Vector{Vector{Vector{Matrix{T}}}}
+    recoupling_intertwiners::C
     reduction_parent_scales::S
     negativity_parent_scales::S
     mode::Symbol
+    precision_bits::Int
+    rounding_mode::Q
 end
 
 _workspace_intertwiner(::Type{T},U::Matrix{T}) where T=U
 _workspace_intertwiner(::Type{T},U::AbstractMatrix) where T=Matrix{T}(U)
+_workspace_intertwiner(::Type{T},U::_PackedLRIntertwiner{T}) where T=U
+function _workspace_intertwiner(::Type{T},
+        U::_PackedLRIntertwiner) where T
+    blocks=SparseMatrixCSC{T,Int}[
+        SparseMatrixCSC{T,Int}(block) for block in U.blocks]
+    _PackedLRIntertwiner(blocks,U.da,U.db,U.parent_dimension)
+end
 
-function ReductionWorkspace(plan::ReductionPlan{G};T::Type{R}=Float64,
-                            mode::Symbol=:both) where {G,R<:AbstractFloat}
+@inline _reduction_component_precisions(value::Real)=
+    (precision(value),precision(value))
+@inline _reduction_component_precisions(value)=
+    (precision(real(value)),precision(imag(value)))
+
+function _reduction_precision_bounds(values)
+    isempty(values)&&return nothing
+    minimum_precision=typemax(Int)
+    maximum_precision=0
+    for value in values
+        lower,upper=_reduction_component_precisions(value)
+        minimum_precision=min(minimum_precision,lower,upper)
+        maximum_precision=max(maximum_precision,lower,upper)
+    end
+    minimum_precision,maximum_precision
+end
+
+function _reduction_plan_precision_bounds(plan::ReductionPlan{G}) where G
+    _real_float_type(G)===BigFloat||return nothing
+    minimum_precision=typemax(Int)
+    maximum_precision=0
+    found=false
+    for coupling in plan.couplings
+        for (_,intertwiners) in coupling.intertwiners,U in intertwiners,
+                value in _stored_intertwiner_values(U)
+            lower,upper=_reduction_component_precisions(value)
+            minimum_precision=min(minimum_precision,lower,upper)
+            maximum_precision=max(maximum_precision,lower,upper)
+            found=true
+        end
+    end
+    found ? (minimum_precision,maximum_precision) : nothing
+end
+
+function _reduction_state_precision_bounds(rho::PIState)
+    _real_float_type(eltype(rho.data))===BigFloat||return nothing
+    bounds=_reduction_precision_bounds(rho.data)
+    bounds[1]==bounds[2]||throw(ArgumentError(
+        "source state BigFloat storage has mixed precision range $bounds; " *
+        "rebuild it at one precision"))
+    bounds
+end
+
+function _reduction_source_plan_context(
+        plan::ReductionPlan{G},rho::PIState) where G
+    WorkR=_real_float_type(promote_type(eltype(rho.data),G))
+    state_bounds=_reduction_state_precision_bounds(rho)
+    plan_bounds=_reduction_plan_precision_bounds(plan)
+    plan_bounds===nothing||plan_bounds[1]==plan_bounds[2]||
+        throw(ArgumentError(
+            "ReductionPlan BigFloat recouplers use mixed precision range " *
+            "$plan_bounds; rebuild the plan at one precision"))
+    if state_bounds!==nothing&&plan_bounds!==nothing&&
+            state_bounds[2]!=plan_bounds[2]
+        throw(ArgumentError(
+            "source state BigFloat precision $(state_bounds[2]) does not " *
+            "match ReductionPlan precision $(plan_bounds[2]); rebuild them " *
+            "at one precision"))
+    end
+    precision_bits=WorkR===BigFloat ?
+        (state_bounds===nothing ?
+            (plan_bounds===nothing ? precision(BigFloat) : plan_bounds[2]) :
+            state_bounds[2]) : precision(WorkR)
+    (;WorkR,precision_bits)
+end
+
+function _reduction_unprepared_precision(rho::PIState,plan)
+    if plan isa ReductionPlan
+        context=_reduction_source_plan_context(plan,rho)
+        return context.WorkR===BigFloat ? context.precision_bits : nothing
+    end
+    bounds=_reduction_state_precision_bounds(rho)
+    bounds===nothing ? nothing : bounds[2]
+end
+
+function _reduction_with_precision(f,work::ReductionWorkspace)
+    _real_float_type(work.Ttype)===BigFloat||return f()
+    setrounding(BigFloat,work.rounding_mode) do
+        setprecision(BigFloat,work.precision_bits) do
+            f()
+        end
+    end
+end
+
+function _reduction_workspace(
+        plan::ReductionPlan{G,D},::Type{WorkR},mode::Symbol,
+        precision_bits::Int,rounding_mode) where
+        {G,D,WorkR<:AbstractFloat}
     mode in (:both,:reduction,:negativity)||throw(ArgumentError(
         "ReductionWorkspace mode must be :both, :reduction, or :negativity"))
-    CT=promote_type(Complex{R},G)
-    max_product=maximum((c.da*c.db for c in plan.couplings);init=1)
+    if WorkR===BigFloat&&
+            (precision(BigFloat)!=precision_bits||
+             rounding(BigFloat)!=rounding_mode)
+        return setrounding(BigFloat,rounding_mode) do
+            setprecision(BigFloat,precision_bits) do
+                _reduction_workspace(
+                    plan,WorkR,mode,precision_bits,rounding_mode)
+            end
+        end
+    end
+    CT=Complex{WorkR}
+    max_product=maximum(
+        (_checked_lr_product_dimension(c.da,c.db)
+         for c in plan.couplings);init=1)
     max_parent=maximum((size(U,2) for c in plan.couplings for (_,Us) in c.intertwiners
                                   for U in Us);init=1)
     max_output=maximum((length(patterns) for patterns in plan.output_basis.patterns);init=1)
+    # Negativity needs U*C for the complete product block.  Reduction uses
+    # U_q*C one discarded-factor slice at a time and therefore needs only a
+    # `max_output × max_parent` intermediate.  In particular, a
+    # reduction-only workspace never retains an O((da*db)^2) product block.
+    product_rows=mode===:reduction ? max_output : max_product
     reduced=mode===:negativity ? Matrix{CT}[] :
         [zeros(CT,length(patterns),length(patterns))
          for patterns in plan.output_basis.patterns]
-    recouplers=Vector{Vector{Vector{Matrix{CT}}}}(undef,length(plan.couplings))
+    WorkIntertwiner=D==2 ? Matrix{CT} :
+        _PackedLRIntertwiner{CT,Int}
+    recouplers=Vector{Vector{Vector{WorkIntertwiner}}}(
+        undef,length(plan.couplings))
     Scale=_PreparedExactScale{_real_float_type(CT),true}
     reduction_scales=Vector{Vector{Scale}}(undef,length(plan.couplings))
     negativity_scales=Vector{Vector{Scale}}(undef,length(plan.couplings))
@@ -621,7 +846,7 @@ function ReductionWorkspace(plan::ReductionPlan{G};T::Type{R}=Float64,
         reduction_numerator=coupling.alpha_multiplicity*
             coupling.beta_multiplicity^2
         negativity_numerator=coupling.product_multiplicity^2
-        recouplers[coupling_index]=Vector{Vector{Matrix{CT}}}(
+        recouplers[coupling_index]=Vector{Vector{WorkIntertwiner}}(
             undef,length(coupling.intertwiners))
         reduction_scales[coupling_index]=Scale[]
         negativity_scales[coupling_index]=Scale[]
@@ -643,23 +868,53 @@ function ReductionWorkspace(plan::ReductionPlan{G};T::Type{R}=Float64,
             end
         end
     end
-    ReductionWorkspace{CT,typeof(plan),typeof(reduction_scales)}(
-        plan,CT,zeros(CT,max_product,max_product),
-        zeros(CT,max_product,max_parent),zeros(CT,max_parent,max_parent),
-        mode===:negativity ? zeros(CT,0,0) : zeros(CT,max_output,max_output),
+    ReductionWorkspace{CT,typeof(plan),typeof(reduction_scales),
+                       typeof(rounding_mode),typeof(recouplers)}(
+        plan,CT,mode===:reduction ? zeros(CT,0,0) :
+                                   zeros(CT,max_product,max_product),
+        zeros(CT,product_rows,max_parent),zeros(CT,max_parent,max_parent),
+        zeros(CT,0,0),
         mode===:reduction ? zeros(CT,0,0) : zeros(CT,max_product,max_product),
-        reduced,recouplers,reduction_scales,negativity_scales,mode)
+        reduced,recouplers,reduction_scales,negativity_scales,mode,
+        precision_bits,rounding_mode)
 end
 
-function ReductionWorkspace(plan::ReductionPlan,rho::PIState;
-                            mode::Symbol=:both)
+function ReductionWorkspace(plan::ReductionPlan{G};T::Type{R}=Float64,
+                            mode::Symbol=:both) where {G,R<:AbstractFloat}
+    isconcretetype(R)||throw(ArgumentError(
+        "T must be a concrete AbstractFloat type"))
+    WorkR=_real_float_type(promote_type(Complex{R},G))
+    plan_bounds=_reduction_plan_precision_bounds(plan)
+    if plan_bounds!==nothing
+        plan_bounds[1]==plan_bounds[2]||throw(ArgumentError(
+            "ReductionPlan BigFloat recouplers use mixed precision range " *
+            "$plan_bounds; rebuild the plan at one precision"))
+    end
+    precision_bits=WorkR===BigFloat ?
+        (plan_bounds===nothing ? precision(BigFloat) : plan_bounds[2]) :
+        precision(WorkR)
+    rounding_mode=WorkR===BigFloat ? rounding(BigFloat) : nothing
+    _reduction_workspace(
+        plan,WorkR,mode,precision_bits,rounding_mode)
+end
+
+function ReductionWorkspace(plan::ReductionPlan{G},rho::PIState;
+                            mode::Symbol=:both) where G
     _check_reduction_plan(plan,rho.basis,plan.k)
-    ReductionWorkspace(plan;T=_real_float_type(eltype(rho.data)),mode)
+    context=_reduction_source_plan_context(plan,rho)
+    WorkR=context.WorkR
+    precision_bits=context.precision_bits
+    rounding_mode=WorkR===BigFloat ? rounding(BigFloat) : nothing
+    _reduction_workspace(
+        plan,WorkR,mode,precision_bits,rounding_mode)
 end
 
 function show(io::IO,w::ReductionWorkspace)
     print(io,"ReductionWorkspace(k=$(w.plan.k), mode=$(w.mode), scalar_type=$(w.Ttype), " *
-             "max_product_dimension=$(size(w.product_block,1)))")
+             "max_product_dimension=$(size(w.product_block,1))")
+    _real_float_type(w.Ttype)===BigFloat&&
+        print(io,", precision_bits=$(w.precision_bits)")
+    print(io,")")
 end
 
 _qubit_reduction_couplings(b::PIBasis{2},k::Int)=
@@ -667,15 +922,20 @@ _qubit_reduction_couplings(b::PIBasis{2},k::Int)=
 
 function _qubit_reduction_couplings(b::PIBasis{2},k::Int,
                                     factorials::Union{Nothing,_SU2FactorialCache})
-    na=k;nb=b.N-k;out=_ProductSchurCoupling{Float64,2}[]
+    na=k
+    nb=b.N-k
+    Coupling=_ProductSchurCoupling{Float64,2,Matrix{Float64}}
+    out=Coupling[]
     m_maps=[Dict(_pattern_m2(g,b.N)=>i for (i,g) in pairs(patterns)) for patterns in b.patterns]
     for (pa,ja) in _qubit_sectors(na),(pb,jb) in _qubit_sectors(nb)
-        da=ja+1;db=jb+1;ma=collect(-ja:2:ja);mb=collect(-jb:2:jb)
+        da=ja+1;db=jb+1
+        dp=_checked_lr_product_dimension(da,db)
+        ma=collect(-ja:2:ja);mb=collect(-jb:2:jb)
         intertwiners=Tuple{Int,Vector{Matrix{Float64}}}[]
         for (s,p) in pairs(b.sectors)
             j=b.N-2p[2]
             abs(ja-jb)<=j<=ja+jb&&iseven(ja+jb-j)||continue
-            U=zeros(Float64,da*db,j+1);m_to_i=m_maps[s]
+            U=zeros(Float64,dp,j+1);m_to_i=m_maps[s]
             for (ia,m1) in pairs(ma),(ib,m2) in pairs(mb)
                 m=m1+m2;abs(m)<=j||continue
                 U[ia+(ib-1)*da,m_to_i[m]]=
@@ -685,30 +945,60 @@ function _qubit_reduction_couplings(b::PIBasis{2},k::Int,
         end
         isempty(intertwiners)&&continue
         fa=big(symmetric_group_dimension(pa));fb=big(symmetric_group_dimension(pb))
-        push!(out,_ProductSchurCoupling{Float64,2}(pa,pb,da,db,fa,fb,fa*fb,intertwiners))
+        push!(out,Coupling(
+            pa,pb,da,db,fa,fb,fa*fb,intertwiners))
     end
     out
 end
 
 function _qudit_reduction_couplings(b::PIBasis{D},k::Int,atol::Real) where D
-    na=k;nb=b.N-k;out=_ProductSchurCoupling{ComplexF64,D}[]
+    na=k
+    nb=b.N-k
+    Packed=_PackedLRIntertwiner{ComplexF64,Int}
+    Coupling=_ProductSchurCoupling{ComplexF64,D,Packed}
+    out=Coupling[]
     cache=Dict{Tuple{Partition{D},Partition{D},Partition{D}},Vector{Matrix{ComplexF64}}}()
     gencache=Dict{Partition{D},Vector{Matrix{ComplexF64}}}()
     for alpha in partitions(na,D),beta in partitions(nb,D)
         da=Int(unitary_group_dimension(alpha));db=Int(unitary_group_dimension(beta))
-        intertwiners=Tuple{Int,Vector{Matrix{ComplexF64}}}[]
+        intertwiners=Tuple{Int,Vector{Packed}}[]
         for (s,lambda) in pairs(b.sectors)
             key=(alpha,beta,lambda)
             Ts=get!(cache,key) do
                 _lr_intertwiners(alpha,beta,lambda;atol=atol,gencache=gencache)
             end
-            isempty(Ts)||push!(intertwiners,(s,Ts))
+            isempty(Ts)||push!(intertwiners,(
+                s,[_packed_lr_intertwiner(U,da,db) for U in Ts]))
         end
         isempty(intertwiners)&&continue
         fa=big(symmetric_group_dimension(alpha));fb=big(symmetric_group_dimension(beta))
-        push!(out,_ProductSchurCoupling{ComplexF64,D}(alpha,beta,da,db,fa,fb,fa*fb,intertwiners))
+        push!(out,Coupling(
+            alpha,beta,da,db,fa,fb,fa*fb,intertwiners))
     end
     out
+end
+
+function _reduction_plan_estimates(couplings,D::Int)
+    dense_entries=big(0)
+    retained_entries=big(0)
+    nintertwiners=0
+    for coupling in couplings
+        for (_,intertwiners) in coupling.intertwiners,U in intertwiners
+            dense_entries+=BigInt(length(U))
+            retained_entries+=BigInt(_stored_intertwiner_entries(U))
+            nintertwiners+=1
+        end
+    end
+    retained_bytes=BigInt(Base.summarysize(couplings))
+    scalar_bytes=isempty(couplings) ? 0 :
+        sizeof(eltype(first(first(first(couplings).intertwiners)[2])))
+    dense_payload_bytes=dense_entries*BigInt(scalar_bytes)
+    (;storage=D==2 ? :dense_su2 : :weight_block_sparse_csc,
+      intertwiners=nintertwiners,
+      retained_entries,
+      dense_entries,
+      retained_bytes,
+      dense_payload_bytes)
 end
 
 function ReductionPlan(b::PIBasis{D},k::Integer;atol::Real=2e-11) where D
@@ -717,15 +1007,27 @@ function ReductionPlan(b::PIBasis{D},k::Integer;atol::Real=2e-11) where D
     output_basis=ki==b.N ? b : PIBasis(ki,D)
     if ki==0||ki==b.N
         T=D==2 ? Float64 : ComplexF64
-        couplings=_ProductSchurCoupling{T,D}[]
-        return ReductionPlan{T,D,typeof(b),typeof(output_basis)}(b,ki,output_basis,couplings,Float64(atol))
+        I=D==2 ? Matrix{Float64} :
+            _PackedLRIntertwiner{ComplexF64,Int}
+        Coupling=_ProductSchurCoupling{T,D,I}
+        couplings=Coupling[]
+        estimates=_reduction_plan_estimates(couplings,D)
+        return ReductionPlan{T,D,typeof(b),typeof(output_basis),
+                             typeof(couplings)}(
+            b,ki,output_basis,couplings,Float64(atol),estimates)
     end
     if D==2
         couplings=_qubit_reduction_couplings(b,ki)
-        ReductionPlan{Float64,D,typeof(b),typeof(output_basis)}(b,ki,output_basis,couplings,Float64(atol))
+        estimates=_reduction_plan_estimates(couplings,D)
+        ReductionPlan{Float64,D,typeof(b),typeof(output_basis),
+                      typeof(couplings)}(
+            b,ki,output_basis,couplings,Float64(atol),estimates)
     else
         tol=max(atol,2e-11);couplings=_qudit_reduction_couplings(b,ki,tol)
-        ReductionPlan{ComplexF64,D,typeof(b),typeof(output_basis)}(b,ki,output_basis,couplings,Float64(tol))
+        estimates=_reduction_plan_estimates(couplings,D)
+        ReductionPlan{ComplexF64,D,typeof(b),typeof(output_basis),
+                      typeof(couplings)}(
+            b,ki,output_basis,couplings,Float64(tol),estimates)
     end
 end
 ReductionPlan(rho::PIState,k::Integer;kwargs...)=ReductionPlan(rho.basis,k;kwargs...)
@@ -743,7 +1045,71 @@ function _check_reduction_workspace(work::ReductionWorkspace,plan::ReductionPlan
     _check_reduction_plan(plan,rho.basis,plan.k)
     promote_type(work.Ttype,eltype(rho.data))===work.Ttype||throw(ArgumentError(
         "ReductionWorkspace scalar type $(work.Ttype) cannot represent state scalar type $(eltype(rho.data))"))
+    if _real_float_type(work.Ttype)===BigFloat
+        required=work.precision_bits
+        if _real_float_type(eltype(rho.data))===BigFloat
+            bounds=_reduction_precision_bounds(rho.data)
+            bounds==(required,required)||throw(ArgumentError(
+                "source state BigFloat storage has precision range $bounds, " *
+                "but ReductionWorkspace requires $required bits; rebuild " *
+                "the state or workspace at one precision"))
+        end
+        for (label,values) in (
+                ("product-block scratch",work.product_block),
+                ("multiplication scratch",work.product_tmp),
+                ("parent-block scratch",work.parent_block),
+                ("partial-trace scratch",work.partial_trace),
+                ("partial-transpose scratch",work.partial_transpose))
+            isempty(values)&&continue
+            bounds=_reduction_precision_bounds(values)
+            bounds==(required,required)||error(
+                "internal ReductionWorkspace $label has precision range " *
+                "$bounds, expected $required bits")
+        end
+        for (index,block) in pairs(work.reduced_blocks)
+            isempty(block)&&continue
+            bounds=_reduction_precision_bounds(block)
+            bounds==(required,required)||error(
+                "internal reduced-block scratch $index has precision range " *
+                "$bounds, expected $required bits")
+        end
+        for connections in work.recoupling_intertwiners,
+                intertwiners in connections,U in intertwiners
+            isempty(U)&&continue
+            bounds=_reduction_precision_bounds(
+                _stored_intertwiner_values(U))
+            bounds==(required,required)||error(
+                "internal recoupling matrix has precision range $bounds, " *
+                "expected $required bits")
+        end
+        for scale_groups in (
+                work.reduction_parent_scales,
+                work.negativity_parent_scales),scales in scale_groups,
+                scale in scales
+            factor_precision=precision(scale.factor)
+            mantissa_precision=precision(scale.mantissa)
+            factor_precision==required&&mantissa_precision==required||error(
+                "internal exact reduction scale has precisions " *
+                "($factor_precision,$mantissa_precision), expected " *
+                "$required bits")
+        end
+    end
     work
+end
+
+function _check_reduction_output_precision(
+        out::PIState,work::ReductionWorkspace)
+    _real_float_type(work.Ttype)===BigFloat||return out
+    _real_float_type(eltype(out.data))===BigFloat||throw(ArgumentError(
+        "output state scalar type $(eltype(out.data)) does not match " *
+        "BigFloat ReductionWorkspace scalar type $(work.Ttype)"))
+    bounds=_reduction_precision_bounds(out.data)
+    required=work.precision_bits
+    bounds==(required,required)||throw(ArgumentError(
+        "output state BigFloat storage has precision range $bounds, but " *
+        "ReductionWorkspace requires $required bits; rebuild the output " *
+        "state in the workspace precision"))
+    out
 end
 
 function _require_reduction_workspace_mode(work::ReductionWorkspace,
@@ -820,13 +1186,120 @@ function _scaled_reduction_parent_block!(destination::AbstractMatrix,
     result
 end
 
+function _intertwiner_left_mul!(destination,U::AbstractMatrix,C)
+    mul!(destination,U,C)
+end
+
+function _intertwiner_left_mul!(
+        destination,U::_PackedLRIntertwiner,C)
+    size(destination)==(size(U,1),size(C,2))||throw(DimensionMismatch(
+        "packed LR multiplication destination has the wrong dimensions"))
+    size(C,1)==U.parent_dimension||throw(DimensionMismatch(
+        "packed LR intertwiner and parent block are incompatible"))
+    fill!(destination,zero(eltype(destination)))
+    @inbounds for q in 1:U.db
+        block=U.blocks[q]
+        row_offset=(q-1)*U.da
+        for parent_row in 1:U.parent_dimension
+            for pointer in nzrange(block,parent_row)
+                output_row=row_offset+block.rowval[pointer]
+                value=block.nzval[pointer]
+                for column in axes(C,2)
+                    destination[output_row,column]+=
+                        value*C[parent_row,column]
+                end
+            end
+        end
+    end
+    destination
+end
+
+function _intertwiner_sandwich_add!(
+        destination,tmp,U::AbstractMatrix)
+    mul!(destination,tmp,adjoint(U),one(eltype(destination)),
+         one(eltype(destination)))
+end
+
+function _intertwiner_sandwich_add!(
+        destination,tmp,U::_PackedLRIntertwiner)
+    size(destination)==(size(U,1),size(U,1))||throw(DimensionMismatch(
+        "packed LR sandwich destination has the wrong dimensions"))
+    size(tmp)==(size(U,1),U.parent_dimension)||throw(DimensionMismatch(
+        "packed LR sandwich intermediate has the wrong dimensions"))
+    @inbounds for q in 1:U.db
+        block=U.blocks[q]
+        column_offset=(q-1)*U.da
+        for parent_column in 1:U.parent_dimension
+            for pointer in nzrange(block,parent_column)
+                output_column=column_offset+block.rowval[pointer]
+                value=conj(block.nzval[pointer])
+                for output_row in axes(tmp,1)
+                    destination[output_row,output_column]+=
+                        tmp[output_row,parent_column]*value
+                end
+            end
+        end
+    end
+    destination
+end
+
+function _accumulate_reduced_intertwiner!(
+        target,tmp,U::AbstractMatrix,C,da::Int,db::Int)
+    for q in 1:db
+        rows=(q-1)*da+1:q*da
+        Uq=view(U,rows,:)
+        mul!(tmp,Uq,C)
+        mul!(target,tmp,adjoint(Uq),one(eltype(target)),
+             one(eltype(target)))
+    end
+    target
+end
+
+function _accumulate_reduced_intertwiner!(
+        target,tmp,U::_PackedLRIntertwiner,C,da::Int,db::Int)
+    da==U.da&&db==U.db||throw(DimensionMismatch(
+        "packed LR factor dimensions do not match the product coupling"))
+    @inbounds for q in 1:db
+        block=U.blocks[q]
+        fill!(tmp,zero(eltype(tmp)))
+        for parent_row in 1:U.parent_dimension
+            for pointer in nzrange(block,parent_row)
+                output_row=block.rowval[pointer]
+                value=block.nzval[pointer]
+                for column in axes(C,2)
+                    tmp[output_row,column]+=
+                        value*C[parent_row,column]
+                end
+            end
+        end
+        for parent_column in 1:U.parent_dimension
+            for pointer in nzrange(block,parent_column)
+                output_column=block.rowval[pointer]
+                value=conj(block.nzval[pointer])
+                for output_row in 1:da
+                    target[output_row,output_column]+=
+                        tmp[output_row,parent_column]*value
+                end
+            end
+        end
+    end
+    target
+end
+
 function _product_block(rho::PIState,c::_ProductSchurCoupling{T},
                         scale_squared_numerator::Integer=1) where T
-    R=promote_type(eltype(rho.data),T);block=zeros(R,c.da*c.db,c.da*c.db)
+    R=promote_type(eltype(rho.data),T)
+    n=_checked_lr_product_dimension(c.da,c.db)
+    block=zeros(R,n,n)
     for (s,Ts) in c.intertwiners
         C=_scaled_reduction_parent_block(
             rho,rho.basis.sectors[s],scale_squared_numerator)
-        for U in Ts;block .+= U*C*U';end
+        for raw_U in Ts
+            U=_workspace_intertwiner(R,raw_U)
+            tmp=zeros(R,size(U,1),size(C,2))
+            _intertwiner_left_mul!(tmp,U,C)
+            _intertwiner_sandwich_add!(block,tmp,U)
+        end
     end
     block
 end
@@ -835,7 +1308,7 @@ function _product_block!(rho::PIState,c::_ProductSchurCoupling,
                          work::ReductionWorkspace,
                          recouplers::AbstractVector,
                          parent_scales::AbstractVector)
-    n=c.da*c.db
+    n=_checked_lr_product_dimension(c.da,c.db)
     block=view(work.product_block,1:n,1:n)
     fill!(block,zero(eltype(block)))
     length(parent_scales)==length(c.intertwiners)||error(
@@ -849,8 +1322,8 @@ function _product_block!(rho::PIState,c::_ProductSchurCoupling,
         dl=size(C,1)
         tmp=view(work.product_tmp,1:n,1:dl)
         for U in Ts
-            mul!(tmp,U,C)
-            mul!(block,tmp,adjoint(U),one(eltype(block)),one(eltype(block)))
+            _intertwiner_left_mul!(tmp,U,C)
+            _intertwiner_sandwich_add!(block,tmp,U)
         end
     end
     block
@@ -864,8 +1337,37 @@ function _fill_partial_trace!(dest,block,da::Int,db::Int)
     R
 end
 
+# Evaluate tr_B(U*C*U†) as sum_q U_q*C*U_q†, where U_q consists of
+# the `da` product-basis rows with a fixed discarded-factor label q.  This
+# avoids constructing the `(da*db) × (da*db)` product block on reduction and
+# purity paths while retaining precisely the same recoupling and exact
+# multiplicity scales as negativity.
+function _accumulate_reduced_coupling!(
+        target::AbstractMatrix,rho::PIState,c::_ProductSchurCoupling,
+        work::ReductionWorkspace,recouplers::AbstractVector,
+        parent_scales::AbstractVector)
+    da=c.da
+    length(parent_scales)==length(c.intertwiners)||error(
+        "internal reduction parent-scale count mismatch")
+    length(recouplers)==length(c.intertwiners)||error(
+        "internal reduction recoupler count mismatch")
+    for (connection_index,(s,_)) in pairs(c.intertwiners)
+        Ts=recouplers[connection_index]
+        C=_scaled_reduction_parent_block!(work.parent_block,
+            rho,rho.basis.sectors[s],parent_scales[connection_index])
+        dl=size(C,1)
+        tmp=view(work.product_tmp,1:da,1:dl)
+        for U in Ts
+            _accumulate_reduced_intertwiner!(
+                target,tmp,U,C,da,c.db)
+        end
+    end
+    target
+end
+
 function _fill_partial_transpose!(dest,block,da::Int,db::Int)
-    n=da*db;pt=view(dest,1:n,1:n)
+    n=_checked_lr_product_dimension(da,db)
+    pt=view(dest,1:n,1:n)
     @inbounds for jb in 1:db,ja in 1:da,ib in 1:db,ia in 1:da
         pt[ia+(ib-1)*da,ja+(jb-1)*da]=
             block[ja+(ib-1)*da,ia+(jb-1)*da]
@@ -903,13 +1405,11 @@ function _accumulate_reduced_blocks!(rho::PIState,plan::ReductionPlan,
         # The output stores C_alpha=sqrt(f_alpha)R_alpha.  Fuse its complete
         # factor sqrt(f_alpha)*f_beta/sqrt(f_lambda) into the parent
         # coefficient block before floating conversion.
-        block=_product_block!(rho,c,work,
-            work.recoupling_intertwiners[coupling_index],
-            work.reduction_parent_scales[coupling_index])
-        partial=_fill_partial_trace!(work.partial_trace,block,c.da,c.db)
         ai=plan.output_basis.index[c.alpha]
         target=work.reduced_blocks[ai]
-        @. target=target+partial
+        _accumulate_reduced_coupling!(target,rho,c,work,
+            work.recoupling_intertwiners[coupling_index],
+            work.reduction_parent_scales[coupling_index])
     end
     for R in work.reduced_blocks
         _hermitianize_reduction_roundoff!(R;atol=atol,rtol=rtol,
@@ -923,7 +1423,10 @@ function _plan_negativity(rho::PIState,plan::ReductionPlan)
     total_norm=0.0
     for c in plan.couplings
         block=_product_block(rho,c,c.product_multiplicity^2)
-        pt=reshape(permutedims(reshape(block,c.da,c.db,c.da,c.db),(3,2,1,4)),c.da*c.db,c.da*c.db)
+        n=_checked_lr_product_dimension(c.da,c.db)
+        pt=reshape(
+            permutedims(reshape(block,c.da,c.db,c.da,c.db),(3,2,1,4)),
+            n,n)
         total_norm+=sum(abs,eigvals(Hermitian((pt+pt')/2)))
     end
     max(0.0,(total_norm-1)/2)
@@ -955,7 +1458,8 @@ function _qudit_negativity(rho::PIState,k::Integer;atol::Real=1e-12)
     gencache=Dict{Partition,Vector{Matrix{ComplexF64}}}()
     for alpha in partitions(na,b.d),beta in partitions(nb,b.d)
         da=Int(unitary_group_dimension(alpha));db=Int(unitary_group_dimension(beta))
-        block=zeros(ComplexF64,da*db,da*db)
+        dp=_checked_lr_product_dimension(da,db)
+        block=zeros(ComplexF64,dp,dp)
         for lambda in b.sectors
             key=(alpha,beta,lambda)
             Ts=get!(cache,key) do
@@ -970,11 +1474,21 @@ function _qudit_negativity(rho::PIState,k::Integer;atol::Real=1e-12)
             end
         end
         tensor=reshape(block,da,db,da,db)
-        pt=reshape(permutedims(tensor,(3,2,1,4)),da*db,da*db)
+        pt=reshape(permutedims(tensor,(3,2,1,4)),dp,dp)
         vals=eigvals(Hermitian((pt+pt')/2))
         total_norm += sum(abs,vals)
     end
     max(0.0,(total_norm-1)/2)
+end
+
+function _logarithmic_negativity_value(value::Real,base::Real)
+    # Preserve the established machine-type promotion (for example a
+    # Float32 negativity with an integer base returns Float64), while keeping
+    # a BigFloat workspace from dividing by a separately rounded Float64
+    # `log(base)`.
+    R=promote_type(typeof(float(value)),typeof(float(base)))
+    converted_value=R(value)
+    log(one(R)+R(2)*converted_value)/log(R(base))
 end
 
 """
@@ -989,9 +1503,19 @@ function logarithmic_negativity(rho::PIState,k::Integer;base::Real=2,
                                 atol::Real=_analysis_atol(rho),
                                 rtol::Real=_state_rtol(rho),
                                 plan=nothing,workspace=nothing)
+    if workspace isa ReductionWorkspace&&
+            _real_float_type(workspace.Ttype)===BigFloat&&
+            (precision(BigFloat)!=workspace.precision_bits||
+             rounding(BigFloat)!=workspace.rounding_mode)
+        return _reduction_with_precision(workspace) do
+            logarithmic_negativity(
+                rho,k;base,atol,rtol,plan,workspace)
+        end
+    end
     base>0 && base!=1 || throw(ArgumentError("logarithm base must be positive and different from one"))
-    log(2negativity(rho,k;atol=atol,rtol=rtol,plan=plan,
-                    workspace=workspace)+1)/log(base)
+    value=negativity(rho,k;atol=atol,rtol=rtol,plan=plan,
+                     workspace=workspace)
+    _logarithmic_negativity_value(value,base)
 end
 
 function _partial_trace_b(block::AbstractMatrix,da::Int,db::Int)
@@ -1003,7 +1527,32 @@ function _partial_trace_b(block::AbstractMatrix,da::Int,db::Int)
     R
 end
 
+function _accumulate_reduced_coupling!(
+        target::AbstractMatrix,rho::PIState,c::_ProductSchurCoupling,
+        scale_squared_numerator::Integer)
+    CT=eltype(target);da=c.da
+    for (s,Ts) in c.intertwiners
+        raw_C=_scaled_reduction_parent_block(
+            rho,rho.basis.sectors[s],scale_squared_numerator)
+        C=eltype(raw_C)===CT ? raw_C : Matrix{CT}(raw_C)
+        dl=size(C,1)
+        tmp=Matrix{CT}(undef,da,dl)
+        for raw_U in Ts
+            U=_workspace_intertwiner(CT,raw_U)
+            _accumulate_reduced_intertwiner!(
+                target,tmp,U,C,da,c.db)
+        end
+    end
+    target
+end
+
 function _plan_reduced_state(rho::PIState,plan::ReductionPlan{T};atol::Real,rtol::Real) where T
+    precision_bits=_reduction_unprepared_precision(rho,plan)
+    if precision_bits!==nothing&&precision(BigFloat)!=precision_bits
+        return setprecision(BigFloat,precision_bits) do
+            _plan_reduced_state(rho,plan;atol,rtol)
+        end
+    end
     b=rho.basis;k=plan.k
     k==b.N&&return PIState(b,copy(rho.data))
     CT=promote_type(eltype(rho.data),T);RT=_real_float_type(CT)
@@ -1012,9 +1561,9 @@ function _plan_reduced_state(rho::PIState,plan::ReductionPlan{T};atol::Real,rtol
     reduced_blocks=[zeros(CT,length(patterns),length(patterns)) for patterns in plan.output_basis.patterns]
     for c in plan.couplings
         scale_squared=c.alpha_multiplicity*c.beta_multiplicity^2
-        block=_product_block(rho,c,scale_squared)
         ai=plan.output_basis.index[c.alpha]
-        reduced_blocks[ai].+=_partial_trace_b(block,c.da,c.db)
+        _accumulate_reduced_coupling!(
+            reduced_blocks[ai],rho,c,scale_squared)
     end
     for (s,alpha) in pairs(plan.output_basis.sectors)
         R=reduced_blocks[s];R=(R+R')/2
@@ -1032,6 +1581,7 @@ function _plan_reduced_state!(out::PIState,rho::PIState,plan::ReductionPlan,
         "output state must use the ReductionPlan output_basis object"))
     promote_type(eltype(out.data),work.Ttype)===eltype(out.data)||throw(ArgumentError(
         "output state scalar type $(eltype(out.data)) cannot represent ReductionWorkspace scalar type $(work.Ttype)"))
+    _check_reduction_output_precision(out,work)
     if k==b.N
         copyto!(out.data,rho.data)
         return out
@@ -1050,24 +1600,45 @@ function _plan_reduced_state!(out::PIState,rho::PIState,plan::ReductionPlan,
     out
 end
 
+@inline function _check_reduction_tolerances(atol::Real,rtol::Real)
+    isfinite(atol)&&atol>=0||throw(ArgumentError(
+        "atol must be finite and nonnegative"))
+    isfinite(rtol)&&rtol>=0||throw(ArgumentError(
+        "rtol must be finite and nonnegative"))
+    nothing
+end
+
 """
     reduced_state!(out, rho, k; plan, workspace,
+                   check=true,
                    atol=_analysis_atol(rho), rtol=_state_rtol(rho))
 
 Write the `k`-particle reduced density matrix into `out` while reusing a
 caller-owned [`ReductionWorkspace`](@ref). `out` must use
 `plan.output_basis`, and the plan, workspace, and input state must belong to
-the exact same parent `PIBasis` object.
+the exact same parent `PIBasis` object. Set `check=false` only when `rho` has
+already been validated by the surrounding workflow; resource compatibility,
+Hermiticity roundoff, and output normalization checks remain active.
 """
 function reduced_state!(out::PIState,rho::PIState,k::Integer;
                         plan=nothing,workspace=nothing,
+                        check::Bool=true,
                         atol::Real=_analysis_atol(rho),
                         rtol::Real=_state_rtol(rho))
     workspace isa ReductionWorkspace||throw(ArgumentError(
         "reduced_state! requires a ReductionWorkspace"))
     0<=k<=rho.basis.N||throw(ArgumentError(
         "subsystem size k must satisfy 0 ≤ k ≤ N"))
-    validate_state(rho;atol=atol,rtol=rtol)
+    _check_reduction_tolerances(atol,rtol)
+    if _real_float_type(workspace.Ttype)===BigFloat&&
+            (precision(BigFloat)!=workspace.precision_bits||
+             rounding(BigFloat)!=workspace.rounding_mode)
+        return _reduction_with_precision(workspace) do
+            reduced_state!(
+                out,rho,k;plan,workspace,check,atol,rtol)
+        end
+    end
+    check&&validate_state(rho;atol=atol,rtol=rtol)
     plan,workspace=_resolve_reduction_resources(
         rho.basis,k,plan,workspace;atol=atol)
     _check_reduction_workspace(workspace,plan,rho)
@@ -1080,7 +1651,8 @@ reduced_state!(out::PIState,rho::PIState,plan::ReductionPlan,
 
 function _qubit_product_block(rho::PIState,pa::Partition,ja::Int,pb::Partition,jb::Int)
     b=rho.basis;da=ja+1;db=jb+1
-    block=zeros(ComplexF64,da*db,da*db)
+    dp=_checked_lr_product_dimension(da,db)
+    block=zeros(ComplexF64,dp,dp)
     ma=collect(-ja:2:ja);mb=collect(-jb:2:jb)
     for p in b.sectors
         j=b.N-2p[2]
@@ -1088,7 +1660,7 @@ function _qubit_product_block(rho::PIState,pa::Partition,ja::Int,pb::Partition,j
         C=_scaled_reduction_parent_block(rho,p,1)
         patterns=b.patterns[b.index[p]]
         m_to_i=Dict(_pattern_m2(g,b.N)=>i for (i,g) in pairs(patterns))
-        U=zeros(Float64,da*db,j+1)
+        U=zeros(Float64,dp,j+1)
         for (ia,m1) in pairs(ma),(ib,m2) in pairs(mb)
             m=m1+m2;abs(m)<=j||continue
             U[ia+(ib-1)*da,m_to_i[m]]=_su2_cgc(ja,m1,jb,m2,j,m)
@@ -1102,7 +1674,8 @@ function _qudit_product_block(rho::PIState,alpha::Partition,beta::Partition,
                               cache,gencache;atol=2e-11)
     b=rho.basis
     da=Int(unitary_group_dimension(alpha));db=Int(unitary_group_dimension(beta))
-    block=zeros(ComplexF64,da*db,da*db)
+    dp=_checked_lr_product_dimension(da,db)
+    block=zeros(ComplexF64,dp,dp)
     for lambda in b.sectors
         key=(alpha,beta,lambda)
         Ts=get!(cache,key) do
@@ -1119,7 +1692,7 @@ end
 """
     reduced_state(rho, k; atol=_analysis_atol(rho),
                   rtol=_state_rtol(rho), plan=nothing,
-                  workspace=nothing)
+                  workspace=nothing, check=true)
 
 Return the reduced state of any `k` particles as a `PIState` on
 `PIBasis(k,d)`. Permutation invariance makes the result independent of which
@@ -1133,14 +1706,48 @@ normalization.
 Pass `plan=ReductionPlan(rho.basis,k)` when the same reduction is evaluated
 for several states. Add `workspace=ReductionWorkspace(plan,rho)` to reuse
 application scratch, or call [`reduced_state!`](@ref) to reuse the output too.
+Set `check=false` only in a prepared workflow that already validated `rho`.
+For a uniform `BigFloat` state, both prepared-workspace and plan-only paths
+execute at the owned source/plan precision even when the ambient precision is
+different.
 """
 function reduced_state(rho::PIState,k::Integer;
                        atol::Real=_analysis_atol(rho),
                        rtol::Real=_state_rtol(rho),plan=nothing,
-                       workspace=nothing)
+                       workspace=nothing,check::Bool=true)
     b=rho.basis
     0<=k<=b.N||throw(ArgumentError("subsystem size k must satisfy 0 ≤ k ≤ N"))
-    validate_state(rho;atol=atol,rtol=rtol)
+    _check_reduction_tolerances(atol,rtol)
+    if workspace===nothing
+        precision_bits=_reduction_unprepared_precision(rho,plan)
+        if precision_bits!==nothing&&precision(BigFloat)!=precision_bits
+            return setprecision(BigFloat,precision_bits) do
+                reduced_state(
+                    rho,k;atol,rtol,plan,workspace,check)
+            end
+        end
+    end
+    if workspace isa ReductionWorkspace&&
+            _real_float_type(workspace.Ttype)===BigFloat&&
+            (precision(BigFloat)!=workspace.precision_bits||
+             rounding(BigFloat)!=workspace.rounding_mode)
+        return _reduction_with_precision(workspace) do
+            reduced_state(
+                rho,k;atol,rtol,plan,workspace,check)
+        end
+    end
+    check&&validate_state(rho;atol=atol,rtol=rtol)
+    # Avoid even the (small) endpoint ReductionPlan when no prepared resource
+    # was requested.  A supplied plan/workspace is still checked below so a
+    # fast endpoint cannot hide an ownership error.
+    if plan===nothing&&workspace===nothing
+        k==b.N&&return PIState(b,copy(rho.data))
+        if k==0
+            out=PIState(PIBasis(0,b.d);T=_real_float_type(eltype(rho.data)))
+            out.data[1]=one(eltype(out.data))
+            return out
+        end
+    end
     plan,workspace=_resolve_reduction_resources(b,k,plan,workspace;atol=atol)
     if workspace===nothing
         return _plan_reduced_state(rho,plan;atol=atol,rtol=rtol)
@@ -1173,23 +1780,54 @@ end
 """
     reduced_purity(rho, k; atol=_analysis_atol(rho),
                    rtol=_state_rtol(rho), plan=nothing,
-                   workspace=nothing)
+                   workspace=nothing, check=true)
 
 Return `tr(rho_k^2)` for the `k`-particle state returned by
 [`reduced_state`](@ref). The result for `k=0` is one and that for `k=N` equals
 [`purity`](@ref).
+
+Set `check=false` only when the caller has already validated `rho`.
+`BigFloat` plan-only and prepared-workspace calls preserve their source/plan
+precision independently of the ambient precision.
 """
 function reduced_purity(rho::PIState,k::Integer;
                         atol::Real=_analysis_atol(rho),
                         rtol::Real=_state_rtol(rho),plan=nothing,
-                        workspace=nothing)
-    if workspace===nothing
-        return purity(reduced_state(rho,k;atol=atol,rtol=rtol,plan=plan))
-    end
-    b=rho.basis;0<=k<=b.N||throw(ArgumentError(
+                        workspace=nothing,check::Bool=true)
+    b=rho.basis
+    0<=k<=b.N||throw(ArgumentError(
         "subsystem size k must satisfy 0 ≤ k ≤ N"))
-    validate_state(rho;atol=atol,rtol=rtol)
+    _check_reduction_tolerances(atol,rtol)
+    if workspace===nothing
+        precision_bits=_reduction_unprepared_precision(rho,plan)
+        if precision_bits!==nothing&&precision(BigFloat)!=precision_bits
+            return setprecision(BigFloat,precision_bits) do
+                reduced_purity(
+                    rho,k;atol,rtol,plan,workspace,check)
+            end
+        end
+    end
+    if workspace isa ReductionWorkspace&&
+            _real_float_type(workspace.Ttype)===BigFloat&&
+            (precision(BigFloat)!=workspace.precision_bits||
+             rounding(BigFloat)!=workspace.rounding_mode)
+        return _reduction_with_precision(workspace) do
+            reduced_purity(
+                rho,k;atol,rtol,plan,workspace,check)
+        end
+    end
+    check&&validate_state(rho;atol=atol,rtol=rtol)
+    if plan===nothing&&workspace===nothing
+        k==0&&return one(_real_float_type(eltype(rho.data)))
+        k==b.N&&return purity(rho)
+    end
     plan,workspace=_resolve_reduction_resources(b,k,plan,workspace;atol=atol)
+    if workspace===nothing
+        k==0&&return one(_real_float_type(eltype(rho.data)))
+        k==b.N&&return purity(rho)
+        return purity(_plan_reduced_state(
+            rho,plan;atol=atol,rtol=rtol))
+    end
     _check_reduction_workspace(workspace,plan,rho)
     k==0&&return one(_real_float_type(workspace.Ttype))
     k==b.N&&return purity(rho)
@@ -1200,20 +1838,47 @@ end
 
 """
     reduced_purities(rho; ks=0:N, atol=_analysis_atol(rho),
-                     rtol=_state_rtol(rho), plans=nothing)
+                     rtol=_state_rtol(rho), plans=nothing, check=true)
 
 Compute reduced purities for the requested subsystem sizes and return them in
-the same order as `ks`.
+the same order as `ks`. The input state is validated exactly once, rather than
+once per requested subsystem size. Set `check=false` only when validation was
+already performed by the caller.
 """
 function reduced_purities(rho::PIState;ks=0:rho.basis.N,
                           atol::Real=_analysis_atol(rho),
-                          rtol::Real=_state_rtol(rho),plans=nothing)
+                          rtol::Real=_state_rtol(rho),plans=nothing,
+                          check::Bool=true)
     kvals=collect(ks)
+    b=rho.basis
+    _check_reduction_tolerances(atol,rtol)
+    for k in kvals
+        0<=k<=b.N||throw(ArgumentError(
+            "subsystem size k must satisfy 0 ≤ k ≤ N"))
+    end
+    state_bounds=_reduction_state_precision_bounds(rho)
+    if state_bounds!==nothing&&precision(BigFloat)!=state_bounds[2]
+        return setprecision(BigFloat,state_bounds[2]) do
+            reduced_purities(
+                rho;ks=kvals,atol,rtol,plans,check)
+        end
+    end
+    check&&validate_state(rho;atol=atol,rtol=rtol)
+    R=_real_float_type(eltype(rho.data))
+    full_purity=nothing
     if plans===nothing
-        return [reduced_purity(rho,k;atol=atol,rtol=rtol) for k in kvals]
+        return map(kvals) do k
+            k==0&&return one(R)
+            if k==b.N
+                full_purity===nothing&&(full_purity=purity(rho))
+                return full_purity
+            end
+            reduced_purity(rho,k;atol=atol,rtol=rtol,check=false)
+        end
     end
     ps=collect(plans);length(ps)==length(kvals)||throw(DimensionMismatch("one ReductionPlan is required per subsystem size"))
-    [reduced_purity(rho,k;atol=atol,rtol=rtol,plan=p) for (k,p) in zip(kvals,ps)]
+    [reduced_purity(rho,k;atol=atol,rtol=rtol,plan=p,check=false)
+     for (k,p) in zip(kvals,ps)]
 end
 
 """
@@ -1239,7 +1904,10 @@ function partial_transpose_spectrum(rho::PIState,k::Integer;
     out=NamedTuple[]
     for c in plan.couplings
         block=_product_block(rho,c)
-        pt=reshape(permutedims(reshape(block,c.da,c.db,c.da,c.db),(3,2,1,4)),c.da*c.db,c.da*c.db)
+        n=_checked_lr_product_dimension(c.da,c.db)
+        pt=reshape(
+            permutedims(reshape(block,c.da,c.db,c.da,c.db),(3,2,1,4)),
+            n,n)
         push!(out,(alpha=c.alpha,beta=c.beta,multiplicity=c.product_multiplicity,
                    eigenvalues=eigvals(Hermitian((pt+pt')/2))))
     end
@@ -1266,7 +1934,10 @@ function _charge_pt_blocks(rho,k,Q;atol=_analysis_atol(rho),plan=nothing)
     end
     for c in plan.couplings
         block=_product_block(rho,c,c.product_multiplicity^2)
-        pt=reshape(permutedims(reshape(block,c.da,c.db,c.da,c.db),(3,2,1,4)),c.da*c.db,c.da*c.db)
+        n=_checked_lr_product_dimension(c.da,c.db)
+        pt=reshape(
+            permutedims(reshape(block,c.da,c.db,c.da,c.db),(3,2,1,4)),
+            n,n)
         imbalance=kron(Matrix{ComplexF64}(I,c.db,c.db),transpose(qblock(c.alpha)))-
                   kron(qblock(c.beta),Matrix{ComplexF64}(I,c.da,c.da))
         push!(out,(pt=(pt+pt')/2,imbalance=(imbalance+imbalance')/2,

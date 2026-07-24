@@ -61,6 +61,7 @@ project and does not borrow a potentially incompatible global installation.
 | `getting_started.jl` | [Getting started](getting_started.md) | First PI model from local matrices through dynamics, stationary state, diagnostics, and convergence |
 | `composite_ensembles.jl` | [Composite PI ensembles](composite_ensembles.md) | Two compressed ensembles, a finite ancilla, and factorized matrix-free dynamics |
 | `composite_quantum_trajectories.jl` | [Composite stochastic systems](composite_quantum_trajectories.md) | Density-valued cross-factor quantum jumps, online statistics, and deterministic master comparison |
+| `global_pseudomode_cavity.jl` | [One shared damped cavity](global_pseudomode_cavity.md) | Factorized Tavis--Cummings dynamics, system/mode reductions, radiated flux, and a cutoff-boundary check |
 | `cumulant_bridge.jl` | [Higher-order cumulant bridge](cumulant_bridge.md) | Exact PI local moments, neutral model metadata, and closure-error comparisons |
 | `correlated_reservoirs.jl` | [Correlated Kossakowski reservoirs](correlated_reservoirs.md) | Cross-correlated local/collective one-body noise and preallocated matrix schedules |
 | `debecker2026_all_to_all_ising_pseudomodes.jl` | [All-to-all Ising spins with local pseudomodes](debecker2026_all_to_all_ising_pseudomodes.md) | Exact PI supersites, spin-only negativity, a strong-parity-reduced x-GHZ steady solve, fitted-boundary text exports, and pseudomode-cutoff checks |
@@ -77,7 +78,8 @@ project and does not borrow a potentially incompatible global installation.
 | `paper_models.jl` | [Paper model constructors](paper_models.md) | Reusable literature models |
 | `pbody_pair_processes.jl` | [Pair processes](pbody_pair_processes.md) | Appendix-D p-body terms |
 | `parameter_scan.jl` | [Prepared parameter scans](parameter_scan.md) | Continuation, restart, tabular diagnostics, and threaded independent points |
-| `pi_heom.jl` | [PI--HEOM](pi_heom.md) | Exactly scaled exponential-bath hierarchy, analytic dephasing, depth comparisons, SciML construction, and block-preconditioned GMRES |
+| `pi_heom.jl` | [PI--HEOM](pi_heom.md) | Exactly scaled exponential-bath hierarchy, analytic dephasing, depth comparisons, a local-pseudomode supersite smoke test, SciML construction, and block-preconditioned GMRES |
+| `pi_hops.jl` | [PI--HOPS collective dephasing](pi_hops.md) | Direct-sum Schur pure-state hierarchy, stationary colored-noise ensemble, analytic coherence, and deterministic PI--HEOM comparison |
 | `piccitto2021_interacting_time_crystal.jl` | [Interacting boundary time crystal](piccitto2021_interacting_time_crystal.md) | Nonlinear collective-spin slow modes |
 | `pra110_062208_lmg.jl` | [Dissipative LMG model](pra110_062208_lmg.md) | Exact finite PI versus finite-product and thermodynamic mean-field predictions |
 | `pra94_033838_superradiance.jl` | [Correlated superradiance](pra94_033838_superradiance.md) | Two-atom analytic benchmark, `N=30` radiated pulse, and peak-state Schur blocks |
@@ -105,7 +107,8 @@ julia --project=. examples/<name>.jl
 
 Use `--project=examples` for the Makie-enabled literature scripts: the
 year-named examples in the table, both `pra*.jl` validations,
-`quantum_trajectories.jl`, `meanfield_time_crystal.jl`, `pi_heom.jl`, and
+`quantum_trajectories.jl`, `meanfield_time_crystal.jl`, `pi_heom.jl`,
+`pi_hops.jl`, and
 `qudit_husimi.jl`. The Debecker example is the permutation-invariant
 uniform-all-pair specialization of the manuscript's nearest-neighbour model,
 not a reproduction of its spatial chain. Each paired guide describes its

@@ -99,11 +99,17 @@ println("Drude Padé residue = ", heom_bath_residue(physical_bath),
 # Independent identical local baths are different from the collective Jz
 # bath. A positive damped pole can instead be represented by one finite
 # pseudomode in every PI supersite. The mode cutoff must be converged.
-local_embedding = independent_local_pseudomode_model(
-    2, zeros(2, 2), ComplexF64[0 1; 0 0];
-    nmax=1, frequency=1.0, coupling_strength=0.2, damping=0.4)
+local_mode = BosonicPseudomode(
+    1; label=:local_mode, frequency=1.0, damping=0.4)
+local_site = pseudomode_supersite(2, 2, local_mode)
+local_embedding = pseudomode_model(
+    local_site, zeros(2, 2);
+    couplings=PseudomodeCoupling(
+        ComplexF64[0 1; 0 0];
+        mode=:local_mode, strength=0.2))
 @assert local_embedding.basis.d == 4
 @assert local_embedding.metadata.cutoff_approximation
+@assert local_embedding.basis === local_site.basis
 
 # A tiny uniquely damped hierarchy demonstrates the reusable ADO-diagonal
 # preconditioner. The collective-dephasing benchmark above has a nonunique

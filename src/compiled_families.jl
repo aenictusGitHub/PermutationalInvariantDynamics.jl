@@ -361,10 +361,14 @@ function steady_state(model::SpecializedPIModel;method=:auto,
         memory_budget=_DEFAULT_HIGHLEVEL_MEMORY_BUDGET,kwargs...)
     method isa Symbol||throw(ArgumentError("method must be a Symbol"))
     method=_stationary_solver_method(method)
-    representation=method===:krylov ? :matrixfree : model.backend
-    source=liouvillian(model;representation,memory_budget)
-    steady_state(source;basis=model.plan.basis,trace_vector=model.plan.tracevec,
-                 method,memory_budget,kwargs...)
+    # Keep the specialization itself as the linear-operator source. Besides
+    # preserving its bound family rates for direct Schur-block
+    # preconditioning, the generic solver already materializes through the
+    # selected backend and uses the source protocol for task-owned
+    # matrix-free scratch.
+    invoke(steady_state,Tuple{Any},model;
+           basis=model.plan.basis,trace_vector=model.plan.tracevec,
+           method,memory_budget,kwargs...)
 end
 
 function freeze(model::SpecializedPIModel;time=0.0,parameters=nothing,

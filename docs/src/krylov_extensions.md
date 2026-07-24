@@ -186,6 +186,12 @@ requested numerical tolerance. The returned `estimated_error` is the sum of
 accepted local defect estimates. `reached_time` makes a deliberately returned
 partial result unambiguous when `require_convergence=false`.
 
+When a proposed slice is rejected, its initial state has not changed. The
+implementation therefore retains that Arnoldi factorization and evaluates
+only the small projected exponential at the shorter trial step. The returned
+`arnoldi_factorizations` and `trial_evaluations` diagnostics expose this reuse;
+`operator_applications` counts only full-space actions.
+
 For repeated calls, construct each workspace at the intended scalar type.
 Compiled matrix-free PI operators have fixed-precision scratch, so a wider
 workspace, time, initial/minimum step, or step-safety control must be rejected

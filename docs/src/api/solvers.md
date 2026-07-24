@@ -95,6 +95,7 @@ EigenAlgorithm
 ShiftInvertAlgorithm
 GMRESAlgorithm
 RecycledGMRESAlgorithm
+ExpvAlgorithm
 HarmonicArnoldiAlgorithm
 SteadyStateResult
 DynamicsResult

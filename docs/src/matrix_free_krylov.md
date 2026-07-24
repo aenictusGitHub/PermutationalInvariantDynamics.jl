@@ -167,13 +167,26 @@ info = steady_state(L;
 )
 ```
 
-The setup uses matrix-free Liouvillian applications and stores
-``\sum_s n_s^2`` block coefficients rather than the full ``n^2`` matrix. Its
-cost is worthwhile when GMRES is difficult or the factors are reused. For a
-small, rapidly convergent problem, unpreconditioned GMRES may be faster because
-the block construction and triangular solves have overhead.
+For a prepared `LiouvillianPlan`, `CompiledPIModel`, or compiled
+`MatrixFreeLiouvillian`, setup lowers each diagonal sector block directly from
+the immutable physical term kernels. The only complete Liouvillian
+applications are the three reproducible operator-scale probes (or none when
+`operator_scale` is supplied). An arbitrary matrix-free operator retains the
+generic compatibility route, which probes one basis vector per PI coordinate.
+`SpecializedPIModel` uses the same direct route while evaluating every
+prepared family-rate schedule with that specialization's bound rates. Pass the
+specialization itself with `schur_sector_preconditioner(specialized)`; its
+exact basis is inferred. A detached, plan-less matrix-free callback
+deliberately retains the generic fallback because its bound parameters cannot
+be inferred.
+Both routes store ``\sum_s n_s^2`` block coefficients rather than the full
+``n^2`` matrix and produce the same trace-bordered block operator. Setup is
+worthwhile when GMRES is difficult or the factors are reused. For a small,
+rapidly convergent problem, unpreconditioned GMRES may be faster because the
+block construction and triangular solves have overhead.
 
 The reusable object's `metadata` reports setup Liouvillian applications,
+their split between scale and block probes, the block-construction route,
 factorizations, stored coefficients/bytes, per-apply triangular solves, and a
 conservative suggested reuse count. Construction warns when
 `expected_reuses` is too small to amortize setup.

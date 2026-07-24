@@ -94,6 +94,37 @@ pbody_kernel_element
 pbody_kernel_operator
 ```
 
+## Supersites and pseudomode specifications
+
+`PISupersite` groups the physical system and its local auxiliaries before
+applying permutation symmetry. It is not a tensor product of global PI
+operator spaces. The complete workflow, factor-ordering convention, cutoff
+checks, and matrix-free examples are given in [Local pseudomodes and PI
+supersites](../pseudomodes.md). One mode shared by the complete ensemble
+instead uses a finite composite factor; see [Global pseudomodes and shared
+cavities](../global_pseudomodes.md).
+
+```@docs
+PISupersite
+supersite_tensor_operator
+lift_supersite_operator
+lift_system_operator
+lift_system_pbody_operator
+lift_system_term
+supersite_iid_state
+supersite_product_state
+BosonicPseudomode
+PseudomodeCoupling
+pseudomode_supersite
+lift_pseudomode_operator
+pseudomode_operators
+pseudomode_coupling_terms
+pseudomode_damping_terms
+pseudomode_model
+independent_local_pseudomode_model
+pseudomode_product_state
+```
+
 ## Physical terms and models
 
 ```@docs

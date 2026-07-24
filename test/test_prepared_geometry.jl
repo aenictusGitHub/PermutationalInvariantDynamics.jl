@@ -49,6 +49,24 @@
     planned_state=reduced_state(general,2;plan=reduction)
     @test planned_state.basis===reduction.output_basis
     @test planned_state.data≈reduced_state(general,2).data atol=3e-10
+    # Independent product-block oracle for the fused
+    # tr_B(U*C*U†)=sum_q U_q*C*U_q† contraction.
+    oracle_blocks=[
+        zeros(ComplexF64,length(patterns),length(patterns))
+        for patterns in reduction.output_basis.patterns]
+    for coupling in reduction.couplings
+        scale_squared=coupling.alpha_multiplicity*
+            coupling.beta_multiplicity^2
+        product=PermutationalInvariantDynamics._product_block(
+            general,coupling,scale_squared)
+        partial=PermutationalInvariantDynamics._partial_trace_b(
+            product,coupling.da,coupling.db)
+        oracle_blocks[reduction.output_basis.index[coupling.alpha]].+=partial
+    end
+    @test all(pairs(reduction.output_basis.sectors)) do (sector,partition)
+        isapprox(coefficient_block(planned_state,partition),
+                 oracle_blocks[sector];atol=3e-10)
+    end
     @test reduced_purity(general,2;plan=reduction)≈reduced_purity(general,2) atol=3e-10
     @test negativity(general,2;plan=reduction)≈negativity(general,2) atol=3e-10
     planned_pt=partial_transpose_spectrum(general,2;plan=reduction)
@@ -93,8 +111,50 @@
     @test logarithmic_negativity(general,2;plan=reduction,
                                  workspace=reduction_work)≈
           logarithmic_negativity(general,2;plan=reduction) atol=3e-10
-    reduction_only=ReductionWorkspace(reduction,general;mode=:reduction)
+
+    # One-body scans reuse both the one-box geometry and the largest-sector
+    # multiplicity-weighted block. The validate-once in-place path has no
+    # state-sized transient allocation after warm-up.
+    one_body_work=OneBodyRDMWorkspace(cache,general)
+    one_body_output=zeros(ComplexF64,b.d,b.d)
+    one_body_reference=one_body_rdm(
+        general;plan=ReductionPlan(b,1))
+    @test one_body_rdm!(
+        one_body_output,general,one_body_work)===one_body_output
+    @test one_body_output≈one_body_reference atol=3e-10
+    @test one_body_rdm(general;workspace=one_body_work)≈
+          one_body_reference atol=3e-10
+    one_body_rdm!(
+        one_body_output,general,one_body_work;check=false)
+    one_body_alloc=@allocated one_body_rdm!(
+        one_body_output,general,one_body_work;check=false)
+    @test one_body_alloc<=1024
+    @test occursin("OneBodyRDMWorkspace",sprint(show,one_body_work))
+    @test_throws ArgumentError OneBodyRDMWorkspace(
+        cache;memory_budget=1)
+    one_body_numeric_payload=
+        length(one_body_work.weighted_block)*
+        sizeof(eltype(one_body_work.weighted_block))
+    @test_throws ArgumentError OneBodyRDMWorkspace(
+        cache;memory_budget=one_body_numeric_payload)
+    @test_throws DimensionMismatch one_body_rdm!(
+        zeros(ComplexF64,3,3),general,one_body_work)
+    @test_throws ArgumentError one_body_rdm!(
+        zeros(ComplexF32,2,2),general,one_body_work)
+    @test_throws ArgumentError one_body_rdm!(
+        view(one_body_work.weighted_block,1:2,1:2),
+        general,one_body_work;check=false)
+
+    reduction_only=@inferred ReductionWorkspace(
+        reduction,general;mode=:reduction)
     negativity_only=ReductionWorkspace(reduction,general;mode=:negativity)
+    max_product=maximum(c.da*c.db for c in reduction.couplings)
+    max_output=maximum(c.da for c in reduction.couplings)
+    @test isempty(reduction_only.product_block)
+    @test size(reduction_only.product_tmp,1)==max_output
+    @test size(reduction_work.product_tmp,1)==max_product
+    @test isempty(reduction_only.partial_trace)
+    @test isempty(reduction_work.partial_trace)
     @test isempty(reduction_only.partial_transpose)
     @test isempty(negativity_only.partial_trace)
     @test isempty(negativity_only.reduced_blocks)
@@ -116,6 +176,55 @@
     @test inplace_state.data≈planned_state.data atol=3e-10
     @test reduced_state!(inplace_state,general,2;
                          workspace=reduction_work)===inplace_state
+    # Prepared callers may validate once and then reuse the allocation-light
+    # contraction. Output normalization and resource checks remain enabled.
+    @test (@inferred reduced_state!(
+        inplace_state,general,reduction,reduction_only;check=false))===
+        inplace_state
+    unchecked_reduction_alloc=@allocated reduced_state!(
+        inplace_state,general,reduction,reduction_only;check=false)
+    checked_reduction_alloc=@allocated reduced_state!(
+        inplace_state,general,reduction,reduction_only)
+    @test unchecked_reduction_alloc<checked_reduction_alloc
+    @test unchecked_reduction_alloc<=8*1024
+
+    invalid=copy(iid_pure_state(b,ComplexF64[1,0]))
+    invalid_block=coefficient_block(invalid,first(b.sectors))
+    occupied=findfirst(!iszero,diag(invalid_block))
+    empty=findfirst(iszero,diag(invalid_block))
+    invalid_block[occupied,occupied]+=0.25
+    invalid_block[empty,empty]-=0.25
+    @test_throws ArgumentError reduced_state(
+        invalid,2;plan=reduction,workspace=reduction_only)
+    @test reduced_state(
+        invalid,2;plan=reduction,workspace=reduction_only,
+        check=false) isa PIState
+    @test_throws ArgumentError reduced_purity(
+        invalid,2;plan=reduction,workspace=reduction_only)
+    @test reduced_purity(
+        invalid,2;plan=reduction,workspace=reduction_only,
+        check=false) isa Real
+    @test_throws ArgumentError reduced_purities(invalid;ks=[0,2,4])
+    @test length(reduced_purities(
+        invalid;ks=[0,2,4],check=false))==3
+    @test_throws ArgumentError one_body_rdm!(
+        one_body_output,invalid,one_body_work)
+    @test one_body_rdm!(
+        one_body_output,invalid,one_body_work;check=false)===
+          one_body_output
+    @test_throws ArgumentError reduced_state!(
+        inplace_state,general,reduction,reduction_only;
+        check=false,atol=-1)
+    @test_throws ArgumentError reduced_purity(
+        general,2;check=false,rtol=-1)
+    @test_throws ArgumentError reduced_purities(
+        general;ks=[1],check=false,atol=-1)
+    @test_throws ArgumentError reduced_state(
+        general,2;check=false,atol=Inf)
+    @test_throws ArgumentError reduced_purity(
+        general,2;check=false,rtol=NaN)
+    @test_throws ArgumentError one_body_rdm!(
+        one_body_output,general,one_body_work;check=false,rtol=Inf)
 
     other_reduction=ReductionPlan(b,1)
     other_work=ReductionWorkspace(other_reduction,general)
@@ -129,6 +238,13 @@
         general,2;plan=reduction,workspace=reduction_work)
     planned_only_alloc=@allocated reduced_state(general,2;plan=reduction)
     @test workspace_alloc<planned_only_alloc
+    @test reduced_state(general,0).basis.N==0
+    @test reduced_state(general,b.N).basis===b
+    @test reduced_state(general,b.N).data==general.data
+    @test reduced_purity(general,0)==1
+    @test reduced_purity(general,b.N)==purity(general)
+    @test_throws ArgumentError reduced_state(
+        general,b.N;plan=other_reduction)
 
     # Qudit LR nullspaces dominate setup; a fixed ReductionPlan amortizes that
     # cost across every subsequent state analysis.
@@ -142,8 +258,11 @@
     plan_recoupler3=first(first(first(reduction3.couplings).intertwiners)[2])
     workspace_recoupler3=first(first(reduction_work3.recoupling_intertwiners)[1])
     @test eltype(plan_recoupler3)===reduction_work3.Ttype===ComplexF64
-    # The LR plan already stores the required homogeneous type, so its dense
-    # matrix is shared with the workspace rather than duplicated.
+    @test reduction3.estimates.storage===:weight_block_sparse_csc
+    @test reduction3.estimates.retained_entries<
+          reduction3.estimates.dense_entries
+    # The LR plan already stores the required homogeneous type, so its packed
+    # exact-support blocks are shared with the workspace rather than copied.
     @test workspace_recoupler3===plan_recoupler3
     @test reduced_state(rho3,1;plan=reduction3,
                         workspace=reduction_work3).data≈
@@ -160,6 +279,215 @@
     # Sparse one-body transition staging also makes the one-off path cheaper;
     # a retained LR plan must still reduce repeated-call allocation.
     @test planned_alloc<direct_alloc
+
+    setprecision(BigFloat,128) do
+        amplitude3=Complex{BigFloat}[
+            BigFloat("0.6"),BigFloat("0.8")*im,zero(BigFloat)]
+        big_rho3=iid_pure_state(b3,amplitude3)
+        big_work3=ReductionWorkspace(
+            reduction3,big_rho3;mode=:reduction)
+        big_recoupler3=first(
+            first(big_work3.recoupling_intertwiners)[1])
+        @test eltype(big_recoupler3)===Complex{BigFloat}
+        @test all(block->PermutationalInvariantDynamics.
+                _reduction_precision_bounds(block.nzval)==(128,128),
+            big_recoupler3.blocks)
+        big_reduced3=reduced_state(
+            big_rho3,1;plan=reduction3,workspace=big_work3)
+        @test purity(big_reduced3)≈one(BigFloat) atol=big"3e-15"
+    end
+
+    setprecision(BigFloat,128) do
+        big_basis=PIBasis(2,2)
+        big_amplitude=Complex{BigFloat}[
+            BigFloat("0.6"),BigFloat("0.8")*im]
+        big_state=iid_pure_state(big_basis,big_amplitude)
+        big_plan=ReductionPlan(big_basis,1)
+        big_work=ReductionWorkspace(
+            big_plan,big_state;mode=:reduction)
+        big_reduced=reduced_state(
+            big_state,1;plan=big_plan,workspace=big_work)
+        @test eltype(big_reduced.data)===Complex{BigFloat}
+        @test trace(big_reduced)≈one(BigFloat) atol=big"2e-15"
+        @test purity(big_reduced)≈one(BigFloat) atol=big"2e-15"
+        @test reduced_purity(
+            big_state,1;plan=big_plan,workspace=big_work)≈
+            one(BigFloat) atol=big"2e-15"
+        big_geometry=OneBodyGeometry(big_basis,BigFloat)
+        big_one_work=OneBodyRDMWorkspace(big_geometry,big_state)
+        big_one=zeros(Complex{BigFloat},2,2)
+        setprecision(BigFloat,64) do
+            one_body_rdm!(big_one,big_state,big_one_work)
+        end
+        @test precision(real(big_one[1]))==128
+        @test big_one≈big_amplitude*big_amplitude' atol=big"2e-15"
+        ambient_big_one=setprecision(BigFloat,256) do
+            one_body_rdm(big_state)
+        end
+        @test all(value->max(
+            precision(real(value)),precision(imag(value)))==128,
+            ambient_big_one)
+        @test ambient_big_one≈big_one atol=big"2e-15"
+        machine_geometry=OneBodyGeometry(big_basis,Float64)
+        @test_throws ArgumentError OneBodyRDMWorkspace(
+            machine_geometry,big_state)
+    end
+
+    # Reduction workspaces own one BigFloat context independently of the
+    # ambient precision at construction or application.  This guards against
+    # `fill!`, `mul!`, or output assignment replacing 192-bit entries by
+    # newly-created ambient-precision values.
+    context_basis=PIBasis(3,2)
+    context_plan=ReductionPlan(context_basis,1)
+    context_state=setprecision(BigFloat,192) do
+        amplitude=Complex{BigFloat}[
+            BigFloat("0.6"),BigFloat("0.8")*im]
+        iid_pure_state(context_basis,amplitude)
+    end
+    context_work=setrounding(BigFloat,RoundDown) do
+        setprecision(BigFloat,64) do
+            ReductionWorkspace(
+                context_plan,context_state;mode=:reduction)
+        end
+    end
+    @test context_work.precision_bits==192
+    @test context_work.rounding_mode==RoundDown
+    @test PermutationalInvariantDynamics._reduction_precision_bounds(
+        context_work.product_tmp)==(192,192)
+    context_output=setprecision(BigFloat,192) do
+        PIState(context_plan.output_basis;T=BigFloat)
+    end
+    setprecision(BigFloat,64) do
+        @test reduced_state!(
+            context_output,context_state,context_plan,context_work;
+            check=false)===context_output
+    end
+    @test PermutationalInvariantDynamics._reduction_precision_bounds(
+        context_output.data)==(192,192)
+    @test PermutationalInvariantDynamics._reduction_precision_bounds(
+        context_work.product_tmp)==(192,192)
+    @test all(block->
+        PermutationalInvariantDynamics._reduction_precision_bounds(block)==
+            (192,192),context_work.reduced_blocks)
+
+    reduced_low=setprecision(BigFloat,64) do
+        reduced_state(
+            context_state,1;plan=context_plan,
+            workspace=context_work,check=false)
+    end
+    purity_low=setprecision(BigFloat,64) do
+        reduced_purity(
+            context_state,1;plan=context_plan,
+            workspace=context_work,check=false)
+    end
+    reduced_high=setprecision(BigFloat,256) do
+        reduced_state(
+            context_state,1;plan=context_plan,
+            workspace=context_work,check=false)
+    end
+    purity_high=setprecision(BigFloat,256) do
+        reduced_purity(
+            context_state,1;plan=context_plan,
+            workspace=context_work,check=false)
+    end
+    @test reduced_low.data==reduced_high.data
+    @test purity_low==purity_high
+    @test PermutationalInvariantDynamics._reduction_precision_bounds(
+        reduced_low.data)==(192,192)
+    @test PermutationalInvariantDynamics._reduction_precision_bounds(
+        reduced_high.data)==(192,192)
+    @test precision(purity_low)==precision(purity_high)==192
+
+    planned_low=setprecision(BigFloat,64) do
+        reduced_state(
+            context_state,1;plan=context_plan,check=false)
+    end
+    planned_purity_low=setprecision(BigFloat,64) do
+        reduced_purity(
+            context_state,1;plan=context_plan,check=false)
+    end
+    planned_high=setprecision(BigFloat,256) do
+        reduced_state(
+            context_state,1;plan=context_plan,check=false)
+    end
+    planned_purity_high=setprecision(BigFloat,256) do
+        reduced_purity(
+            context_state,1;plan=context_plan,check=false)
+    end
+    @test planned_low.data==planned_high.data
+    @test planned_purity_low==planned_purity_high
+    @test PermutationalInvariantDynamics._reduction_precision_bounds(
+        planned_low.data)==(192,192)
+    @test PermutationalInvariantDynamics._reduction_precision_bounds(
+        planned_high.data)==(192,192)
+    @test precision(planned_purity_low)==
+          precision(planned_purity_high)==192
+    purities_low=setprecision(BigFloat,64) do
+        reduced_purities(
+            context_state;ks=[0,1,3],check=false)
+    end
+    purities_high=setprecision(BigFloat,256) do
+        reduced_purities(
+            context_state;ks=[0,1,3],check=false)
+    end
+    @test purities_low==purities_high
+    @test all(value->precision(value)==192,purities_low)
+    planned_one_body=setprecision(BigFloat,64) do
+        one_body_rdm(
+            context_state;plan=context_plan,check=false)
+    end
+    @test PermutationalInvariantDynamics._reduction_precision_bounds(
+        planned_one_body)==(192,192)
+    workspace_one_body=setprecision(BigFloat,64) do
+        one_body_rdm(
+            context_state;plan=context_plan,
+            workspace=context_work,check=false)
+    end
+    @test PermutationalInvariantDynamics._reduction_precision_bounds(
+        workspace_one_body)==(192,192)
+
+    endpoint_plan=ReductionPlan(context_basis,0)
+    endpoint_work=ReductionWorkspace(
+        endpoint_plan,context_state;mode=:negativity)
+    log_negativity=setprecision(BigFloat,64) do
+        logarithmic_negativity(
+            context_state,0;plan=endpoint_plan,
+            workspace=endpoint_work)
+    end
+    @test iszero(log_negativity)
+    @test precision(log_negativity)==192
+    setprecision(BigFloat,192) do
+        half=BigFloat(1)/2
+        converted_log=
+            PermutationalInvariantDynamics._logarithmic_negativity_value(
+                half,3)
+        expected_log=log(BigFloat(2))/log(BigFloat(3))
+        @test converted_log==expected_log
+        @test precision(converted_log)==192
+    end
+    @test PermutationalInvariantDynamics._logarithmic_negativity_value(
+        Float32(0.5),2) isa Float64
+
+    state128=setprecision(BigFloat,128) do
+        iid_pure_state(
+            context_basis,Complex{BigFloat}[BigFloat(1),BigFloat(0)])
+    end
+    output64=setprecision(BigFloat,64) do
+        PIState(context_plan.output_basis;T=BigFloat)
+    end
+    @test_throws ArgumentError reduced_purity(
+        state128,1;plan=context_plan,workspace=context_work,check=false)
+    @test_throws ArgumentError reduced_state!(
+        output64,context_state,context_plan,context_work;check=false)
+    mixed_state=copy(context_state)
+    mixed_state.data[1]=setprecision(BigFloat,128) do
+        Complex{BigFloat}(BigFloat(0),BigFloat(0))
+    end
+    @test_throws ArgumentError ReductionWorkspace(
+        context_plan,mixed_state;mode=:reduction)
+    @test_throws ArgumentError reduced_purity(
+        mixed_state,1;plan=context_plan,
+        workspace=context_work,check=false)
 
     psi3=normalize(ComplexF64[1,2im,-1]);pure3=iid_pure_state(PIBasis(3,3),psi3)
     @test one_body_rdm(pure3)≈psi3*psi3' atol=3e-10
@@ -186,6 +514,13 @@ end
     @test mean32.data≈(
         collective_operator(b,sx32;cache=cache32)*inv(Float32(b.N))).data
     @test fieldtype(typeof(cache32),:basis)===typeof(b)
+    rho32=iid_pure_state(b,ComplexF32[1,im]/sqrt(2.0f0))
+    one_body_work32=@inferred OneBodyRDMWorkspace(cache32,rho32)
+    one_body_output32=zeros(ComplexF32,2,2)
+    @test @inferred(one_body_rdm!(
+        one_body_output32,rho32,one_body_work32))===one_body_output32
+    @test one_body_output32≈
+          ComplexF32[0.5 -0.5im;0.5im 0.5]
     zero_basis=PIBasis(0,1)
     @test_throws ArgumentError mean_local_operator(
         zero_basis,ones(ComplexF32,1,1);

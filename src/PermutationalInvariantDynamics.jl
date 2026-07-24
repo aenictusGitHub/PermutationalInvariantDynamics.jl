@@ -49,6 +49,7 @@ include("symmetries.jl")
 include("spectra.jl")
 include("evans.jl")
 include("local_factor_trace.jl")
+include("pseudomodes.jl")
 include("entanglement.jl")
 include("genuine_entanglement.jl")
 include("observables.jl")
@@ -68,7 +69,9 @@ include("restricted_symmetries.jl")
 include("heom.jl")
 include("trajectories.jl")
 include("composite_trajectories.jl")
+include("global_pseudomodes.jl")
 include("weak_pi_trajectories.jl")
+include("hops.jl")
 include("diffusive.jl")
 include("adaptive_ensembles.jl")
 include("distributed_api.jl")
@@ -108,6 +111,8 @@ export Partition, partitions, weight, length_nonzero, removable_corners,
        FiniteOperatorBasis, CompositePIBasis, CompositePIOperator,
        CompositePIState, composite_tensor_operator, composite_tensor_state,
        composite_identity_operator, composite_trace_vector,
+       CompositeReductionPlan, composite_reduced_state,
+       composite_reduced_state!,
        sector_population,
        sector_populations, basis_state, sector_density_matrix, iid_pure_state,
        iid_state, thermal_state, computational_product_state, dicke_state,
@@ -134,7 +139,8 @@ export Partition, partitions, weight, length_nonzero, removable_corners,
        CompiledPIModelFamily, SpecializedPIModel, compile_family, specialize,
        CompositeSuperoperatorTerm, factorized_superoperator_term,
        local_superoperator_term, CompositeSuperoperator,
-       CompositeSuperoperatorWorkspace, factor_left_superoperator,
+       CompositeSuperoperatorWorkspace,
+       CompositeSuperoperatorBatchWorkspace, factor_left_superoperator,
        factor_right_superoperator, factor_sandwich_superoperator,
        composite_hamiltonian_superoperator,
        composite_dissipator_superoperator, composite_matrixfree,
@@ -150,6 +156,10 @@ export Partition, partitions, weight, length_nonzero, removable_corners,
        CompositeJumpChannel, CompositeTrajectoryPlan,
        CompositeTrajectoryWorkspace, CompositeTrajectoryBatchWorkspace,
        CompositeQuantumTrajectory, composite_master_superoperator,
+       GlobalPseudomodeModel, global_pseudomode_model,
+       shared_pseudomode_model, global_pseudomode_workspace,
+       global_pseudomode_matrixfree, global_pseudomode_state,
+       global_pseudomode_state!,
        WeakPIPseudoKet, weak_pi_dimension, weak_pi_density,
        weak_pi_pseudoket, weak_pi_expectation,
        WeakPIKrausBranch, WeakPIJumpRecord, WeakPIQuantumTrajectory,
@@ -158,6 +168,12 @@ export Partition, partitions, weight, length_nonzero, removable_corners,
        weak_pi_quantum_trajectories, weak_pi_trajectory_average,
        weak_pi_trajectory_steady_state, weak_pi_trajectory_statistics,
        WeakPIBatchMeansDiagnostics,
+       HOPSBath, HOPSPlan, HOPSWorkspace, HOPSBatchWorkspace,
+       HOPSRootKet, HOPSTrajectory, HOPSEnsembleResult,
+       HOPSInitialEnsemble, hops_initial_ensemble,
+       hops_number_auxiliaries, hops_multiindices, hops_hierarchy_metadata,
+       hops_auxiliary_importances, hops_coordinate_scale,
+       hops_rhs!, hops_trajectory, hops_density, hops_average,
        DiffusiveMonitor, homodyne_monitor, heterodyne_monitor,
        DiffusivePlan, DiffusiveWorkspace, DiffusiveBatchPlan,
        DiffusiveBatchWorkspace, DiffusiveTrajectory,
@@ -169,7 +185,7 @@ export Partition, partitions, weight, length_nonzero, removable_corners,
        distributed_diffusive_trajectories,
        expectation, variance, covariance, collective_expectation,
        collective_variance, collective_moments, CollectiveObservablePlan,
-       one_body_rdm, trace_error,
+       OneBodyRDMWorkspace, one_body_rdm, one_body_rdm!, trace_error,
        collective_covariance, collective_covariance_matrix,
        kitagawa_ueda_squeezing, wineland_squeezing, two_body_rdm,
        two_body_expectation, connected_two_body_correlation,
@@ -207,6 +223,14 @@ export Partition, partitions, weight, length_nonzero, removable_corners,
        hermiticity_error, minimum_sector_eigenvalue, check_generator,
        LocalFactorTracePlan, LocalFactorTraceWorkspace,
        local_factor_trace, local_factor_trace!,
+       PISupersite, supersite_tensor_operator, lift_supersite_operator,
+       lift_system_operator, lift_system_pbody_operator, lift_system_term,
+       supersite_iid_state, supersite_product_state,
+       BosonicPseudomode, PseudomodeCoupling, pseudomode_supersite,
+       lift_pseudomode_operator, pseudomode_operators,
+       pseudomode_coupling_terms, pseudomode_damping_terms,
+       pseudomode_model, pseudomode_product_state,
+       pseudomode_trace_plan, trace_pseudomodes, trace_pseudomodes!,
        negativity, logarithmic_negativity, ReductionPlan, ReductionWorkspace,
        PPTMixturePlan, PPTMixtureResult, ppt_mixture_test,
        reduced_state, reduced_state!, reduced_purity,
@@ -261,7 +285,7 @@ export Partition, partitions, weight, length_nonzero, removable_corners,
        value_at,
        AbstractPIAlgorithm, AutoAlgorithm, DirectAlgorithm, SVDAlgorithm,
        EigenAlgorithm, ShiftInvertAlgorithm, GMRESAlgorithm,
-       RecycledGMRESAlgorithm,
+       RecycledGMRESAlgorithm, ExpvAlgorithm,
        HarmonicArnoldiAlgorithm, SteadyStateResult, DynamicsResult,
        SpectrumResult, stationary_state, solve_dynamics,
        liouvillian_spectrum, diagnostics, pi_dimension,

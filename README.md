@@ -54,11 +54,17 @@ has the same source description in Julia's interactive help, for example
 `?PIBasis` or `?stationary_state`.
 
 Prepared continuation scans, advanced matrix-free Krylov families, explicit
-convergence reports, and PI--HEOM non-Markovian dynamics are documented in
+convergence reports, and deterministic PI--HEOM or stochastic PI--HOPS
+non-Markovian dynamics are documented in
 [parameter scans](docs/src/parameter_scans.md),
 [Krylov extensions](docs/src/krylov_extensions.md),
 [convergence reports](docs/src/convergence.md), and
-[PI--HEOM](docs/src/heom.md). Generalized qudit coherent-state Q data and
+[PI--HEOM](docs/src/heom.md) / [PI--HOPS](docs/src/hops.md). Identical systems
+with identical independent
+finite-cutoff local modes use the fully PI
+[pseudomode-supersite workflow](docs/src/pseudomodes.md), while one mode shared
+by the complete ensemble uses the factorized
+[global-pseudomode workflow](docs/src/global_pseudomodes.md). Generalized qudit coherent-state Q data and
 confidence-controlled stochastic stopping are covered by
 [qudit phase space](docs/src/qudit_phase_space.md) and
 [diffusive/trajectory monitoring](docs/src/diffusive_monitoring.md).
@@ -140,6 +146,13 @@ wavefunctions, but their ensemble average reproduces the same PI master
 equation without constructing a `d^N` object. See the
 [weak-PI trajectory guide](docs/src/weak_pi_trajectories.md).
 
+For a shared structured Gaussian bath, `HOPSPlan` propagates one hierarchy of
+those direct-sum Schur pseudo-kets per colored-noise realization. Linear-HOPS
+roots remain unnormalized, and `hops_average` reconstructs the density from
+their unnormalized outer products. See the
+[PI--HOPS guide](docs/src/hops.md) for the exact shared-bath symmetry boundary
+and the independent time-step, hierarchy-depth, and sampling refinements.
+
 Autonomous models also support exact PI quantum regression without a dense
 Liouvillian. `CorrelationPlan` and `CorrelationWorkspace` are reusable across
 two-time correlations, delayed second-order correlations, connected
@@ -169,6 +182,10 @@ applied without forming the global Kronecker superoperator. Explicit
 trajectories with reproducible threaded batches and online statistics. See
 [composite systems](docs/src/composite_systems.md) and the
 [stochastic composite example](examples/composite_quantum_trajectories.md).
+One shared finite-cutoff cavity or reaction coordinate has a specialized
+factorized builder, collective coupling convention, and direct system/mode
+reductions; see [global pseudomodes](docs/src/global_pseudomodes.md) and the
+[shared-cavity example](examples/global_pseudomode_cavity.md).
 
 Stationary and spectral routines reject time-dependent generators. Select an
 instant explicitly with `freeze(model; time=t, parameters=p)` or use Floquet

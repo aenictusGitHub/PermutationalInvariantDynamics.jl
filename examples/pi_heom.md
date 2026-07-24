@@ -210,16 +210,22 @@ a surrogate for independent local baths. For one positive damped pole per
 particle, the script separately checks the finite pseudomode supersite route:
 
 ```julia
-embedding = independent_local_pseudomode_model(
-    2, zeros(2, 2), ComplexF64[0 1; 0 0];
-    nmax=1, frequency=1.0,
-    coupling_strength=0.2, damping=0.4)
+mode = BosonicPseudomode(
+    1; label=:local_mode, frequency=1.0, damping=0.4)
+site = pseudomode_supersite(2, 2, mode)
+embedding = pseudomode_model(
+    site, zeros(2, 2);
+    couplings=PseudomodeCoupling(
+        ComplexF64[0 1; 0 0];
+        mode=:local_mode, strength=0.2))
 ```
 
 This returns a time-local PI model of identical system+mode pairs with
-`L=sigma_-`; Hermitian `L=sigma_z` is supported by the same constructor. It is
-not a global-ADO HEOM approximation, and its oscillator cutoff is a separate
-convergence parameter.
+`L=sigma_-`; Hermitian `L=sigma_z`, several modes, and automatically lifted
+system-only `p`-body terms use the same workflow. It is not a global-ADO HEOM
+approximation, and every oscillator cutoff is a separate convergence
+parameter. The historical single-mode
+`independent_local_pseudomode_model` signature remains available.
 
 ## Running
 

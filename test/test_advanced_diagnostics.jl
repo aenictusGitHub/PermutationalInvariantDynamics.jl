@@ -135,6 +135,33 @@ end
     D=Matrix(L);prob=sensitivity_problem(L,rho,(0.0,1.0),[D]);du=similar(prob.u0);prob.f(du,prob.u0,nothing,0.0)
     @test du[:,1]≈L*rho.data
     @test du[:,2]≈D*rho.data
+
+    # The augmented state and every tangent column share one genuine
+    # matrix-RHS generator call. A vector fallback would increment
+    # `vector_calls` once for every column instead.
+    vector_calls=Ref(0);batch_calls=Ref(0)
+    action! = (destination,source,time,parameters)->begin
+        vector_calls[]+=1
+        mul!(destination,L,source)
+    end
+    batch_action! = (destination,source,time,parameters)->begin
+        batch_calls[]+=1
+        mul!(destination,L,source)
+    end
+    counted=MatrixFreeLiouvillian(
+        length(b),action!,ComplexF64,identity_operator(b).data;
+        batched_action! = batch_action!)
+    batch_problem=sensitivity_problem(
+        counted,rho,(0.0,1.0),(D,2D))
+    batch_du=similar(batch_problem.u0)
+    batch_problem.f(
+        batch_du,batch_problem.u0,batch_problem.p,0.0)
+    @test batch_calls[]==1
+    @test vector_calls[]==0
+    @test batch_du[:,1]≈L*rho.data
+    @test batch_du[:,2]≈D*rho.data
+    @test batch_du[:,3]≈2D*rho.data
+
     id=identity_operator(b);zero_tangent=PIState(b,zeros(ComplexF64,length(b)))
     @test classical_fisher_information(rho,[zero_tangent],[id])≈zeros(1,1)
     sm=ComplexF64[0 1;0 0];Ld=liouvillian(PIModel(b,[LocalJump(sm)]);representation=:sparse)

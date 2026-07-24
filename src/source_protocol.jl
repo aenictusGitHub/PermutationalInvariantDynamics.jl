@@ -35,6 +35,18 @@ _linear_operator_workspace(source)=begin
     plan===nothing ? nothing : LiouvillianWorkspace(plan)
 end
 
+# Consumers which know their matrix-right-hand-side width can request all
+# retained batch scratch up front. Extensions for composite and hierarchy
+# operators return their dedicated fixed-capacity workspaces.
+function _linear_operator_batch_workspace(source,columns::Integer,::Type{T}) where T
+    columns>=0||throw(ArgumentError(
+        "batch column count must be nonnegative"))
+    work=_linear_operator_workspace(source)
+    work isa LiouvillianWorkspace&&
+        _ensure_batch_capacity!(work.batch,columns)
+    work
+end
+
 # Compatibility hook for internal extensions written against the original
 # evolution-owned name. New code should use `_linear_operator_workspace`.
 _liouvillian_workspace(source)=_linear_operator_workspace(source)
@@ -129,3 +141,8 @@ _operator_has_adjoint(source::MatrixFreeLiouvillian)=
     source.plan isa LiouvillianPlan||
     getfield(source,:adjoint_action!)!==nothing||
     getfield(source,:batched_adjoint_action!)!==nothing
+
+# Prepared sources which deliberately do not expose a sparse/dense
+# materialization route extend this trait. Solver recommendation uses it to
+# keep automatic and explicit choices consistent with that representation.
+_operator_requires_matrixfree(::Any)=false

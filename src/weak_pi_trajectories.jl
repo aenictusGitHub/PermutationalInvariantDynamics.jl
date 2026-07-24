@@ -517,7 +517,9 @@ _weak_plan_for_state(plan::WeakPITrajectoryPlan,state::WeakPIPseudoKet)=plan
 
 Caller-owned integration and Kraus-selection scratch for one weak-PI
 trajectory.  Reuse sequentially; concurrent paths require distinct
-workspaces.  The default `mode=:full` supports fixed-step and adaptive
+workspaces. The workspace caches the rate-weighted jump-loss blocks at the
+current integration node; driven-rate caches are invalidated before a new
+trajectory. The default `mode=:full` supports fixed-step and adaptive
 event-driven paths. Fixed-step RK4 uses three full-vector registers. Use
 `mode=:fixed` to omit `k3`, `k4`, and the six Dormand--Prince and event-root
 vectors when the workspace will only be used with `algorithm=:fixed`.
@@ -544,6 +546,7 @@ struct WeakPITrajectoryWorkspace{V,R,P,E}
     dense_hazard::Vector{R}
     plan::P
     effective_qblocks::E
+    effective_cache::_EffectiveJumpNodeCache{R}
     mode::Symbol
 end
 
@@ -570,7 +573,7 @@ function WeakPITrajectoryWorkspace(plan::WeakPITrajectoryPlan,
         vector,similar(vector),similar(vector),
         zeros(R,length(plan.jumps)),zeros(R,length(plan.branches)),
         zeros(R,length(plan.jumps)),zeros(R,7),zeros(R,4),plan,
-        effective_qblocks,mode)
+        effective_qblocks,_EffectiveJumpNodeCache(zero(R),false),mode)
 end
 WeakPITrajectoryWorkspace(model::PIModel,state::WeakPIPseudoKet;kwargs...)=
     WeakPITrajectoryWorkspace(_weak_plan_for_state(model,state),state;kwargs...)
@@ -765,12 +768,41 @@ function _weak_channel_intensities!(w,x,t,p;apply_generator::Bool=false,
         _weak_apply_effective_jump_drift_and_intensity!(
             destination,x,w,t,p)
     else
-        _weak_channel_intensities_recursive!(w,x,t,p,destination,
-            Val(false),w.plan.jumps,1)
+        # Prepare every driven scale once at this physical node, then retain
+        # those same values for the channel-resolved selection.
+        _weak_prepare_effective_jump_blocks!(w,t,p)
+        _weak_channel_intensities_from_scales_recursive!(
+            w,x,w.plan.jumps,1)
     end
     isfinite(total)||throw(ArgumentError(
         "total weak-PI jump intensity is nonfinite"))
     total
+end
+
+@inline _weak_channel_intensities_from_scales_recursive!(
+    w,x,::Tuple{},channel::Int)=zero(eltype(w.channel_intensities))
+@inline function _weak_channel_intensities_from_scales_recursive!(
+        w,x,jumps::Tuple{K,Vararg{Any}},channel::Int) where K
+    R=eltype(w.channel_intensities);b=w.plan.model.basis
+    kernel=first(jumps);scale=w.jump_scales[channel]
+    value=zero(R)
+    for sector in eachindex(b.sectors)
+        range=_weak_sector_range(w.plan.offsets,sector)
+        psi=view(x,range);scratch=view(w.operator_scratch,range)
+        mul!(scratch,kernel.qblocks[sector],psi)
+        contribution=real(dot(psi,scratch))
+        tolerance=_intensity_tolerance(R)*
+            max(norm(psi)*norm(scratch),one(R))
+        contribution>=-tolerance||throw(ArgumentError(
+            "weak-PI jump intensity is negative in sector $(b.sectors[sector])"))
+        value+=max(zero(R),contribution)
+    end
+    intensity=scale*value
+    isfinite(intensity)||throw(ArgumentError(
+        "weak-PI jump intensity is nonfinite"))
+    w.channel_intensities[channel]=intensity
+    intensity+_weak_channel_intensities_from_scales_recursive!(
+        w,x,Base.tail(jumps),channel+1)
 end
 
 @inline _weak_accumulate_effective_jump_blocks!(w,t,p,::Tuple{},index)=
@@ -794,11 +826,27 @@ end
 end
 
 function _weak_prepare_effective_jump_blocks!(w,t,p)
+    if w.effective_cache.valid&&
+       (_trajectory_jump_rates_autonomous(w.plan.jumps)||
+        isequal(w.effective_cache.time,t))
+        return w.effective_qblocks
+    end
     for block in w.effective_qblocks
         fill!(block,zero(eltype(block)))
     end
     _weak_accumulate_effective_jump_blocks!(w,t,p,w.plan.jumps,1)
+    w.effective_cache.time=t
+    # A failed schedule evaluation leaves the cache invalid, so partially
+    # accumulated blocks are never reused.
+    w.effective_cache.valid=true
     w.effective_qblocks
+end
+
+@inline function _weak_reset_effective_jump_cache!(
+        w::WeakPITrajectoryWorkspace)
+    _trajectory_jump_rates_autonomous(w.plan.jumps)||
+        (w.effective_cache.valid=false)
+    w
 end
 
 function _weak_effective_jump_intensity_from_blocks(w,x)
@@ -1107,6 +1155,7 @@ function _weak_pi_trajectory_prepared(plan,state0,ts,w,rng,options;
     save_states&&!record_jumps&&throw(ArgumentError(
         "saved weak-PI trajectories require recorded jump histories"))
     _require_weak_workspace_mode(w,options.algorithm)
+    _weak_reset_effective_jump_cache!(w)
     options.algorithm!==:fixed&&return _weak_event_driven_trajectory(
         plan,state0,ts,w,rng,options;density_sampler,observable_ops,
         observable_blocks,observable_values,save_states,record_jumps)

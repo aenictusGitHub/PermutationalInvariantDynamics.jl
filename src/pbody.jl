@@ -1,10 +1,33 @@
+struct _PackedPathIsometry{T,Ti<:Integer} <: AbstractArray{T,3}
+    data::SparseMatrixCSC{T,Ti}
+    endpoint_dimension::Int
+    centre_dimension::Int
+    word_count::Int
+end
+
+Base.size(U::_PackedPathIsometry)=
+    (U.endpoint_dimension,U.centre_dimension,U.word_count)
+Base.axes(U::_PackedPathIsometry)=map(Base.OneTo,size(U))
+Base.IndexStyle(::Type{<:_PackedPathIsometry})=IndexCartesian()
+@inline function Base.getindex(U::_PackedPathIsometry,row::Int,
+                               centre::Int,word::Int)
+    @boundscheck checkbounds(U,row,centre,word)
+    @inbounds U.data[row,centre+(word-1)*U.centre_dimension]
+end
+
+function Base.Array(U::_PackedPathIsometry{T}) where T
+    reshape(Matrix(U.data),size(U))
+end
+
 """
     PBodyGeometry(basis, p; T=Float64, coefficient_cache=nothing)
 
 Cache Appendix-D removal paths, exact path weights, and successive one-box CG
-isometries for symmetric `p`-body processes.  Pass a basis-owned
+isometries for symmetric `p`-body processes. The retained path isometries store
+only exact nonzero support in CSC form over the combined
+`(centre pattern, local word)` column. Pass a basis-owned
 [`OneBoxCGCache`](@ref) whose `max_depth >= p` through `coefficient_cache` to
-reuse precomputed sparse coefficients.  Without it, construction still uses
+reuse precomputed sparse coefficients. Without it, construction still uses
 content-indexed compatible candidates and shares each one-box edge within the
 geometry; it never evaluates the dense Cartesian set of structural zeros.
 """
@@ -12,8 +35,10 @@ struct PBodyGeometry{T,D,L,B<:PIBasis{D,L}}
     basis::B
     p::Int
     paths::Dict{Partition{D},Vector{Vector{Partition{D}}}}
-    isometries::Dict{Tuple{Vararg{Partition{D}}},Array{T,3}}
+    isometries::Dict{
+        Tuple{Vararg{Partition{D}}},_PackedPathIsometry{T,Int}}
     path_weights::Dict{Tuple{Vararg{Partition{D}}},Rational{BigInt}}
+    estimates::NamedTuple
 end
 geometry_scalar_type(::PBodyGeometry{T}) where T=T
 
@@ -44,6 +69,157 @@ function _pbody_word_count(local_dimension::Int,p::Int)
         end
     end
     words
+end
+
+function _pbody_combined_columns(centre_dimension::Int,words::Int)
+    centre_dimension>=0||throw(ArgumentError(
+        "the p-body centre dimension must be nonnegative"))
+    words>=0||throw(ArgumentError(
+        "the p-body word count must be nonnegative"))
+    try
+        Base.checked_mul(centre_dimension,words)
+    catch error
+        error isa OverflowError||rethrow()
+        throw(ArgumentError(
+            "the packed p-body column dimension exceeds Int indexing; "*
+            "reduce the retained basis or the p-body order"))
+    end
+end
+
+# Coefficient-free structural bound used by guarded high-level compilation.
+# It follows only the Young-lattice removal graph and exact U(d) irrep
+# dimensions.  Treating every dense-equivalent path-isometry entry as a
+# possible CSC nonzero is conservative; importantly, it is still a sum over
+# retained removal paths rather than a PI-coordinate-squared bound.
+function _estimate_pbody_geometry(
+        b::PIBasis{D,L},p::Integer,::Type{R}=Float64;
+        bigfloat_precision::Integer=precision(BigFloat)) where
+        {D,L,R<:AbstractFloat}
+    1<=p<=b.N||throw(ArgumentError("p must satisfy 1 ≤ p ≤ N"))
+    order=Int(p)
+    levels,_,edges=_onebox_domain(b,order)
+    dimensions=Dict(
+        partition=>unitary_group_dimension(partition)
+        for level in levels for partition in level)
+    words=big(D)^order
+    pattern_cache=Dict{Partition{D},Vector{GTPattern{D,L}}}()
+    content_cache=Dict{Partition{D},Dict{NTuple{D,Int},BigInt}}()
+    function content_histogram(partition)
+        get!(content_cache,partition) do
+            sector_index=get(b.index,partition,0)
+            patterns=sector_index==0 ?
+                get!(() -> gt_patterns(partition),pattern_cache,partition) :
+                b.patterns[sector_index]
+            histogram=Dict{NTuple{D,Int},BigInt}()
+            for pattern in patterns
+                key=content(pattern)
+                histogram[key]=get(histogram,key,big(0))+1
+            end
+            histogram
+        end
+    end
+    function support_upper(endpoint,centre)
+        result=big(0)
+        endpoint_histogram=content_histogram(endpoint)
+        centre_histogram=content_histogram(centre)
+        for (centre_content,centre_count) in centre_histogram,
+            (endpoint_content,endpoint_count) in endpoint_histogram
+            difference=ntuple(
+                index->endpoint_content[index]-centre_content[index],D)
+            any(value->value<0,difference)&&continue
+            sum(difference)==order||continue
+            result+=centre_count*endpoint_count*
+                exact_multinomial(difference)
+        end
+        result
+    end
+    path_count=big(0)
+    dense_entries=big(0)
+    retained_entries_upper=big(0)
+    column_pointer_entries=big(0)
+    largest_path_entries=big(0)
+    largest_centre_dimension=big(0)
+    for endpoint in b.sectors
+        counts=Dict{Partition{D},BigInt}(endpoint=>big(1))
+        for _ in 1:order
+            next=Dict{Partition{D},BigInt}()
+            for (upper,count) in counts
+                for corner in removable_corners(upper)
+                    lower=remove_corner(upper,corner)
+                    next[lower]=get(next,lower,big(0))+count
+                end
+            end
+            counts=next
+        end
+        endpoint_dimension=dimensions[endpoint]
+        for (centre,multiplicity) in counts
+            centre_dimension=dimensions[centre]
+            path_entries=endpoint_dimension*centre_dimension*words
+            path_support=support_upper(endpoint,centre)
+            path_count+=multiplicity
+            dense_entries+=multiplicity*path_entries
+            retained_entries_upper+=multiplicity*path_support
+            column_pointer_entries+=
+                multiplicity*(centre_dimension*words+1)
+            largest_path_entries=max(largest_path_entries,path_support)
+            largest_centre_dimension=max(
+                largest_centre_dimension,centre_dimension)
+        end
+    end
+
+    int_bytes=big(sizeof(Int))
+    pointer_bytes=big(sizeof(Ptr{Cvoid}))
+    header=8int_bytes
+    dictionary_entry=16int_bytes
+    scalar_bytes=_scalar_retained_bytes(
+        R;bigfloat_precision)
+    partition_bytes=big(D)*int_bytes
+    path_partition_entries=path_count*big(order+1)
+
+    sparse_payload=retained_entries_upper*(scalar_bytes+int_bytes)+
+        column_pointer_entries*int_bytes
+    # Three dictionaries (`paths`, `isometries`, and exact path weights), the
+    # path vectors and tuple keys, and exact-rational payload.  The exact
+    # payload bound grows with every branch factor rather than assuming
+    # machine-sized integers.
+    branch_bits=big(order)*big(D)*
+        max(big(1),ndigits(big(b.N+D+1);base=2))
+    exact_weight_bytes=path_count*(8header+2cld(branch_bits,8))
+    path_metadata=path_count*(
+        8header+3dictionary_entry+2pointer_bytes)+
+        path_partition_entries*partition_bytes+
+        big(length(b.sectors))*(4header+dictionary_entry)
+    retained_bytes=16header+sparse_payload+exact_weight_bytes+path_metadata
+
+    transition_entries=sum(
+        (big(D)*dimensions[lower]*dimensions[upper]
+         for (lower,upper) in edges);init=big(0))
+    transition_bytes=transition_entries*scalar_bytes+
+        big(length(edges))*big(D)*(header+pointer_bytes)
+    partition_count=sum(length,levels;init=0)
+    pattern_count=sum(
+        (dimensions[partition] for level in levels for partition in level);
+        init=big(0))
+    pattern_bytes=pattern_count*(big(L)*int_bytes+4int_bytes)+
+        big(partition_count)*(header+dictionary_entry+partition_bytes)
+    maximum_dimension=maximum(values(dimensions);init=big(0))
+    propagation_bytes=
+        2maximum_dimension*largest_centre_dimension*scalar_bytes
+    # While one path is packed, its COO triplets coexist with the already
+    # retained CSC maps and the dense propagation buffers. Sparse assembly may
+    # transiently duplicate those triplets, hence the factor two.
+    packing_bytes=2largest_path_entries*(
+        scalar_bytes+2int_bytes)+8header
+    setup_bytes=retained_bytes+transition_bytes+pattern_bytes+
+        propagation_bytes+packing_bytes
+    (;retained_bytes,setup_bytes,path_count,dense_entries,
+      retained_entries_upper,column_pointer_entries,
+      transition_entries,pattern_count,words,scalar_type=R,
+      scalar_retained_bytes=scalar_bytes,
+      scalar_storage_estimate=_scalar_storage_estimate(R),
+      bigfloat_precision_assumption=
+          _scalar_precision_assumption(R,bigfloat_precision),
+      estimate=:conservative_structural_upper_bound)
 end
 
 # One path is the product of p one-box CG maps.  The older implementation
@@ -138,6 +314,105 @@ function _path_isometry(path::AbstractVector{Partition{D}},::Type{R},
     U
 end
 
+function _packed_path_isometry(path::AbstractVector{Partition{D}},::Type{R},
+        pattern_cache,transition_cache,coefficient_cache=nothing) where
+        {D,R<:AbstractFloat}
+    p=length(path)-1
+    p>=0||throw(ArgumentError(
+        "a p-body path must contain at least one partition"))
+    patterns=[_pbody_pattern_table!(pattern_cache,partition)
+              for partition in path]
+    dimensions=map(length,patterns)
+    local_dimension=D
+    words=_pbody_word_count(local_dimension,p)
+    centre_dimension=first(dimensions)
+    endpoint_dimension=last(dimensions)
+    combined_columns=_pbody_combined_columns(centre_dimension,words)
+    rows=Int[]
+    columns=Int[]
+    values=R[]
+    if p==0
+        sizehint!(rows,centre_dimension)
+        sizehint!(columns,centre_dimension)
+        sizehint!(values,centre_dimension)
+        @inbounds for index in 1:centre_dimension
+            push!(rows,index)
+            push!(columns,index)
+            push!(values,one(R))
+        end
+        data=sparse(rows,columns,values,endpoint_dimension,centre_dimension)
+        return _PackedPathIsometry(
+            data,endpoint_dimension,centre_dimension,words)
+    end
+    transitions=[_pbody_edge_transitions!(transition_cache,pattern_cache,
+        path[stage],path[stage+1],R,coefficient_cache) for stage in 1:p]
+    maximum_dimension=maximum(dimensions)
+    first_buffer=zeros(R,maximum_dimension,centre_dimension)
+    second_buffer=similar(first_buffer)
+    powers=Vector{Int}(undef,p)
+    power=1
+    for stage in 1:p
+        powers[stage]=power
+        stage<p&&(power=Base.checked_mul(power,local_dimension))
+    end
+    for word in 0:words-1
+        current=first_buffer
+        next=second_buffer
+        fill!(current,zero(R))
+        @inbounds for index in 1:centre_dimension
+            current[index,index]=one(R)
+        end
+        current_dimension=centre_dimension
+        for stage in 1:p
+            next_dimension=dimensions[stage+1]
+            local_label=(word÷powers[stage])%local_dimension
+            transition=transitions[stage][local_label+1]
+            mul!(view(next,1:next_dimension,1:centre_dimension),transition,
+                 view(current,1:current_dimension,1:centre_dimension))
+            current,next=next,current
+            current_dimension=next_dimension
+        end
+        column_offset=Base.checked_mul(word,centre_dimension)
+        @inbounds for centre in 1:centre_dimension,
+                      row in 1:endpoint_dimension
+            value=current[row,centre]
+            iszero(value)&&continue
+            push!(rows,row)
+            push!(columns,column_offset+centre)
+            push!(values,value)
+        end
+    end
+    data=sparse(rows,columns,values,endpoint_dimension,
+                combined_columns)
+    _PackedPathIsometry(data,endpoint_dimension,centre_dimension,words)
+end
+
+function _pbody_geometry_estimates(isometries)
+    retained_entries=sum((BigInt(nnz(U.data)) for U in values(isometries));
+                         init=big(0))
+    dense_entries=sum((prod(BigInt.(size(U))) for U in values(isometries));
+                      init=big(0))
+    retained_bytes=BigInt(Base.summarysize(isometries))
+    scalar_type=isempty(isometries) ? Float64 :
+        eltype(first(values(isometries)))
+    precision_bits=if scalar_type===BigFloat
+        maximum((precision(value) for U in values(isometries)
+                 for value in U.data.nzval);init=precision(BigFloat))
+    else
+        precision(scalar_type)
+    end
+    dense_payload_bytes=BigInt(dense_entries)*
+        _scalar_retained_bytes(
+            scalar_type;bigfloat_precision=precision_bits)
+    (;storage=:exact_support_sparse_csc,
+      retained_entries,
+      dense_entries,
+      retained_bytes,
+      dense_payload_bytes,
+      scalar_type,
+      precision_bits)
+end
+
 
 function _path_isometry(path::AbstractVector{Partition{D}},::Type{R}) where
         {D,R<:AbstractFloat}
@@ -156,20 +431,23 @@ function PBodyGeometry(b::B,p::Integer,::Type{R};coefficient_cache=nothing) wher
         coefficient_cache,b,Int(p),R)
     paths=Dict{Partition{D},Vector{Vector{Partition{D}}}}(
         q=>_removal_paths(q,Int(p)) for q in b.sectors)
-    iso=Dict{Tuple{Vararg{Partition{D}}},Array{R,3}}()
+    Iso=_PackedPathIsometry{R,Int}
+    iso=Dict{Tuple{Vararg{Partition{D}}},Iso}()
     pattern_cache=coefficient_cache===nothing ?
         Dict{Partition{D},Vector{GTPattern{D,L}}}() :
         copy(coefficient_cache.patterns)
     transition_cache=Dict{Tuple{Partition{D},Partition{D}},Vector{Matrix{R}}}()
     for ps in values(paths),path in ps
-        iso[Tuple(path)]=_path_isometry(path,R,pattern_cache,transition_cache,
-                                        coefficient_cache)
+        iso[Tuple(path)]=_packed_path_isometry(
+            path,R,pattern_cache,transition_cache,coefficient_cache)
     end
     path_weights=Dict{Tuple{Vararg{Partition{D}}},Rational{BigInt}}()
     for ps in values(paths),path in ps
         path_weights[Tuple(path)]=_subset_path_weight(path)
     end
-    PBodyGeometry{R,D,L,B}(b,Int(p),paths,iso,path_weights)
+    estimates=_pbody_geometry_estimates(iso)
+    PBodyGeometry{R,D,L,B}(
+        b,Int(p),paths,iso,path_weights,estimates)
 end
 
 function _check_pbody_geometry(cache::PBodyGeometry,b::PIBasis,p::Integer)
@@ -195,6 +473,34 @@ function _path_contractions(UL::AbstractArray{T,3},UR::AbstractArray{T,3},X) whe
     A=zeros(promote_type(Complex{T},eltype(X)),dl,dr)
     for a in 1:dl,c in 1:dr,w in 1:dc,i in 1:dp,j in 1:dp
         A[a,c]+=UL[a,w,i]*UR[c,w,j]*X[i,j]
+    end
+    A
+end
+
+function _path_contractions(
+        UL::_PackedPathIsometry{T},UR::_PackedPathIsometry{T},X) where T
+    dl,dc,dp=size(UL)
+    dr,dc2,dp2=size(UR)
+    dc==dc2&&dp==dp2||throw(DimensionMismatch())
+    A=zeros(promote_type(Complex{T},eltype(X)),dl,dr)
+    left=UL.data
+    right=UR.data
+    @inbounds for w in 1:dc,j in 1:dp
+        right_column=w+(j-1)*dc
+        for right_pointer in nzrange(right,right_column)
+            output_column=right.rowval[right_pointer]
+            right_value=right.nzval[right_pointer]
+            for i in 1:dp
+                x=X[i,j]
+                iszero(x)&&continue
+                left_column=w+(i-1)*dc
+                for left_pointer in nzrange(left,left_column)
+                    output_row=left.rowval[left_pointer]
+                    A[output_row,output_column]+=
+                        left.nzval[left_pointer]*right_value*x
+                end
+            end
+        end
     end
     A
 end

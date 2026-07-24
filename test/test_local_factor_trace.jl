@@ -1,3 +1,15 @@
+function _dense_local_factor_transform_oracle(
+        basis,letters,counts,::Type{R}) where R<:AbstractFloat
+    builder=PermutationalInvariantDynamics._LocalFactorColumnBuilder(
+        basis,letters,R)
+    matrix=zeros(Complex{R},length(basis),length(counts))
+    for (column,occupation) in pairs(counts)
+        PermutationalInvariantDynamics._local_factor_column!(
+            view(matrix,:,column),builder,occupation)
+    end
+    matrix
+end
+
 @testset "prepared local-factor trace" begin
     # A local Bell state loses its spin coherence when its second factor is
     # traced. This is already nontrivial at N=1.
@@ -93,6 +105,68 @@ end
     plan=LocalFactorTracePlan(source,(2,2);traced_factor=2)
     workspace=LocalFactorTraceWorkspace(plan)
     output=PIState(plan.output_basis;T=Float64)
+    @test plan.lifted_columns isa SparseMatrixCSC{ComplexF64,Int}
+    @test plan.output_columns isa SparseMatrixCSC{ComplexF64,Int}
+    @test all(!iszero,nonzeros(plan.lifted_columns))
+    @test all(!iszero,nonzeros(plan.output_columns))
+    @test plan.estimates.storage===:exact_support_sparse_csc
+    @test plan.estimates.lifted_nonzeros==nnz(plan.lifted_columns)
+    @test plan.estimates.output_nonzeros==nnz(plan.output_columns)
+    @test plan.estimates.gram_validation===:streamed_sparse_columns
+    @test plan.estimates.gram_workspace_bytes>0
+    @test plan.estimates.gram_pair_products>=
+          nnz(plan.output_columns)
+    @test plan.estimates.retained_entries==
+          nnz(plan.lifted_columns)+nnz(plan.output_columns)
+    @test plan.estimates.retained_bytes>=
+          Base.summarysize(plan.lifted_columns)+
+          Base.summarysize(plan.output_columns)
+    @test 10*plan.estimates.retained_entries<
+          plan.estimates.dense_entries
+    @test plan.estimates.peak_bytes>=plan.estimates.retained_bytes
+    occupations=PermutationalInvariantDynamics._local_factor_compositions(
+        basis.N,Val(4))
+    dense_output=_dense_local_factor_transform_oracle(
+        plan.output_basis,
+        PermutationalInvariantDynamics._local_factor_matrix_unit_letters(2),
+        occupations,Float64)
+    dense_lifted=_dense_local_factor_transform_oracle(
+        basis,
+        PermutationalInvariantDynamics._local_factor_lifted_letters(
+            (2,2),2),
+        occupations,Float64)
+    @test Matrix(plan.output_columns)==dense_output
+    @test Matrix(plan.lifted_columns)==dense_lifted
+
+    # Streamed sparse validation has the same infinity-norm semantics as an
+    # explicitly materialized Gram matrix, including missing diagonal entries,
+    # but does not retain that quadratic matrix.
+    probe=sparse(ComplexF64[
+        1.0 0.2im 0.0;
+        0.0 0.7   0.0;
+        0.0 0.0   0.0])
+    streamed_residual,streamed_scale,streamed_statistics=
+        PermutationalInvariantDynamics.
+        _local_factor_streamed_gram_validation(
+            probe;memory_budget=Inf)
+    dense_gram=Matrix(adjoint(probe)*probe)-I
+    @test streamed_residual≈opnorm(dense_gram,Inf) atol=1e-15 rtol=1e-15
+    @test streamed_scale≈max(1.0,opnorm(probe,Inf)^2) atol=1e-15 rtol=1e-15
+    identity_probe=spdiagm(0=>ones(ComplexF64,64))
+    _,_,identity_statistics=PermutationalInvariantDynamics.
+        _local_factor_streamed_gram_validation(
+            identity_probe;memory_budget=Inf)
+    @test identity_statistics.workspace_entries<
+          length(identity_probe)^2
+    @test_throws ArgumentError PermutationalInvariantDynamics.
+        _local_factor_streamed_gram_validation(
+            probe;memory_budget=1)
+    @test_throws ErrorException PermutationalInvariantDynamics.
+        _local_factor_streamed_gram_validation(
+            sparse(reshape(ComplexF64[Inf],1,1));memory_budget=Inf)
+    @test_throws ErrorException PermutationalInvariantDynamics.
+        _local_factor_streamed_gram_validation(
+            sparse(reshape(ComplexF64[1e308],1,1));memory_budget=Inf)
     @test local_factor_trace!(output,source,plan,workspace)===output
 
     # The adjoint of local partial trace inserts an identity on the removed
@@ -118,7 +192,7 @@ end
     # contractions and reuses its occupation scratch.
     local_factor_trace!(output,source,plan,workspace;check=false)
     @test @allocated(local_factor_trace!(
-        output,source,plan,workspace;check=false))<20_000
+        output,source,plan,workspace;check=false))<1_024
 
     equivalent_basis=PIBasis(3,4)
     equivalent_state=PIState(equivalent_basis,copy(source.data))
@@ -131,9 +205,17 @@ end
     other_workspace=LocalFactorTraceWorkspace(other_plan)
     @test_throws ArgumentError local_factor_trace!(
         output,source,plan,other_workspace)
+    @test_throws ArgumentError local_factor_trace!(
+        output,source,plan,workspace;atol=Inf)
+    @test_throws ArgumentError local_factor_trace!(
+        output,source,plan,workspace;rtol=NaN)
     source32=PIState(basis,ComplexF32.(source.data))
     @test_throws ArgumentError local_factor_trace(
         source32,plan;workspace)
+    @test_throws ArgumentError LocalFactorTracePlan(
+        source32,(2,2);T=Float64)
+    @test_throws ArgumentError LocalFactorTracePlan(
+        source,(2,2);T=Float32)
 
     @test_throws DimensionMismatch LocalFactorTracePlan(basis,(2,3))
     @test_throws ArgumentError LocalFactorTracePlan(
@@ -172,4 +254,21 @@ end
     @test empty_output.basis.N==0
     @test empty_output.basis.d==2
     @test empty_output.data==ComplexF64[1]
+
+    # A state-owned constructor captures storage precision rather than the
+    # caller's ambient BigFloat precision.
+    wide_source=setprecision(BigFloat,128) do
+        wide_basis=PIBasis(1,4)
+        local_density=Matrix{Complex{BigFloat}}(I,4,4)/BigFloat(4)
+        iid_state(wide_basis,local_density)
+    end
+    wide_plan=setprecision(BigFloat,256) do
+        LocalFactorTracePlan(wide_source,(2,2);traced_factor=2)
+    end
+    @test wide_plan.estimates.precision_bits==128
+    wide_output=setprecision(BigFloat,64) do
+        local_factor_trace(wide_source,wide_plan)
+    end
+    @test all(value->precision(real(value))==128,
+              wide_output.data)
 end

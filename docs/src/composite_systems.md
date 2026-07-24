@@ -64,6 +64,23 @@ fuses exact Schur multiplicities; it does not allocate a full composite trace
 vector. `composite_trace_vector` is available when a solver explicitly needs
 that vector.
 
+To trace all factors except one repeatedly, prepare the packed diagonal
+contraction once:
+
+```julia
+reduction = CompositeReductionPlan(rho, 1)
+rho_a = composite_reduced_state(rho, reduction)
+
+# Reuse the result storage too.
+rho_a_buffer = PIState(reduction.kept_basis)
+composite_reduced_state!(rho_a_buffer, rho, reduction)
+```
+
+The plan stores only exact-support diagonal offsets and exact Schur
+multiplicity scales. It is immutable, tied to the exact composite basis, and
+safe to share between tasks; each call writes only to its caller-owned result.
+For a retained finite factor, use a square matrix as the destination.
+
 ## Matrix-free generators
 
 A `CompositeSuperoperatorTerm` is a product of factor maps, with `nothing`
@@ -138,7 +155,27 @@ The warmed tensor-mode application reuses full-vector buffers, factor fibers,
 and any nested `LiouvillianWorkspace`. `composite_matrixfree(generator)` gives
 a synchronized compatibility `MatrixFreeLiouvillian` for APIs that require
 that wrapper; parallel hot loops should retain explicit task-owned composite
-workspaces instead.
+workspaces instead. Prepared package consumers such as
+`sensitivity_problem` discover the retained immutable composite plan and
+construct a fresh task-owned batch workspace. A bare compatibility matrix
+product through the wrapper remains a synchronized column fallback.
+
+Several right-hand sides use a separate fixed-capacity workspace:
+
+```julia
+X = hcat(rho.data, perturbation_1, perturbation_2)
+Y = similar(X)
+batch_work = CompositeSuperoperatorBatchWorkspace(
+    generator; capacity=size(X, 2))
+
+apply!(Y, generator, X, 0.0, nothing, batch_work)
+```
+
+The factor maps consume equal tensor fibers from all columns together.
+`apply_adjoint!` uses the same workspace. Capacity is immutable: a wider
+matrix raises instead of growing hidden buffers. This path is useful for block
+Krylov methods and parameter sensitivities; it is not a global Kronecker
+materialization.
 
 ## Density-valued composite quantum jumps
 
@@ -252,15 +289,19 @@ FiniteOperatorBasis
 CompositePIBasis
 CompositePIOperator
 CompositePIState
+CompositeReductionPlan
 composite_tensor_operator
 composite_tensor_state
 composite_identity_operator
 composite_trace_vector
+composite_reduced_state
+composite_reduced_state!
 CompositeSuperoperatorTerm
 factorized_superoperator_term
 local_superoperator_term
 CompositeSuperoperator
 CompositeSuperoperatorWorkspace
+CompositeSuperoperatorBatchWorkspace
 factor_left_superoperator
 factor_right_superoperator
 factor_sandwich_superoperator

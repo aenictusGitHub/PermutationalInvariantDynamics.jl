@@ -740,28 +740,73 @@ end
 
 _value_operator(x,t,p)=x isa Function ? x(t,p) : x
 
+function _sensitivity_apply_batch!(destination,source,input,t,p,work)
+    if source isa AbstractMatrix
+        return mul!(destination,source,input)
+    elseif work===nothing
+        if applicable(apply!,destination,source,input,t,p)
+            return apply!(destination,source,input,t,p)
+        end
+    elseif applicable(apply!,destination,source,input,t,p,work)
+        return apply!(destination,source,input,t,p,work)
+    end
+    # Custom vector-only callbacks remain supported. Built-in PI, composite,
+    # restricted, and HEOM sources take one genuine matrix-RHS application
+    # through the branches above.
+    for column in axes(input,2)
+        if work===nothing
+            apply!(view(destination,:,column),source,
+                   view(input,:,column),t,p)
+        else
+            apply!(view(destination,:,column),source,
+                   view(input,:,column),t,p,work)
+        end
+    end
+    destination
+end
+
+function _sensitivity_apply_derivative!(destination,derivative,input,t,p,work)
+    if derivative isa AbstractMatrix
+        mul!(destination,derivative,input)
+    elseif work===nothing
+        apply!(destination,derivative,input,t,p)
+    else
+        apply!(destination,derivative,input,t,p,work)
+    end
+end
+
 """
     sensitivity_problem(L, rho0, tspan, dLs; parameters=nothing)
 
 Construct an in-place augmented ODE for the state and tangent states
 `d rho / d theta_mu`. `dLs[mu]` is either a static matrix/operator or a
 callable `(t,p) -> dL/dtheta_mu`. The augmented state has columns
-`[rho, drho/dtheta_1, ...]`.
+`[rho, drho/dtheta_1, ...]`. Built-in prepared generators apply `L` to all
+columns in one matrix-RHS call, so driven schedules are evaluated once per ODE
+right-hand side. Task-owned workspaces for static derivative generators are
+also prepared once when the problem is constructed.
 """
 function sensitivity_problem(L,rho0::PIState,tspan,dLs;parameters=nothing)
     prepared=L isa PIModel ? compile(L;backend=:matrixfree) : L
     derivatives=collect(dLs);m=length(derivatives);n=length(rho0.data)
     Rtype=_response_real_type(eltype(rho0.data),prepared,derivatives...)
     u0=zeros(Complex{Rtype},n,m+1);u0[:,1].=rho0.data
-    work=_linear_operator_workspace(prepared);forcing=zeros(Complex{Rtype},n,m)
+    work=_linear_operator_batch_workspace(
+        prepared,m+1,Complex{Rtype})
+    forcing=zeros(Complex{Rtype},n,m)
+    derivative_work=map(derivatives) do derivative
+        derivative isa Function ? nothing :
+            _linear_operator_workspace(derivative)
+    end
     function f!(du,u,p,t)
-        if work===nothing;apply!(view(du,:,1),prepared,view(u,:,1),t,p)
-        else;apply!(view(du,:,1),prepared,view(u,:,1),t,p,work);end
+        _sensitivity_apply_batch!(du,prepared,u,t,p,work)
         for mu in 1:m
-            if work===nothing;apply!(view(du,:,mu+1),prepared,view(u,:,mu+1),t,p)
-            else;apply!(view(du,:,mu+1),prepared,view(u,:,mu+1),t,p,work);end
             D=_value_operator(derivatives[mu],t,p)
-            apply!(view(forcing,:,mu),D,view(u,:,1),t,p)
+            # A callable may return a different prepared source at every
+            # evaluation, so only immutable derivative specifications own a
+            # reusable workspace.
+            _sensitivity_apply_derivative!(
+                view(forcing,:,mu),D,view(u,:,1),t,p,derivative_work[mu])
             @views du[:,mu+1].+=forcing[:,mu]
         end
     end

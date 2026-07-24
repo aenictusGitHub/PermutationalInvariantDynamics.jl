@@ -242,6 +242,31 @@ The important arguments are:
 | `observables` | Named local matrices or `PIOperator`s sampled during propagation |
 | `save_states` | Whether every sampled `PIState` is retained |
 
+For an autonomous model, an adaptive matrix-free exponential action is also
+available:
+
+```julia
+solution_expv = solve_dynamics(
+    prepared,
+    rho0,
+    (first(times), last(times));
+    saveat=times,
+    algorithm=ExpvAlgorithm(
+        krylovdim=30,
+        atol=1e-11,
+        rtol=1e-9,
+    ),
+    observables=(excited=number,),
+    save_states=true,
+)
+```
+
+This reuses one Arnoldi workspace and task-owned Liouvillian workspace between
+saved times. It is often useful when output times are sparse relative to the
+RK4 step required for accuracy. It is not a time-ordered exponential:
+`ExpvAlgorithm` therefore rejects driven generators and nonempty
+`parameters`. Use RK4 or `dynamics_problem` for those cases.
+
 A local matrix passed as an observable denotes its collective sum. Thus the
 stored excitation series is `sum_i <e_i|rho(t)|e_i>`:
 
@@ -481,6 +506,8 @@ not add a heavy ODE solver dependency to its core.
 | Many related parameter points | [Prepared parameter scans](parameter_scans.md) |
 | Very large product-state prediction | [Mean-field predictions](meanfield.md) |
 | Finite-memory bosonic environment | [PI--HEOM](heom.md) |
+| One cavity or pseudomode shared by the ensemble | [Global pseudomodes and shared cavities](global_pseudomodes.md) |
+| Identical independent local pseudomodes | [Local pseudomodes and PI supersites](pseudomodes.md) |
 | Several PI ensembles or a finite ancilla | [Composite systems](composite_systems.md) |
 
 ## Common errors and their fixes

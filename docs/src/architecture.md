@@ -40,6 +40,10 @@ invariant PIModel → PopulationPlan → reduced sparse action
 (PI system, HEOMBath...) → HEOMPlan
                          ├─ HEOMWorkspace per application task
                          └─ HEOMEvolutionWorkspace per RK4 task
+
+(PI Hamiltonian, shared HOPSBath...) → HOPSPlan
+                                     ├─ immutable hierarchy and noise data
+                                     └─ HOPSWorkspace per stochastic path
 ```
 
 `PIBasis` stores only polynomial-size Schur data. `PIModel` is an immutable
@@ -67,6 +71,15 @@ trace-preserving background plus explicit `CompositeJumpChannel`s. A path
 workspace owns one shared pair of full channel buffers, so full-coordinate
 storage does not scale with the channel count.
 
+PI--HOPS stores one weak-PI pseudo-ket per retained hierarchy multi-index and
+never constructs a labeled-particle Hilbert space. This exact reduction is
+available for shared baths with PI coupling operators, because the stochastic
+generator then preserves the PI pseudo-ket space on every realization.
+Independent local colored noises restore permutation symmetry only after
+averaging and are outside this pathwise PI representation. Linear HOPS root
+pseudo-kets are unnormalized, so the physical estimator is the arithmetic
+mean of root outer products, not a mean of pathwise normalized states.
+
 ## Recommended commands
 
 ```julia
@@ -93,6 +106,7 @@ The preparation route depends on the task rather than on one universal plan:
 | Certified diagonal dynamics | invariant `PIModel` | `PopulationPlan` | `PopulationWorkspace` |
 | Periodic dynamics | periodic Liouvillian source | `FloquetMap` | `FloquetWorkspace` or `FloquetBatchWorkspace` |
 | Finite-memory bath | PI source and `HEOMBath`s | `HEOMPlan` | `HEOMWorkspace` / `HEOMEvolutionWorkspace` |
+| Finite-memory shared-bath trajectories | PI Hamiltonian and `HOPSBath`s | `HOPSPlan` | one `HOPSWorkspace` and RNG per path |
 | Quantum regression | autonomous source and insertions | `CorrelationPlan` | `CorrelationWorkspace` |
 | Parameter continuation | parameter recipe or compiled family | `ParameterScanPlan` | `ParameterScanWorkspace` |
 
@@ -137,9 +151,9 @@ locking with optionally preconditioned matrix-free correction solves.
 Structured repeated systems additionally use `block_gmres`,
 `multishift_gmres`, `recycled_gmres`, and `krylov_expv`; their workspaces reuse
 dominant full-coordinate arrays but still form small dense projected problems.
-Prepared scans, HEOM, and explicit refinement reports have dedicated guides:
-[Parameter scans](parameter_scans.md), [PI--HEOM](heom.md), and
-[Numerical convergence](convergence.md).
+Prepared scans, HEOM, HOPS, and explicit refinement reports have dedicated
+guides: [Parameter scans](parameter_scans.md), [PI--HEOM](heom.md),
+[PI--HOPS](hops.md), and [Numerical convergence](convergence.md).
 See [API tiers and prepared analysis](api_tiers.md) for the supported
 high-level, advanced, and experimental surfaces.
 
@@ -192,9 +206,9 @@ avoid that lock.
 
 The same ownership rule applies to `SymmetryProjectorWorkspace`, all ordinary
 and advanced Krylov workspaces, `MeanFieldWorkspace`, scan workspaces, HEOM
-workspaces, and stochastic batch workspaces: workspaces are mutable and must
-not be shared by concurrent calls. `RecycledGMRESWorkspace` additionally owns
-the ordered continuation chain itself.
+and HOPS workspaces, and stochastic batch workspaces: workspaces are mutable
+and must not be shared by concurrent calls. `RecycledGMRESWorkspace`
+additionally owns the ordered continuation chain itself.
 
 ## Mean-field prediction beside exact PI dynamics
 
@@ -306,29 +320,49 @@ neg = negativity(rho, k; plan=reduction, workspace=work)
 
 Both plan types require the exact basis object used at construction. Observable
 plans are compact and usually worthwhile for state scans. Qudit reduction
-plans may retain many dense intertwiners and their construction performs
-sparse weight-restricted nullspaces, so they are intended for repeated
-fixed-`k` analysis rather than every one-off bipartition. Plans contain no mutable scratch and may be
-shared read-only. A `ReductionWorkspace` belongs to one exact plan and reuses
-the product-block application buffers; it must not be shared concurrently. It
-also converts the compact real qubit recouplers once to its complex working
-type so repeated multiplication stays allocation-light on every supported
-Julia release. Already type-matched qudit intertwiners are shared read-only.
-This conversion increases retained qubit workspace memory in exchange for a
-homogeneous hot loop. Use `reduced_state!` when the output `PIState` should
-also be reused.
+plans construct sparse weight-restricted nullspaces and retain each resulting
+intertwiner as exact-support CSC blocks at fixed discarded-factor weight.
+Their `estimates` field reports retained versus dense entry counts and payload
+bytes. Nullspace setup can nevertheless be substantial, so these plans are
+intended for repeated fixed-`k` analysis rather than every one-off
+bipartition. Plans contain no mutable scratch and may be shared read-only. A
+`ReductionWorkspace` belongs to one exact plan and reuses the recoupling and
+application buffers; it must not be shared concurrently.
+Reduced-state and purity paths contract
+`tr_B(U*C*U') = sum_q U_q*C*U_q'` directly, so a
+`mode=:reduction` workspace retains only a discarded-factor slice rather than
+the complete product block. Negativity still retains that complete block
+because it must partially transpose it. The workspace converts compact real
+qubit recouplers once to its complex working type so repeated multiplication
+stays allocation-light on every supported Julia release. Already type-matched
+packed qudit intertwiners are shared read-only; wider workspaces copy only
+their stored nonzeros. Use `reduced_state!` when the output
+`PIState` should also be reused.
 
 When each PI particle is a composite supersite, `LocalFactorTracePlan`
 instead traces the same internal factor from every particle and returns a
 complete PI state at the kept local dimension. Its prepared rectangular
-occupation transforms avoid both full-Hilbert reconstruction and an
-exponential list of lifted local observables. Reuse one
+occupation transforms retain only exact nonzero sparse support and avoid both
+full-Hilbert reconstruction and an exponential list of lifted local
+observables. Reuse one
 `LocalFactorTraceWorkspace` per task, then apply `ReductionPlan` to the
 resulting state if a particle bipartition is also required.
 
-For repeated one-body marginals, `one_body_rdm(rho; cache=geometry)` contracts
-all matrix units in one pass instead of preparing `d^2` independent collective
-operators.
+For repeated one-body marginals, prepare both geometry and scratch:
+
+```julia
+one_body_geometry = OneBodyGeometry(basis)
+one_body_work = OneBodyRDMWorkspace(one_body_geometry, rho)
+rho_one = zeros(ComplexF64, basis.d, basis.d)
+one_body_rdm!(rho_one, rho, one_body_work)
+```
+
+This contracts all matrix units in one pass, reuses the largest
+multiplicity-weighted Schur block, and avoids preparing `d^2` independent
+collective operators. A validated enclosing scan may use `check=false` on the
+in-place call. For `BigFloat`, build the geometry at the state's stored
+precision; the workspace rejects a mixed or mismatched precision instead of
+silently narrowing the contraction.
 
 ## Schur-block diagnostics
 

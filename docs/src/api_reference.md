@@ -32,9 +32,12 @@ PermutationalInvariantDynamics
 | [Diffusive monitoring](diffusive_monitoring.md) | Preallocated homodyne/heterodyne conditional PI dynamics, reproducible ensembles, and confidence-controlled stochastic stopping |
 | [Qudit Husimi phase space](qudit_phase_space.md) | Sector-wise generalized coherent-state Q data for arbitrary local dimension |
 | [Composite systems](composite_systems.md) | Multiple PI ensembles, finite auxiliary factors, preallocated tensor-product superoperators, and density-valued quantum jumps |
+| [Global pseudomodes and shared cavities](global_pseudomodes.md) | One shared finite-cutoff mode, collective coupling, factorized dynamics, cutoff observables, and system/mode reductions |
+| [Local pseudomodes and PI supersites](pseudomodes.md) | Identical finite-cutoff local modes, system-term lifting, matrix-free dynamics, cutoff checks, and prepared mode tracing |
 | [Prepared parameter scans](parameter_scans.md) | Continuation, resumable point records, deterministic threaded scans, and tabular exports |
 | [Block, multi-shift, and recycled Krylov](krylov_extensions.md) | Thick-restarted block spectra, multiple-right-hand-side solves, shifted families, recycled subspaces, and exponential actions |
 | [PI--HEOM non-Markovian dynamics](heom.md) | PI auxiliary-density hierarchies, matrix-free propagation, and stationary states |
+| [PI--HOPS stochastic non-Markovian dynamics](hops.md) | Direct-sum Schur-irrep pure-state hierarchies, colored-noise trajectories, and Monte Carlo density reconstruction |
 | [Numerical convergence reports](convergence.md) | Time-step, Krylov, HEOM-depth, and sector-cutoff refinement evidence |
 | [Optional ecosystem integrations](interoperability.md) | Tables and Makie data adapters, process-parallel scans/ensembles, symbolic cumulants, and checkpoint backends |
 
@@ -42,6 +45,6 @@ PermutationalInvariantDynamics
 
 ```@index
 Modules = [PermutationalInvariantDynamics]
-Pages = ["api/representation.md", "api/dynamics.md", "api/analysis.md", "api/solvers.md", "api/visualization.md", "streaming_output.md", "diffusive_monitoring.md", "weak_pi_trajectories.md", "correlations.md", "cumulant_bridge.md", "research_utilities.md", "composite_systems.md", "parameter_scans.md", "krylov_extensions.md", "heom.md", "convergence.md", "qudit_phase_space.md", "nonstabilizerness.md", "genuine_entanglement.md", "interoperability.md"]
+Pages = ["api/representation.md", "api/dynamics.md", "api/analysis.md", "api/solvers.md", "api/visualization.md", "streaming_output.md", "diffusive_monitoring.md", "weak_pi_trajectories.md", "correlations.md", "cumulant_bridge.md", "research_utilities.md", "composite_systems.md", "global_pseudomodes.md", "parameter_scans.md", "krylov_extensions.md", "heom.md", "hops.md", "convergence.md", "qudit_phase_space.md", "nonstabilizerness.md", "genuine_entanglement.md", "interoperability.md"]
 Order = [:type, :function, :constant, :macro]
 ```

@@ -150,7 +150,7 @@ end
             _weak_conditional_dopri_trial!(counted_work,decay_psi.data,
                 0.0,0.4,nothing,1e-11,1e-10)
         @test isfinite(hazard)&&isfinite(error)
-        @test weak_rate_calls[]==7
+        @test weak_rate_calls[]==6
         PermutationalInvariantDynamics._prepare_dopri_dense_output!(
             counted_work)
         root=PermutationalInvariantDynamics._dopri_dense_root(
@@ -158,7 +158,39 @@ end
         @test root!==nothing
         PermutationalInvariantDynamics._dopri_dense_state!(
             counted_work.tmp,decay_psi.data,counted_work,0.4,root/0.4)
-        @test weak_rate_calls[]==7
+        @test weak_rate_calls[]==6
+
+        weak_rate_calls[]=0
+        copyto!(counted_work.current,decay_psi.data)
+        PermutationalInvariantDynamics._weak_reset_effective_jump_cache!(
+            counted_work)
+        PermutationalInvariantDynamics._weak_conditional_rk4!(
+            counted_work.current,counted_work,0.0,0.1,nothing)
+        @test weak_rate_calls[]==3
+        PermutationalInvariantDynamics._weak_channel_intensities!(
+            counted_work,counted_work.current,0.1,nothing)
+        @test weak_rate_calls[]==3
+
+        weak_parameter_calls=Ref(0)
+        weak_parameter_plan=WeakPITrajectoryPlan(PIModel(decay_basis,
+            (LocalJump(sm;rate=(t,p)->begin
+                weak_parameter_calls[]+=1
+                p.gamma*(1+t)
+            end),)))
+        weak_parameter_work=WeakPITrajectoryWorkspace(
+            weak_parameter_plan,decay_psi)
+        weak_pi_quantum_trajectory(
+            weak_parameter_plan,decay_psi,[0.0,0.02];
+            dt=0.01,parameters=(gamma=0.1,),rng=MersenneTwister(1702),
+            workspace=weak_parameter_work)
+        @test weak_parameter_calls[]==5
+        @test weak_parameter_work.jump_scales[1]≈0.102
+        weak_pi_quantum_trajectory(
+            weak_parameter_plan,decay_psi,[0.0,0.02];
+            dt=0.01,parameters=(gamma=0.2,),rng=MersenneTwister(1702),
+            workspace=weak_parameter_work)
+        @test weak_parameter_calls[]==10
+        @test weak_parameter_work.jump_scales[1]≈0.204
 
         combined_plan=WeakPITrajectoryPlan(PIModel(decay_basis,
             (LocalJump(sm;rate=0.7),

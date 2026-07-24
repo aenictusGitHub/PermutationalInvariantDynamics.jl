@@ -17,7 +17,9 @@ script. Then choose the closest workflow below.
 | Study periodic dynamics | [`floquet_periodic_decay.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/floquet_periodic_decay.jl) | Reusable matrix-free period maps, selected multipliers, and a periodic state |
 | Compare density and Schur pseudo-ket paths | [`weak_pi_trajectories.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/weak_pi_trajectories.jl) | Fixed/event-driven weak-PI paths, confidence stopping, and stationary batch diagnostics |
 | Combine ensembles or an ancilla | [`composite_ensembles.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/composite_ensembles.jl) | Factorized composite coordinates and cross-system maps |
+| Couple the ensemble to one shared cavity | [`global_pseudomode_cavity.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/global_pseudomode_cavity.jl) | Collective Tavis--Cummings dynamics, factor reductions, and a mode-cutoff diagnostic |
 | Add a finite-memory bath | [`pi_heom.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/pi_heom.jl) | Exactly scaled ADOs, depth convergence, SciML construction, and a block-preconditioned steady solve |
+| Unravel one shared structured bath | [`pi_hops.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/pi_hops.jl) | Direct-sum Schur pure-state hierarchy, stationary colored noise, and an HEOM/analytic comparison |
 | Embed one truncated pseudomode per spin | [`debecker2026_all_to_all_ising_pseudomodes.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/debecker2026_all_to_all_ising_pseudomodes.jl) | Uniform-all-pair PI supersites, trajectory estimates, spin-only negativity, a strong-parity-reduced x-GHZ steady solve, and cutoff checks |
 
 Each script has a same-basename guide in the repository's `examples/`
@@ -139,6 +141,16 @@ unconditional generator and demonstrates state-free statistics plus
 trajectory-index reproducibility. See
 [Composite PI systems](composite_systems.md).
 
+## One shared cavity
+
+`examples/global_pseudomode_cavity.jl` specializes the composite backend to
+one finite cavity shared by a PI emitter ensemble. It evolves a damped
+Tavis--Cummings model, extracts atomic and photon observables, traces either
+factor directly, and monitors the highest cavity level without constructing a
+global Kronecker superoperator. The mode is one distinguished global factor,
+not one replicated auxiliary per emitter. See [Global pseudomodes and shared
+cavities](global_pseudomodes.md).
+
 ## Sector-resolved spin phase space
 
 `examples/spin_phase_space.jl` constructs a state occupying two total-spin
@@ -186,10 +198,19 @@ conditioning and stored auxiliary coordinates, not the root reduced state or
 the hierarchy truncation. See [PI--HEOM](heom.md) and [Numerical convergence
 reports](convergence.md).
 
-The example still uses a finite exponential decomposition and hard hierarchy
-boundary. Bath-decomposition error, depth error, and integration/Krylov error
-are separate refinements. The current backend supports fixed Hermitian global
-PI bath couplings; it does not infer residue corrections, terminators, or the
+`examples/pi_hops.jl` propagates the corresponding hierarchy of pure states
+in direct-sum Schur-irrep coordinates, averages unnormalized root outer
+products, and compares the result with both PI--HEOM and the analytic
+collective-dephasing coherence. Its shared bath is PI on every noise
+realization. Independent local colored noises are not replaced by a common
+noise and remain an HEOM or local-pseudomode problem. See
+[PI--HOPS](hops.md).
+
+Both hierarchy examples still use a finite exponential decomposition and a
+hard hierarchy boundary. Bath-decomposition error, depth error, integration
+error, and (for HOPS) sampling error are separate refinements. The HOPS
+backend supports fixed shared PI bath couplings, including non-Hermitian
+couplings; it does not infer residue corrections, terminators, or the
 specialized hierarchy for independent local non-Markovian baths.
 
 ## Uniform all-pair Ising spins with local pseudomodes

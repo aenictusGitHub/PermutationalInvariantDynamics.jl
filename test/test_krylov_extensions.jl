@@ -309,6 +309,26 @@
         @test near_breakdown.value≈
             exp(near_breakdown_operator)*ComplexF64[1,0] atol=2e-13 rtol=2e-13
 
+        # Rejected slices keep the same initial state. Their shorter projected
+        # exponentials therefore reuse one Arnoldi factorization and perform no
+        # additional full-space operator applications.
+        rejection_operator=diagm(0=>
+            ComplexF64.(range(-1,1;length=6)))
+        rejection_source=ones(ComplexF64,6)
+        rejection=krylov_expv(
+            rejection_operator,rejection_source,0.1;
+            krylovdim=4,initial_step=0.1,atol=1e-8,rtol=1e-7)
+        @test rejection.converged
+        @test rejection.rejected_steps>0
+        @test rejection.trial_evaluations==
+              rejection.accepted_steps+rejection.rejected_steps
+        @test rejection.arnoldi_factorizations==
+              rejection.accepted_steps
+        @test rejection.operator_applications==
+              4rejection.arnoldi_factorizations
+        @test rejection.value≈
+              exp(0.1rejection_operator)*rejection_source atol=2e-7 rtol=2e-7
+
         narrow_expv=KrylovExpvWorkspace(ComplexF32,n,6)
         @test_throws ArgumentError krylov_expv!(zeros(ComplexF32,n),A,
             ComplexF32.(b),0.4f0,narrow_expv)

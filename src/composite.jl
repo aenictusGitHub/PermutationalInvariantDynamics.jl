@@ -287,6 +287,517 @@ function trace(A::AbstractCompositePIOperator)
     total+correction
 end
 
+function _composite_reduced_factor_index(
+        basis::CompositePIBasis,factor::Integer)
+    factor isa Integer&&!(factor isa Bool)||throw(ArgumentError(
+        "the retained composite factor must be an integer"))
+    1<=factor<=length(basis.factors)||throw(BoundsError(
+        basis.factors,factor))
+    Int(factor)
+end
+
+"""
+    CompositeReductionPlan(basis, factor; T=Float64,
+                           memory_budget=512*1024^2)
+    CompositeReductionPlan(rho, factor; kwargs...)
+
+Prepare the exact contraction which traces every composite factor except
+`factor`. The plan packs only joint physical-diagonal source offsets, group
+boundaries, and exact products of Schur multiplicities. It never constructs
+the full composite trace vector or a Hilbert-space density matrix.
+
+For ordinary representable multiplicities, their square roots are converted
+once and the repeated contraction is allocation-free at machine precision. If
+a square root is not independently representable, the plan retains its exact
+`BigInt` multiplicity and a binary-scaled factor so application can fuse that
+scale with the traced value without premature overflow or underflow.
+
+The plan is immutable and may be shared. It is tied to the exact
+[`CompositePIBasis`](@ref), selected factor, scalar type, and, for `BigFloat`,
+the captured precision and rounding mode.
+"""
+struct CompositeReductionPlan{
+        R<:AbstractFloat,B<:CompositePIBasis,K,O,G,M,S,P,E,Q}
+    basis::B
+    kept_factor::Int
+    kept_basis::K
+    kept_dimension::Int
+    kept_stride::Int
+    traced_offsets::O
+    group_boundaries::G
+    exact_multiplicities::M
+    scales::S
+    prepared_scales::P
+    direct_scales::Bool
+    estimates::E
+    precision_bits::Int
+    rounding_mode::Q
+end
+
+function show(io::IO,plan::CompositeReductionPlan{R}) where R
+    print(io,
+        "CompositeReductionPlan(kept_factor=$(plan.kept_factor), " *
+        "input_dimension=$(length(plan.basis)), " *
+        "output_dimension=$(plan.kept_dimension), " *
+        "traced_offsets=$(length(plan.traced_offsets)), scalar_type=Complex{$R})")
+end
+
+function _composite_reduction_strides(basis::CompositePIBasis)
+    stride=1
+    ntuple(length(basis.factors)) do factor
+        current=stride
+        stride=Base.checked_mul(stride,basis.dimensions[factor])
+        current
+    end
+end
+
+function _composite_reduction_group_multiplicity(
+        combo,kept_factor::Int)
+    multiplicity=big(1)
+    for factor in eachindex(combo)
+        factor==kept_factor&&continue
+        multiplicity*=combo[factor].multiplicity
+    end
+    multiplicity
+end
+
+function _composite_reduction_group_diagonals(
+        combo,kept_factor::Int)
+    count=big(1)
+    for factor in eachindex(combo)
+        factor==kept_factor&&continue
+        count*=length(combo[factor].diagonal)
+    end
+    count
+end
+
+function _append_composite_reduction_offsets!(
+        offsets::Vector{Int},combo,strides,kept_factor::Int,
+        factor::Int,offset::Int)
+    if factor>length(combo)
+        push!(offsets,offset)
+        return offsets
+    end
+    if factor==kept_factor
+        return _append_composite_reduction_offsets!(
+            offsets,combo,strides,kept_factor,factor+1,offset)
+    end
+    @inbounds for coordinate in combo[factor].diagonal
+        _append_composite_reduction_offsets!(
+            offsets,combo,strides,kept_factor,factor+1,
+            offset+(coordinate-1)*strides[factor])
+    end
+    offsets
+end
+
+function CompositeReductionPlan(
+        basis::B,factor::Integer;T::Type{R}=Float64,
+        memory_budget=_DEFAULT_HIGHLEVEL_MEMORY_BUDGET) where
+        {B<:CompositePIBasis,R<:AbstractFloat}
+    isconcretetype(R)||throw(ArgumentError(
+        "T must be a concrete AbstractFloat type"))
+    kept_factor=_composite_reduced_factor_index(basis,factor)
+    kept_basis=basis.factors[kept_factor]
+    kept_dimension=basis.dimensions[kept_factor]
+    strides=_composite_reduction_strides(basis)
+    groups=ntuple(length(basis.factors)) do index
+        index==kept_factor ? (nothing,) :
+            Tuple(_composite_trace_groups(basis.factors[index]))
+    end
+    combinations=Iterators.product(groups...)
+
+    group_count=big(1)
+    for group in groups
+        group_count*=length(group)
+    end
+    group_count<=typemax(Int)||throw(ArgumentError(
+        "the number of composite reduction multiplicity groups exceeds Int indexing capacity"))
+    traced_count=big(0)
+    exact_payload_bytes=big(0)
+    for combo in combinations
+        traced_count+=_composite_reduction_group_diagonals(
+            combo,kept_factor)
+        multiplicity=_composite_reduction_group_multiplicity(
+            combo,kept_factor)
+        exact_payload_bytes+=cld(
+            BigInt(max(1,ndigits(multiplicity;base=2))),8)
+    end
+    traced_count<=typemax(Int)||throw(ArgumentError(
+        "the packed composite reduction diagonal count exceeds Int indexing capacity"))
+
+    precision_bits=R===BigFloat ? precision(BigFloat) : precision(R)
+    rounding_mode=R===BigFloat ? rounding(BigFloat) : nothing
+    int_bytes=BigInt(sizeof(Int))
+    pointer_bytes=BigInt(sizeof(Ptr{Cvoid}))
+    scalar_bytes=_scalar_retained_bytes(
+        R;bigfloat_precision=precision_bits)
+    # `big(::BigInt)` preserves object identity: each public exact
+    # multiplicity and the numerator in its prepared scale share one GMP
+    # payload. The separate exact-multiplicity vector therefore adds only
+    # references and gives callers direct, stable metadata without extracting
+    # a private prepared-scale field. Object/header allowances keep this a
+    # conservative guard rather than an allocator-specific byte promise.
+    exact_bytes=exact_payload_bytes+
+        group_count*(8pointer_bytes+6int_bytes)
+    # Vector/BigInt headers and the immutable plan object dominate tiny plans.
+    # This fixed allowance keeps the public guard conservative without making
+    # large packed-offset estimates allocator-specific.
+    container_bytes=128int_bytes
+    retained_bytes=
+        (traced_count+group_count+1)*int_bytes+
+        group_count*(4scalar_bytes+2int_bytes)+exact_bytes+
+        container_bytes
+    setup_peak_bytes=2retained_bytes+
+        (traced_count+group_count)*int_bytes
+    _require_performance_budget(
+        "composite reduction plan setup",setup_peak_bytes,memory_budget;
+        guidance="Reduce the number or dimensions of traced factors.")
+
+    offsets=Int[]
+    sizehint!(offsets,Int(traced_count))
+    boundaries=Int[1]
+    sizehint!(boundaries,Int(group_count)+1)
+    exact_multiplicities=BigInt[]
+    sizehint!(exact_multiplicities,Int(group_count))
+    scales=Vector{R}()
+    sizehint!(scales,Int(group_count))
+    prepared_scales=Vector{
+        _PreparedExactScale{R,true}}()
+    sizehint!(prepared_scales,Int(group_count))
+    direct_scales=true
+    for combo in combinations
+        multiplicity=_composite_reduction_group_multiplicity(
+            combo,kept_factor)
+        push!(exact_multiplicities,multiplicity)
+        prepared=_prepare_exact_scale(
+            R,multiplicity,big(1),Val(true);
+            context="composite reduction multiplicity scale")
+        push!(prepared_scales,prepared)
+        push!(scales,prepared.direct ? prepared.factor : zero(R))
+        direct_scales&=prepared.direct
+        _append_composite_reduction_offsets!(
+            offsets,combo,strides,kept_factor,1,0)
+        push!(boundaries,length(offsets)+1)
+    end
+    length(offsets)==Int(traced_count)||error(
+        "internal composite reduction diagonal-count mismatch")
+    length(exact_multiplicities)==Int(group_count)||error(
+        "internal composite reduction group-count mismatch")
+
+    estimates=(
+        input_dimension=length(basis),
+        output_dimension=kept_dimension,
+        traced_diagonal_count=traced_count,
+        multiplicity_group_count=group_count,
+        retained_bytes,setup_peak_bytes,
+        memory_budget=_memory_budget_bytes(memory_budget),
+        scalar_type=Complex{R},precision_bits,rounding_mode,
+        direct_scales)
+    CompositeReductionPlan{
+        R,B,typeof(kept_basis),typeof(offsets),typeof(boundaries),
+        typeof(exact_multiplicities),typeof(scales),
+        typeof(prepared_scales),typeof(estimates),typeof(rounding_mode)}(
+        basis,kept_factor,kept_basis,kept_dimension,
+        strides[kept_factor],offsets,boundaries,
+        exact_multiplicities,scales,prepared_scales,direct_scales,
+        estimates,precision_bits,rounding_mode)
+end
+
+function CompositeReductionPlan(
+        rho::CompositePIState,factor::Integer;
+        T::Type{R}=_real_float_type(eltype(rho.data)),
+        kwargs...) where R<:AbstractFloat
+    source_type=_real_float_type(eltype(rho.data))
+    R===source_type||throw(ArgumentError(
+        "T=$R does not match source-state scalar type $source_type; " *
+        "convert the state explicitly before preparing its reduction plan"))
+    if R===BigFloat
+        bounds=_composite_reduction_precision_bounds(rho.data)
+        bounds[1]==bounds[2]||throw(ArgumentError(
+            "source-state BigFloat storage has mixed precision range " *
+            "$bounds; rebuild it at one precision"))
+        input_precision=bounds[1]
+        if precision(BigFloat)!=input_precision
+            return setprecision(BigFloat,input_precision) do
+                CompositeReductionPlan(rho.basis,factor;T,kwargs...)
+            end
+        end
+    end
+    CompositeReductionPlan(rho.basis,factor;T,kwargs...)
+end
+
+function _composite_reduction_precision_bounds(values)
+    isempty(values)&&return (precision(BigFloat),precision(BigFloat))
+    minimum_precision=typemax(Int)
+    maximum_precision=0
+    for value in values
+        value_precision=max(
+            precision(real(value)),precision(imag(value)))
+        minimum_precision=min(minimum_precision,value_precision)
+        maximum_precision=max(maximum_precision,value_precision)
+    end
+    minimum_precision,maximum_precision
+end
+
+function _check_composite_reduction_resources(
+        destination::AbstractArray,rho::CompositePIState,
+        plan::CompositeReductionPlan{R}) where R
+    rho.basis===plan.basis||throw(ArgumentError(
+        "CompositeReductionPlan was prepared for a different CompositePIBasis"))
+    length(destination)==plan.kept_dimension||throw(DimensionMismatch(
+        "the reduced-state destination has the wrong length"))
+    Base.mightalias(destination,rho.data)&&throw(ArgumentError(
+        "composite_reduced_state! requires a destination which does not alias the source"))
+    required=Complex{R}
+    eltype(rho.data)===required||throw(ArgumentError(
+        "source state scalar type $(eltype(rho.data)) does not match " *
+        "CompositeReductionPlan scalar type $required; rebuild the plan from the state"))
+    eltype(destination)===required||throw(ArgumentError(
+        "destination scalar type $(eltype(destination)) does not match " *
+        "CompositeReductionPlan scalar type $required"))
+    if R===BigFloat
+        for (name,values) in (
+                ("source state",rho.data),
+                ("destination",destination))
+            bounds=_composite_reduction_precision_bounds(values)
+            bounds==(plan.precision_bits,plan.precision_bits)||throw(
+                ArgumentError(
+                    "$name BigFloat storage has precision range $bounds, " *
+                    "but the CompositeReductionPlan requires " *
+                    "$(plan.precision_bits) bits"))
+        end
+    end
+    nothing
+end
+
+@inline function _composite_reduction_group_sum(
+        source,offsets,begins::Int,stops::Int,kept_offset::Int)
+    total=zero(eltype(source))
+    @inbounds for index in begins:stops
+        total+=source[kept_offset+offsets[index]+1]
+    end
+    total
+end
+
+@inline function _composite_reduction_direct_scale(
+        input::Real,factor::R,
+        prepared::_PreparedExactScale{R,true}) where R<:AbstractFloat
+    iszero(input)&&return R(input)*factor
+    value=R(input)
+    result=value*factor
+    fixed_ieee=R===Float16||R===Float32||R===Float64
+    endpoint=fixed_ieee&&(
+        abs(result)==floatmax(R)||
+        abs(result)==nextfloat(zero(R)))
+    if !isfinite(result)||iszero(result)||endpoint
+        return _apply_prepared_exact_scale(
+            value,prepared;
+            context="composite reduced-state trace contribution")
+    end
+    result
+end
+
+@inline function _composite_reduction_direct_scale(
+        input::Complex,factor::R,
+        prepared::_PreparedExactScale{R,true}) where R<:AbstractFloat
+    complex(
+        _composite_reduction_direct_scale(
+            real(input),factor,prepared),
+        _composite_reduction_direct_scale(
+            imag(input),factor,prepared))
+end
+
+function _composite_reduced_state_direct!(
+        destination,rho::CompositePIState,
+        plan::CompositeReductionPlan)
+    source=rho.data
+    boundaries=plan.group_boundaries
+    offsets=plan.traced_offsets
+    scales=plan.scales
+    prepared_scales=plan.prepared_scales
+    @inbounds for kept_coordinate in 1:plan.kept_dimension
+        kept_offset=(kept_coordinate-1)*plan.kept_stride
+        total=zero(eltype(destination))
+        correction=zero(eltype(destination))
+        for group in eachindex(scales)
+            block_trace=_composite_reduction_group_sum(
+                source,offsets,boundaries[group],
+                boundaries[group+1]-1,kept_offset)
+            contribution=_composite_reduction_direct_scale(
+                block_trace,scales[group],prepared_scales[group])
+            updated=total+contribution
+            correction+=abs(total)>=abs(contribution) ?
+                (total-updated)+contribution :
+                (contribution-updated)+total
+            total=updated
+        end
+        destination[kept_coordinate]=total+correction
+    end
+    destination
+end
+
+function _composite_reduced_state_scaled!(
+        destination,rho::CompositePIState,
+        plan::CompositeReductionPlan)
+    source=rho.data
+    boundaries=plan.group_boundaries
+    offsets=plan.traced_offsets
+    scales=plan.prepared_scales
+    @inbounds for kept_coordinate in 1:plan.kept_dimension
+        kept_offset=(kept_coordinate-1)*plan.kept_stride
+        total=zero(eltype(destination))
+        correction=zero(eltype(destination))
+        for group in eachindex(scales)
+            block_trace=_composite_reduction_group_sum(
+                source,offsets,boundaries[group],
+                boundaries[group+1]-1,kept_offset)
+            contribution=_apply_prepared_exact_scale(
+                block_trace,scales[group];
+                context="composite reduced-state trace contribution")
+            updated=total+contribution
+            correction+=abs(total)>=abs(contribution) ?
+                (total-updated)+contribution :
+                (contribution-updated)+total
+            total=updated
+        end
+        destination[kept_coordinate]=total+correction
+    end
+    destination
+end
+
+function _composite_reduced_state_data!(
+        destination::AbstractArray,rho::CompositePIState,
+        plan::CompositeReductionPlan{R}) where R
+    _check_composite_reduction_resources(destination,rho,plan)
+    if R===BigFloat&&
+            (precision(BigFloat)!=plan.precision_bits||
+             rounding(BigFloat)!=plan.rounding_mode)
+        return setrounding(BigFloat,plan.rounding_mode) do
+            setprecision(BigFloat,plan.precision_bits) do
+                _composite_reduced_state_data!(destination,rho,plan)
+            end
+        end
+    end
+    plan.direct_scales ?
+        _composite_reduced_state_direct!(destination,rho,plan) :
+        _composite_reduced_state_scaled!(destination,rho,plan)
+end
+
+function _composite_reduced_state_data!(
+        destination::AbstractArray,rho::CompositePIState,
+        kept_factor::Int)
+    plan=CompositeReductionPlan(rho,kept_factor)
+    _composite_reduced_state_data!(destination,rho,plan)
+end
+
+"""
+    composite_reduced_state!(destination, rho, factor;
+                             memory_budget=512*1024^2)
+    composite_reduced_state!(destination, rho, plan)
+
+Trace every composite factor except `factor` directly in tensor-product
+operator coordinates. For a retained [`PIBasis`](@ref), `destination` must be
+a [`PIState`](@ref) on the exact retained basis. For a retained
+[`FiniteOperatorBasis`](@ref), it must be a square matrix of that factor's
+Hilbert-space dimension.
+
+The contraction visits only physical diagonal coordinates of traced factors,
+uses exact products of Schur multiplicities, and never reconstructs a
+many-particle Hilbert space or a full tensor-product trace vector. Source and
+destination must not alias.
+"""
+function composite_reduced_state!(
+        destination::PIState,rho::CompositePIState,factor::Integer;
+        memory_budget=_DEFAULT_HIGHLEVEL_MEMORY_BUDGET)
+    selected=_composite_reduced_factor_index(rho.basis,factor)
+    retained=rho.basis.factors[selected]
+    retained isa PIBasis||throw(ArgumentError(
+        "a PIState destination requires retaining a PIBasis factor"))
+    destination.basis===retained||throw(ArgumentError(
+        "the reduced PI destination belongs to a different PIBasis object"))
+    plan=CompositeReductionPlan(
+        rho,selected;memory_budget)
+    composite_reduced_state!(destination,rho,plan)
+end
+
+function composite_reduced_state!(
+        destination::PIState,rho::CompositePIState,
+        plan::CompositeReductionPlan)
+    plan.kept_basis isa PIBasis||throw(ArgumentError(
+        "a PIState destination requires a plan retaining a PIBasis factor"))
+    destination.basis===plan.kept_basis||throw(ArgumentError(
+        "the reduced PI destination belongs to a different PIBasis object"))
+    _composite_reduced_state_data!(destination.data,rho,plan)
+    destination
+end
+
+function composite_reduced_state!(
+        destination::AbstractMatrix,rho::CompositePIState,factor::Integer;
+        memory_budget=_DEFAULT_HIGHLEVEL_MEMORY_BUDGET)
+    selected=_composite_reduced_factor_index(rho.basis,factor)
+    retained=rho.basis.factors[selected]
+    retained isa FiniteOperatorBasis||throw(ArgumentError(
+        "a matrix destination requires retaining a FiniteOperatorBasis factor"))
+    size(destination)==(retained.d,retained.d)||throw(DimensionMismatch(
+        "the reduced finite-factor destination must be $(retained.d)×$(retained.d)"))
+    plan=CompositeReductionPlan(
+        rho,selected;memory_budget)
+    composite_reduced_state!(destination,rho,plan)
+end
+
+function composite_reduced_state!(
+        destination::AbstractMatrix,rho::CompositePIState,
+        plan::CompositeReductionPlan)
+    retained=plan.kept_basis
+    retained isa FiniteOperatorBasis||throw(ArgumentError(
+        "a matrix destination requires a plan retaining a FiniteOperatorBasis factor"))
+    size(destination)==(retained.d,retained.d)||throw(DimensionMismatch(
+        "the reduced finite-factor destination must be $(retained.d)×$(retained.d)"))
+    _composite_reduced_state_data!(destination,rho,plan)
+    destination
+end
+
+"""
+    composite_reduced_state(rho, factor; memory_budget=512*1024^2)
+    composite_reduced_state(rho, plan)
+
+Return the state of one retained composite factor after tracing all other
+factors. A PI factor returns a [`PIState`](@ref), while an ordinary finite
+factor returns its dense density matrix. No normalization or state repair is
+performed.
+"""
+function composite_reduced_state(
+        rho::CompositePIState,factor::Integer;
+        memory_budget=_DEFAULT_HIGHLEVEL_MEMORY_BUDGET)
+    plan=CompositeReductionPlan(
+        rho,factor;memory_budget)
+    composite_reduced_state(rho,plan)
+end
+
+function composite_reduced_state(
+        rho::CompositePIState,plan::CompositeReductionPlan{R}) where R
+    if R===BigFloat&&
+            (precision(BigFloat)!=plan.precision_bits||
+             rounding(BigFloat)!=plan.rounding_mode)
+        return setrounding(BigFloat,plan.rounding_mode) do
+            setprecision(BigFloat,plan.precision_bits) do
+                # Allocate both PI and finite destinations inside the exact
+                # arithmetic context captured by the immutable plan. Entering
+                # only inside the in-place contraction would leave newly
+                # allocated BigFloat storage at the ambient precision.
+                composite_reduced_state(rho,plan)
+            end
+        end
+    end
+    retained=plan.kept_basis
+    if retained isa PIBasis
+        destination=PIState(retained;T=R)
+        return composite_reduced_state!(destination,rho,plan)
+    end
+    destination=zeros(Complex{R},retained.d,retained.d)
+    composite_reduced_state!(destination,rho,plan)
+end
+
 """Normalize a composite state by its physical trace, without other repair."""
 function normalize!(rho::CompositePIState)
     z=trace(rho)
@@ -539,6 +1050,7 @@ size(S::CompositeSuperoperator)=(length(S.basis),length(S.basis))
 size(S::CompositeSuperoperator,i::Integer)=i in (1,2) ? length(S.basis) : 1
 eltype(S::CompositeSuperoperator)=S.Ttype
 isautonomous(S::CompositeSuperoperator)=S.autonomous
+_fixed_composite_action_type(S::CompositeSuperoperator)=eltype(S)
 
 function +(A::CompositeSuperoperator,B::CompositeSuperoperator)
     A.basis===B.basis||throw(ArgumentError("incompatible composite bases"))
@@ -560,6 +1072,8 @@ _composite_nested_workspace(plan::LiouvillianPlan)=LiouvillianWorkspace(plan)
 _composite_nested_workspace(compiled::CompiledPIModel)=LiouvillianWorkspace(compiled)
 _composite_nested_workspace(L::MatrixFreeLiouvillian)=
     L.plan===nothing ? nothing : LiouvillianWorkspace(L.plan)
+_composite_nested_workspace(S::CompositeSuperoperator)=
+    CompositeSuperoperatorWorkspace(S)
 _composite_nested_workspace(action)=nothing
 
 function _factor_workspace(action,n,::Type{T}) where T
@@ -609,6 +1123,86 @@ CompositeSuperoperatorWorkspace(S::CompositeSuperoperator,
                                 source::AbstractVector)=
     CompositeSuperoperatorWorkspace(S;T=promote_type(eltype(S),eltype(source)))
 
+struct _CompositeFactorBatchWorkspace{M,W}
+    input::M
+    output::M
+    action_workspace::W
+end
+struct _CompositeTermBatchWorkspace{W<:Tuple}
+    factors::W
+end
+
+function _composite_nested_batch_workspace(action,capacity::Int)
+    work=_composite_nested_workspace(action)
+    if work isa LiouvillianWorkspace
+        _ensure_batch_capacity!(work.batch,capacity)
+    elseif work isa CompositeSuperoperatorWorkspace
+        return CompositeSuperoperatorBatchWorkspace(
+            work.superoperator;capacity,T=eltype(work.buffer1))
+    end
+    work
+end
+
+function _factor_batch_workspace(action,n,capacity::Int,::Type{T}) where T
+    action===nothing&&return nothing
+    _CompositeFactorBatchWorkspace(
+        zeros(T,n,capacity),zeros(T,n,capacity),
+        _composite_nested_batch_workspace(action,capacity))
+end
+
+"""
+    CompositeSuperoperatorBatchWorkspace(S; capacity, T=eltype(S))
+
+Task-owned, fixed-capacity scratch for matrix right-hand sides of a
+[`CompositeSuperoperator`](@ref). The workspace batches equal tensor fibers
+from all supplied right-hand sides through each factor map. It never forms a
+global Kronecker matrix and never grows after construction: applying more than
+`capacity` columns raises.
+"""
+struct CompositeSuperoperatorBatchWorkspace{S,M,W<:Tuple}
+    superoperator::S
+    capacity::Int
+    buffer1::M
+    buffer2::M
+    terms::W
+end
+
+function CompositeSuperoperatorBatchWorkspace(
+        S::CompositeSuperoperator;capacity::Integer,T=eltype(S))
+    capacity isa Integer&&!(capacity isa Bool)&&capacity>0||
+        throw(ArgumentError("batch capacity must be a positive integer"))
+    BigInt(capacity)<=typemax(Int)||throw(ArgumentError(
+        "batch capacity must be representable as an Int"))
+    cap=Int(capacity)
+    resolved_type=_composite_coordinate_type(T)
+    promote_type(resolved_type,eltype(S))==resolved_type||throw(ArgumentError(
+        "workspace scalar type $resolved_type would narrow composite superoperator $(eltype(S))"))
+    if _real_float_type(resolved_type)!=_real_float_type(eltype(S))&&
+       any(action->action!==nothing&&
+           _fixed_composite_action_type(action)!==nothing,
+           (action for term in S.terms for action in term.actions))
+        throw(ArgumentError(
+            "a wider composite workspace is incompatible with a fixed-precision "*
+            "prepared PI factor action; compile that action and construct the "*
+            "composite superoperator at the wider precision"))
+    end
+    term_workspaces=map(S.terms) do term
+        factors=map((action,n)->_factor_batch_workspace(
+                        action,n,cap,resolved_type),
+                    term.actions,S.basis.dimensions)
+        _CompositeTermBatchWorkspace(factors)
+    end
+    CompositeSuperoperatorBatchWorkspace(
+        S,cap,zeros(resolved_type,length(S.basis),cap),
+        zeros(resolved_type,length(S.basis),cap),term_workspaces)
+end
+
+CompositeSuperoperatorBatchWorkspace(
+    S::CompositeSuperoperator,source::AbstractMatrix)=
+    CompositeSuperoperatorBatchWorkspace(
+        S;capacity=size(source,2),
+        T=promote_type(eltype(S),eltype(source)))
+
 function _composite_factor_apply!(y,A::AbstractMatrix,x,t,p,work)
     mul!(y,A,x)
 end
@@ -624,8 +1218,46 @@ function _composite_factor_apply!(y,A::MatrixFreeLiouvillian,x,t,p,
                                   work)
     work===nothing ? apply!(y,A,x,t,p) : apply!(y,A,x,t,p,work)
 end
+function _composite_factor_apply!(
+        y,A::CompositeSuperoperator,x,t,p,
+        work::CompositeSuperoperatorWorkspace)
+    apply!(y,A,x,t,p,work)
+end
 function _composite_factor_apply!(y,A,x,t,p,work)
     apply!(y,A,x,t,p)
+end
+
+function _composite_factor_apply_adjoint!(
+        y,A::AbstractMatrix,x,t,p,work)
+    mul!(y,adjoint(A),x)
+end
+function _composite_factor_apply_adjoint!(
+        y,A::LiouvillianPlan,x,t,p,work::LiouvillianWorkspace)
+    apply_adjoint!(y,A,x,t,p,work)
+end
+function _composite_factor_apply_adjoint!(
+        y,A::CompiledPIModel,x,t,p,work::LiouvillianWorkspace)
+    apply_adjoint!(y,A,x,t,p,work)
+end
+function _composite_factor_apply_adjoint!(
+        y,A::MatrixFreeLiouvillian,x,t,p,work)
+    if A.plan===nothing&&getfield(A,:adjoint_action!)===nothing&&
+            getfield(A,:batched_adjoint_action!)===nothing
+        throw(ArgumentError(
+            "a factor MatrixFreeLiouvillian has no explicit adjoint action"))
+    end
+    work===nothing ? apply_adjoint!(y,A,x,t,p) :
+                     apply_adjoint!(y,A,x,t,p,work)
+end
+function _composite_factor_apply_adjoint!(
+        y,A::CompositeSuperoperator,x,t,p,
+        work::CompositeSuperoperatorWorkspace)
+    apply_adjoint!(y,A,x,t,p,work)
+end
+function _composite_factor_apply_adjoint!(y,A,x,t,p,work)
+    applicable(apply_adjoint!,y,A,x,t,p)||throw(ArgumentError(
+        "composite factor action $(typeof(A)) has no explicit adjoint application"))
+    apply_adjoint!(y,A,x,t,p)
 end
 
 function _apply_tensor_mode_generic!(destination,action,source,factor::Int,dims,
@@ -643,6 +1275,29 @@ function _apply_tensor_mode_generic!(destination,action,source,factor::Int,dims,
         end
         _composite_factor_apply!(work.output,action,work.input,t,p,
                                  work.action_workspace)
+        for j in 1:n
+            destination[base+(j-1)*stride]=work.output[j]
+        end
+    end
+    destination
+end
+
+function _apply_tensor_mode_adjoint!(
+        destination,action,source,factor::Int,dims,t,p,
+        work::_CompositeFactorWorkspace)
+    stride=1
+    @inbounds for i in 1:factor-1
+        stride*=dims[i]
+    end
+    n=dims[factor]
+    outer=length(source)÷(stride*n)
+    @inbounds for block in 0:outer-1,inner in 1:stride
+        base=block*stride*n+inner
+        for j in 1:n
+            work.input[j]=source[base+(j-1)*stride]
+        end
+        _composite_factor_apply_adjoint!(
+            work.output,action,work.input,t,p,work.action_workspace)
         for j in 1:n
             destination[base+(j-1)*stride]=work.output[j]
         end
@@ -707,6 +1362,151 @@ end
     _apply_tensor_mode_generic!(destination,action,source,factor,dims,t,p,work)
 end
 
+function _composite_factor_apply_batch!(
+        y,A::AbstractMatrix,x,t,p,work)
+    mul!(y,A,x)
+end
+function _composite_factor_apply_batch!(
+        y,A::LiouvillianPlan,x,t,p,work::LiouvillianWorkspace)
+    apply!(y,A,x,t,p,work)
+end
+function _composite_factor_apply_batch!(
+        y,A::CompiledPIModel,x,t,p,work::LiouvillianWorkspace)
+    apply!(y,A,x,t,p,work)
+end
+function _composite_factor_apply_batch!(
+        y,A::MatrixFreeLiouvillian,x,t,p,work)
+    work===nothing ? apply!(y,A,x,t,p) : apply!(y,A,x,t,p,work)
+end
+function _composite_factor_apply_batch!(
+        y,A::CompositeSuperoperator,x,t,p,
+        work::CompositeSuperoperatorBatchWorkspace)
+    apply!(y,A,x,t,p,work)
+end
+function _composite_factor_apply_batch!(y,A,x,t,p,work)
+    if work!==nothing&&applicable(apply!,y,A,x,t,p,work)
+        return apply!(y,A,x,t,p,work)
+    elseif applicable(apply!,y,A,x,t,p)
+        return apply!(y,A,x,t,p)
+    end
+    for column in axes(x,2)
+        _composite_factor_apply!(
+            view(y,:,column),A,view(x,:,column),t,p,work)
+    end
+    y
+end
+
+function _composite_factor_apply_adjoint_batch!(
+        y,A::AbstractMatrix,x,t,p,work)
+    mul!(y,adjoint(A),x)
+end
+function _composite_factor_apply_adjoint_batch!(
+        y,A::LiouvillianPlan,x,t,p,work::LiouvillianWorkspace)
+    apply_adjoint!(y,A,x,t,p,work)
+end
+function _composite_factor_apply_adjoint_batch!(
+        y,A::CompiledPIModel,x,t,p,work::LiouvillianWorkspace)
+    apply_adjoint!(y,A,x,t,p,work)
+end
+function _composite_factor_apply_adjoint_batch!(
+        y,A::MatrixFreeLiouvillian,x,t,p,work)
+    if A.plan===nothing&&getfield(A,:adjoint_action!)===nothing&&
+            getfield(A,:batched_adjoint_action!)===nothing
+        throw(ArgumentError(
+            "a factor MatrixFreeLiouvillian has no explicit adjoint action"))
+    end
+    work===nothing ? apply_adjoint!(y,A,x,t,p) :
+                     apply_adjoint!(y,A,x,t,p,work)
+end
+function _composite_factor_apply_adjoint_batch!(
+        y,A::CompositeSuperoperator,x,t,p,
+        work::CompositeSuperoperatorBatchWorkspace)
+    apply_adjoint!(y,A,x,t,p,work)
+end
+function _composite_factor_apply_adjoint_batch!(y,A,x,t,p,work)
+    if work!==nothing&&applicable(apply_adjoint!,y,A,x,t,p,work)
+        return apply_adjoint!(y,A,x,t,p,work)
+    elseif applicable(apply_adjoint!,y,A,x,t,p)
+        return apply_adjoint!(y,A,x,t,p)
+    end
+    for column in axes(x,2)
+        _composite_factor_apply_adjoint!(
+            view(y,:,column),A,view(x,:,column),t,p,work)
+    end
+    y
+end
+
+function _apply_tensor_mode_batch_generic!(
+        destination,action,source,factor::Int,dims,t,p,
+        work::_CompositeFactorBatchWorkspace,columns::Int,
+        adjoint_action::Bool)
+    stride=1
+    @inbounds for index in 1:factor-1
+        stride*=dims[index]
+    end
+    n=dims[factor]
+    outer=size(source,1)÷(stride*n)
+    input=view(work.input,:,1:columns)
+    output=view(work.output,:,1:columns)
+    @inbounds for block in 0:outer-1,inner in 1:stride
+        base=block*stride*n+inner
+        for column in 1:columns,j in 1:n
+            input[j,column]=source[base+(j-1)*stride,column]
+        end
+        if adjoint_action
+            _composite_factor_apply_adjoint_batch!(
+                output,action,input,t,p,work.action_workspace)
+        else
+            _composite_factor_apply_batch!(
+                output,action,input,t,p,work.action_workspace)
+        end
+        for column in 1:columns,j in 1:n
+            destination[base+(j-1)*stride,column]=output[j,column]
+        end
+    end
+    destination
+end
+
+@inline function _apply_tensor_mode_batch!(
+        destination,action,source,factor::Int,dims,t,p,
+        work::_CompositeFactorBatchWorkspace,columns::Int)
+    _apply_tensor_mode_batch_generic!(
+        destination,action,source,factor,dims,t,p,work,columns,false)
+end
+
+@inline function _apply_tensor_mode_batch!(
+        destination::StridedMatrix{T},action::StridedMatrix{T},
+        source::StridedMatrix{T},factor::Int,dims,t,p,
+        work::_CompositeFactorBatchWorkspace,columns::Int) where T
+    if factor==1
+        n=dims[1]
+        mul!(reshape(destination,n,:),action,reshape(source,n,:))
+        return destination
+    end
+    _apply_tensor_mode_batch_generic!(
+        destination,action,source,factor,dims,t,p,work,columns,false)
+end
+
+@inline function _apply_tensor_mode_adjoint_batch!(
+        destination,action,source,factor::Int,dims,t,p,
+        work::_CompositeFactorBatchWorkspace,columns::Int)
+    _apply_tensor_mode_batch_generic!(
+        destination,action,source,factor,dims,t,p,work,columns,true)
+end
+
+@inline function _apply_tensor_mode_adjoint_batch!(
+        destination::StridedMatrix{T},action::StridedMatrix{T},
+        source::StridedMatrix{T},factor::Int,dims,t,p,
+        work::_CompositeFactorBatchWorkspace,columns::Int) where T
+    if factor==1
+        n=dims[1]
+        mul!(reshape(destination,n,:),adjoint(action),reshape(source,n,:))
+        return destination
+    end
+    _apply_tensor_mode_batch_generic!(
+        destination,action,source,factor,dims,t,p,work,columns,true)
+end
+
 function _checked_composite_coefficient(::Type{T},value) where T
     value isa Number||throw(ArgumentError(
         "a composite term coefficient must evaluate to a number"))
@@ -746,12 +1546,111 @@ end
         Base.tail(workspaces),dims,factor+1,!use_second,t,p)
 end
 
+@inline function _apply_composite_adjoint_actions!(
+        source,buffer1,buffer2,::Tuple{},::Tuple{},dims,
+        factor::Int,use_second::Bool,t,p)
+    source
+end
+
+@inline function _apply_composite_adjoint_actions!(
+        source,buffer1,buffer2,
+        actions::Tuple{Nothing,Vararg{Any}},
+        workspaces::Tuple{Nothing,Vararg{Any}},dims,factor::Int,
+        use_second::Bool,t,p)
+    _apply_composite_adjoint_actions!(
+        source,buffer1,buffer2,Base.tail(actions),
+        Base.tail(workspaces),dims,factor+1,use_second,t,p)
+end
+
+@inline function _apply_composite_adjoint_actions!(
+        source,buffer1,buffer2,
+        actions::Tuple{A,Vararg{Any}},
+        workspaces::Tuple{W,Vararg{Any}},dims,factor::Int,
+        use_second::Bool,t,p) where {A,W}
+    destination=use_second ? buffer2 : buffer1
+    _apply_tensor_mode_adjoint!(
+        destination,first(actions),source,factor,dims,t,p,
+        first(workspaces))
+    _apply_composite_adjoint_actions!(
+        destination,buffer1,buffer2,Base.tail(actions),
+        Base.tail(workspaces),dims,factor+1,!use_second,t,p)
+end
+
+@inline _apply_composite_batch_actions!(
+    source,buffer1,buffer2,::Tuple{},::Tuple{},dims,
+    factor::Int,use_second::Bool,t,p,columns::Int)=source
+
+@inline function _apply_composite_batch_actions!(
+        source,buffer1,buffer2,
+        actions::Tuple{Nothing,Vararg{Any}},
+        workspaces::Tuple{Nothing,Vararg{Any}},dims,factor::Int,
+        use_second::Bool,t,p,columns::Int)
+    _apply_composite_batch_actions!(
+        source,buffer1,buffer2,Base.tail(actions),
+        Base.tail(workspaces),dims,factor+1,use_second,t,p,columns)
+end
+
+@inline function _apply_composite_batch_actions!(
+        source,buffer1,buffer2,
+        actions::Tuple{A,Vararg{Any}},
+        workspaces::Tuple{W,Vararg{Any}},dims,factor::Int,
+        use_second::Bool,t,p,columns::Int) where {A,W}
+    destination=use_second ? buffer2 : buffer1
+    _apply_tensor_mode_batch!(
+        destination,first(actions),source,factor,dims,t,p,
+        first(workspaces),columns)
+    _apply_composite_batch_actions!(
+        destination,buffer1,buffer2,Base.tail(actions),
+        Base.tail(workspaces),dims,factor+1,!use_second,t,p,columns)
+end
+
+@inline _apply_composite_adjoint_batch_actions!(
+    source,buffer1,buffer2,::Tuple{},::Tuple{},dims,
+    factor::Int,use_second::Bool,t,p,columns::Int)=source
+
+@inline function _apply_composite_adjoint_batch_actions!(
+        source,buffer1,buffer2,
+        actions::Tuple{Nothing,Vararg{Any}},
+        workspaces::Tuple{Nothing,Vararg{Any}},dims,factor::Int,
+        use_second::Bool,t,p,columns::Int)
+    _apply_composite_adjoint_batch_actions!(
+        source,buffer1,buffer2,Base.tail(actions),
+        Base.tail(workspaces),dims,factor+1,use_second,t,p,columns)
+end
+
+@inline function _apply_composite_adjoint_batch_actions!(
+        source,buffer1,buffer2,
+        actions::Tuple{A,Vararg{Any}},
+        workspaces::Tuple{W,Vararg{Any}},dims,factor::Int,
+        use_second::Bool,t,p,columns::Int) where {A,W}
+    destination=use_second ? buffer2 : buffer1
+    _apply_tensor_mode_adjoint_batch!(
+        destination,first(actions),source,factor,dims,t,p,
+        first(workspaces),columns)
+    _apply_composite_adjoint_batch_actions!(
+        destination,buffer1,buffer2,Base.tail(actions),
+        Base.tail(workspaces),dims,factor+1,!use_second,t,p,columns)
+end
+
 @inline function _apply_composite_term!(y,S,x,term,termwork,t,p,
                                         buffer1,buffer2)
     source=_apply_composite_actions!(x,buffer1,buffer2,term.actions,
         termwork.factors,S.basis.dimensions,1,false,t,p)
     coefficient=_checked_composite_coefficient(eltype(y),
         value_at(term.coefficient,t,p))
+    @inbounds @simd for i in eachindex(y,source)
+        y[i]+=coefficient*source[i]
+    end
+    y
+end
+
+@inline function _apply_composite_adjoint_term!(
+        y,S,x,term,termwork,t,p,buffer1,buffer2)
+    source=_apply_composite_adjoint_actions!(
+        x,buffer1,buffer2,term.actions,termwork.factors,
+        S.basis.dimensions,1,false,t,p)
+    coefficient=_checked_composite_coefficient(
+        eltype(y),conj(value_at(term.coefficient,t,p)))
     @inbounds @simd for i in eachindex(y,source)
         y[i]+=coefficient*source[i]
     end
@@ -769,6 +1668,77 @@ end
                            buffer1,buffer2)
     _apply_composite_terms!(y,S,x,Base.tail(terms),Base.tail(workspaces),
                             t,p,buffer1,buffer2)
+end
+
+@inline _apply_composite_adjoint_terms!(
+    y,S,x,::Tuple{},::Tuple{},t,p,buffer1,buffer2)=y
+@inline function _apply_composite_adjoint_terms!(
+        y,S,x,terms::Tuple{Term,Vararg{Any}},
+        workspaces::Tuple{Work,Vararg{Any}},t,p,buffer1,buffer2) where
+        {Term,Work}
+    _apply_composite_adjoint_term!(
+        y,S,x,first(terms),first(workspaces),t,p,buffer1,buffer2)
+    _apply_composite_adjoint_terms!(
+        y,S,x,Base.tail(terms),Base.tail(workspaces),
+        t,p,buffer1,buffer2)
+end
+
+@inline function _apply_composite_batch_term!(
+        y,S,x,term,termwork,t,p,buffer1,buffer2,columns::Int)
+    source=_apply_composite_batch_actions!(
+        x,buffer1,buffer2,term.actions,termwork.factors,
+        S.basis.dimensions,1,false,t,p,columns)
+    coefficient=_checked_composite_coefficient(
+        eltype(y),value_at(term.coefficient,t,p))
+    @inbounds for column in 1:columns
+        @simd for index in axes(y,1)
+            y[index,column]+=coefficient*source[index,column]
+        end
+    end
+    y
+end
+
+@inline function _apply_composite_adjoint_batch_term!(
+        y,S,x,term,termwork,t,p,buffer1,buffer2,columns::Int)
+    source=_apply_composite_adjoint_batch_actions!(
+        x,buffer1,buffer2,term.actions,termwork.factors,
+        S.basis.dimensions,1,false,t,p,columns)
+    coefficient=_checked_composite_coefficient(
+        eltype(y),conj(value_at(term.coefficient,t,p)))
+    @inbounds for column in 1:columns
+        @simd for index in axes(y,1)
+            y[index,column]+=coefficient*source[index,column]
+        end
+    end
+    y
+end
+
+@inline _apply_composite_batch_terms!(
+    y,S,x,::Tuple{},::Tuple{},t,p,buffer1,buffer2,columns::Int)=y
+@inline function _apply_composite_batch_terms!(
+        y,S,x,terms::Tuple{Term,Vararg{Any}},
+        workspaces::Tuple{Work,Vararg{Any}},t,p,buffer1,buffer2,
+        columns::Int) where {Term,Work}
+    _apply_composite_batch_term!(
+        y,S,x,first(terms),first(workspaces),t,p,
+        buffer1,buffer2,columns)
+    _apply_composite_batch_terms!(
+        y,S,x,Base.tail(terms),Base.tail(workspaces),t,p,
+        buffer1,buffer2,columns)
+end
+
+@inline _apply_composite_adjoint_batch_terms!(
+    y,S,x,::Tuple{},::Tuple{},t,p,buffer1,buffer2,columns::Int)=y
+@inline function _apply_composite_adjoint_batch_terms!(
+        y,S,x,terms::Tuple{Term,Vararg{Any}},
+        workspaces::Tuple{Work,Vararg{Any}},t,p,buffer1,buffer2,
+        columns::Int) where {Term,Work}
+    _apply_composite_adjoint_batch_term!(
+        y,S,x,first(terms),first(workspaces),t,p,
+        buffer1,buffer2,columns)
+    _apply_composite_adjoint_batch_terms!(
+        y,S,x,Base.tail(terms),Base.tail(workspaces),t,p,
+        buffer1,buffer2,columns)
 end
 
 """
@@ -803,12 +1773,165 @@ function apply!(y::AbstractVector,S::CompositeSuperoperator,x::AbstractVector,
     y
 end
 
+"""
+    apply_adjoint!(destination, S, source, time, parameters, workspace)
+    apply_adjoint!(destination, S, source, workspace)
+
+Apply the adjoint of a factorized [`CompositeSuperoperator`](@ref) without
+forming a Kronecker matrix. Matrix factors use their adjoint maps and prepared
+PI factors delegate to their allocation-conscious `apply_adjoint!` methods.
+The scalar coefficient of every product term is conjugated. Reuse the same
+task-owned [`CompositeSuperoperatorWorkspace`](@ref) used by forward
+application.
+"""
+function apply_adjoint!(
+        y::AbstractVector,S::CompositeSuperoperator,x::AbstractVector,
+        t,p,work::CompositeSuperoperatorWorkspace)
+    n=length(S.basis)
+    length(x)==n&&length(y)==n||throw(DimensionMismatch(
+        "composite superoperator vector has the wrong length"))
+    Base.mightalias(y,x)&&throw(ArgumentError(
+        "composite apply_adjoint! requires nonaliasing source and destination"))
+    work.superoperator===S||throw(ArgumentError(
+        "composite workspace belongs to a different superoperator"))
+    length(work.buffer1)==n&&length(work.buffer2)==n||throw(DimensionMismatch(
+        "composite workspace has the wrong dimension"))
+    length(work.terms)==length(S.terms)||throw(DimensionMismatch(
+        "composite workspace belongs to a different term plan"))
+    required=promote_type(eltype(S),eltype(x))
+    promote_type(eltype(y),required)==eltype(y)||throw(ArgumentError(
+        "destination element type $(eltype(y)) would narrow composite adjoint output $required"))
+    eltype(work.buffer1)==eltype(y)||throw(ArgumentError(
+        "composite workspace and destination scalar types differ"))
+    fill!(y,zero(eltype(y)))
+    _apply_composite_adjoint_terms!(
+        y,S,x,S.terms,work.terms,t,p,work.buffer1,work.buffer2)
+    y
+end
+
+function _check_composite_batch_application(
+        y::AbstractMatrix,S::CompositeSuperoperator,x::AbstractMatrix,
+        work::CompositeSuperoperatorBatchWorkspace,operation::AbstractString)
+    n=length(S.basis)
+    size(x,1)==n&&size(y)==size(x)||throw(DimensionMismatch(
+        "composite $operation matrix has incompatible dimensions"))
+    Base.mightalias(y,x)&&throw(ArgumentError(
+        "composite $operation requires nonaliasing source and destination"))
+    work.superoperator===S||throw(ArgumentError(
+        "composite batch workspace belongs to a different superoperator"))
+    columns=size(x,2)
+    columns<=work.capacity||throw(ArgumentError(
+        "composite batch has $columns columns but workspace capacity is "*
+        "$(work.capacity); construct a larger CompositeSuperoperatorBatchWorkspace"))
+    size(work.buffer1)==(n,work.capacity)&&
+        size(work.buffer2)==(n,work.capacity)||
+        throw(DimensionMismatch(
+            "composite batch workspace has incompatible full-coordinate buffers"))
+    length(work.terms)==length(S.terms)||throw(DimensionMismatch(
+        "composite batch workspace belongs to a different term plan"))
+    required=promote_type(eltype(S),eltype(x))
+    promote_type(eltype(y),required)==eltype(y)||throw(ArgumentError(
+        "destination element type $(eltype(y)) would narrow composite output $required"))
+    eltype(work.buffer1)==eltype(y)||throw(ArgumentError(
+        "composite batch workspace and destination scalar types differ"))
+    columns
+end
+
+"""
+    apply!(destination, S, source, time, parameters,
+           workspace::CompositeSuperoperatorBatchWorkspace)
+
+Apply a composite generator to several right-hand sides through fixed-capacity
+task-owned scratch. Factor schedules and term coefficients are evaluated once
+per tensor fiber and batch rather than once per right-hand side.
+"""
+function apply!(
+        y::AbstractMatrix,S::CompositeSuperoperator,x::AbstractMatrix,
+        t,p,work::CompositeSuperoperatorBatchWorkspace)
+    columns=_check_composite_batch_application(
+        y,S,x,work,"apply!")
+    fill!(y,zero(eltype(y)))
+    buffer1=view(work.buffer1,:,1:columns)
+    buffer2=view(work.buffer2,:,1:columns)
+    _apply_composite_batch_terms!(
+        y,S,x,S.terms,work.terms,t,p,buffer1,buffer2,columns)
+    y
+end
+
+"""
+    apply_adjoint!(destination, S, source, time, parameters,
+                   workspace::CompositeSuperoperatorBatchWorkspace)
+
+Apply the exact adjoint to several right-hand sides using the same
+fixed-capacity batched tensor-fiber layout as [`apply!`](@ref).
+"""
+function apply_adjoint!(
+        y::AbstractMatrix,S::CompositeSuperoperator,x::AbstractMatrix,
+        t,p,work::CompositeSuperoperatorBatchWorkspace)
+    columns=_check_composite_batch_application(
+        y,S,x,work,"apply_adjoint!")
+    fill!(y,zero(eltype(y)))
+    buffer1=view(work.buffer1,:,1:columns)
+    buffer2=view(work.buffer2,:,1:columns)
+    _apply_composite_adjoint_batch_terms!(
+        y,S,x,S.terms,work.terms,t,p,buffer1,buffer2,columns)
+    y
+end
+
 
 # Let the generic fixed-step evolution layer discover and reuse composite
 # tensor-mode scratch without teaching the read-only superoperator about
 # mutable storage.
 _linear_operator_workspace(S::CompositeSuperoperator)=
     CompositeSuperoperatorWorkspace(S)
+_linear_operator_batch_workspace(
+    S::CompositeSuperoperator,columns::Integer,::Type{T}) where T=
+    CompositeSuperoperatorBatchWorkspace(S;capacity=columns,T)
+
+const _CompositeMatrixFreeLiouvillian=
+    MatrixFreeLiouvillian{F,T,V,P,W,K,A,B,C} where
+        {F,T,V,P,W<:CompositeSuperoperatorWorkspace,K,A,B,C}
+
+# `composite_matrixfree` is a plan-less compatibility wrapper, but its retained
+# vector workspace still identifies the exact immutable composite plan.  Let
+# prepared consumers recover fresh task-owned vector or fixed-capacity matrix
+# scratch instead of falling back to the synchronized columnwise callbacks.
+function _linear_operator_workspace(
+        source::_CompositeMatrixFreeLiouvillian)
+    CompositeSuperoperatorWorkspace(
+        source.workspace.superoperator;T=eltype(source))
+end
+
+function _linear_operator_batch_workspace(
+        source::_CompositeMatrixFreeLiouvillian,
+        columns::Integer,::Type{T}) where T
+    CompositeSuperoperatorBatchWorkspace(
+        source.workspace.superoperator;capacity=columns,T)
+end
+
+function apply!(
+        y::AbstractVector,source::_CompositeMatrixFreeLiouvillian,
+        x::AbstractVector,t,p,work::CompositeSuperoperatorWorkspace)
+    apply!(y,source.workspace.superoperator,x,t,p,work)
+end
+
+function apply!(
+        y::AbstractMatrix,source::_CompositeMatrixFreeLiouvillian,
+        x::AbstractMatrix,t,p,work::CompositeSuperoperatorBatchWorkspace)
+    apply!(y,source.workspace.superoperator,x,t,p,work)
+end
+
+function apply_adjoint!(
+        y::AbstractVector,source::_CompositeMatrixFreeLiouvillian,
+        x::AbstractVector,t,p,work::CompositeSuperoperatorWorkspace)
+    apply_adjoint!(y,source.workspace.superoperator,x,t,p,work)
+end
+
+function apply_adjoint!(
+        y::AbstractMatrix,source::_CompositeMatrixFreeLiouvillian,
+        x::AbstractMatrix,t,p,work::CompositeSuperoperatorBatchWorkspace)
+    apply_adjoint!(y,source.workspace.superoperator,x,t,p,work)
+end
 
 const _CompositeEvolutionOperator=Union{AbstractMatrix,
     MatrixFreeLiouvillian,CompositeSuperoperator}
@@ -871,13 +1994,42 @@ function apply!(y,S::CompositeSuperoperator,x,
     apply!(y,S,x,0.0,nothing,work)
 end
 
+function apply_adjoint!(y,S::CompositeSuperoperator,x,
+                        work::CompositeSuperoperatorWorkspace)
+    isautonomous(S)||throw(ArgumentError(
+        "autonomous apply_adjoint! was requested for a driven composite superoperator"))
+    apply_adjoint!(y,S,x,0.0,nothing,work)
+end
+
+function apply!(y::AbstractMatrix,S::CompositeSuperoperator,x::AbstractMatrix,
+                work::CompositeSuperoperatorBatchWorkspace)
+    isautonomous(S)||throw(ArgumentError(
+        "autonomous batched apply! was requested for a driven composite superoperator"))
+    apply!(y,S,x,0.0,nothing,work)
+end
+
+function apply_adjoint!(
+        y::AbstractMatrix,S::CompositeSuperoperator,x::AbstractMatrix,
+        work::CompositeSuperoperatorBatchWorkspace)
+    isautonomous(S)||throw(ArgumentError(
+        "autonomous batched apply_adjoint! was requested for a driven composite superoperator"))
+    apply_adjoint!(y,S,x,0.0,nothing,work)
+end
+
 function mul!(y,S::CompositeSuperoperator,x)
     isautonomous(S)||throw(ArgumentError(
         "mul! requires an autonomous composite superoperator"))
-    apply!(y,S,x,CompositeSuperoperatorWorkspace(S,x))
+    if x isa AbstractMatrix
+        apply!(y,S,x,CompositeSuperoperatorBatchWorkspace(S,x))
+    else
+        apply!(y,S,x,CompositeSuperoperatorWorkspace(S,x))
+    end
 end
 *(S::CompositeSuperoperator,x::AbstractVector)=
     mul!(similar(x,promote_type(eltype(S),eltype(x)),length(S.basis)),S,x)
+*(S::CompositeSuperoperator,x::AbstractMatrix)=
+    mul!(similar(x,promote_type(eltype(S),eltype(x)),
+                 length(S.basis),size(x,2)),S,x)
 
 function _pi_factor_superoperator(A::PIOperator,B::PIOperator,kind::Symbol)
     _samebasis(A,B)
@@ -1039,13 +2191,104 @@ end
 Wrap a composite sum as the package's synchronized
 [`MatrixFreeLiouvillian`](@ref).  The wrapper owns one compatibility
 workspace; explicit parallel hot loops should call [`apply!`](@ref) with one
-`CompositeSuperoperatorWorkspace` per task instead.
+`CompositeSuperoperatorWorkspace` per task instead. Prepared package
+consumers, including `sensitivity_problem`, recover fresh task-owned vector or
+fixed-capacity batch scratch from the wrapper. Bare compatibility matrix
+products retain the synchronized column fallback.
 """
 function composite_matrixfree(S::CompositeSuperoperator;T=eltype(S))
     resolved_type=_composite_coordinate_type(T)
     workspace=CompositeSuperoperatorWorkspace(S;T=resolved_type)
     action! = (y,x,t,p)->apply!(y,S,x,t,p,workspace)
+    adjoint_action! =
+        (y,x,t,p)->apply_adjoint!(y,S,x,t,p,workspace)
     MatrixFreeLiouvillian(length(S.basis),action!,resolved_type,
         composite_trace_vector(S.basis;T=_real_float_type(resolved_type));
-        autonomous=isautonomous(S))
+        autonomous=isautonomous(S),workspace,adjoint_action!)
 end
+
+_performance_composite_factor_action_bytes(
+    ::Nothing,dimension,::Type{T}) where T=big(0)
+_performance_composite_factor_action_bytes(
+    ::AbstractMatrix,dimension,::Type{T}) where T=big(0)
+_performance_composite_factor_action_bytes(
+    action::LiouvillianPlan,dimension,::Type{T}) where T=
+    _performance_source_action_bytes(action,T)
+_performance_composite_factor_action_bytes(
+    action::CompiledPIModel,dimension,::Type{T}) where T=
+    _performance_source_action_bytes(action,T)
+_performance_composite_factor_action_bytes(
+    action::MatrixFreeLiouvillian,dimension,::Type{T}) where T=
+    _performance_source_action_bytes(action,T)
+_performance_composite_factor_action_bytes(
+    action,dimension,::Type{T}) where T=
+    _performance_array_bytes(dimension,T,0;linear_arrays=16)
+
+function _performance_composite_workspace_bytes(
+        superoperator::CompositeSuperoperator,::Type{T},
+        columns::Integer) where T
+    columns>0||throw(ArgumentError(
+        "composite workspace column count must be positive"))
+    total=_performance_entries_bytes(
+        2*BigInt(length(superoperator.basis))*columns,T)
+    for term in superoperator.terms
+        for (action,dimension) in
+                zip(term.actions,superoperator.basis.dimensions)
+            action===nothing&&continue
+            total+=_performance_entries_bytes(
+                2*BigInt(dimension)*columns,T)
+            total+=_performance_linear_operator_workspace_bytes(
+                action;batch_columns=columns)
+        end
+    end
+    total
+end
+
+function _performance_linear_operator_workspace_bytes(
+        superoperator::CompositeSuperoperator;
+        batch_columns::Integer=0)
+    batch_columns>=0||throw(ArgumentError(
+        "batch_columns must be nonnegative"))
+    columns=batch_columns==0 ? 1 : batch_columns
+    _performance_composite_workspace_bytes(
+        superoperator,eltype(superoperator),columns)
+end
+
+function _performance_linear_operator_workspace_bytes(
+        source::_CompositeMatrixFreeLiouvillian;
+        batch_columns::Integer=0)
+    batch_columns>=0||throw(ArgumentError(
+        "batch_columns must be nonnegative"))
+    columns=batch_columns==0 ? 1 : batch_columns
+    _performance_composite_workspace_bytes(
+        source.workspace.superoperator,eltype(source),columns)
+end
+
+function _performance_composite_action_bytes(
+        superoperator::CompositeSuperoperator,::Type{T}) where T
+    total=big(0)
+    for term in superoperator.terms
+        for (action,dimension) in
+                zip(term.actions,superoperator.basis.dimensions)
+            total+=_performance_composite_factor_action_bytes(
+                action,dimension,T)
+        end
+    end
+    total
+end
+
+# A composite compatibility wrapper already retains its complete tensor-mode
+# workspace. Iterative solvers charge only any nested fallback action
+# transient, rather than a second generic full-coordinate callback allowance.
+function _performance_source_action_bytes(
+        source::MatrixFreeLiouvillian{
+            F,T,V,P,W,K,A,B,C},::Type{S}) where
+        {F,T,V,P,W<:CompositeSuperoperatorWorkspace,K,A,B,C,S}
+    _performance_composite_action_bytes(
+        source.workspace.superoperator,S)
+end
+
+_operator_requires_matrixfree(
+    ::MatrixFreeLiouvillian{
+        F,T,V,P,W,K,A,B,C}) where
+    {F,T,V,P,W<:CompositeSuperoperatorWorkspace,K,A,B,C}=true

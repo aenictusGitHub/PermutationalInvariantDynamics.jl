@@ -545,6 +545,11 @@ function _trajectory_plan_for_state(compiled::CompiledPIModel,rho::PIState)
 end
 _trajectory_plan_for_state(plan::TrajectoryPlan,rho::PIState)=plan
 
+mutable struct _EffectiveJumpNodeCache{R}
+    time::R
+    valid::Bool
+end
+
 """
     TrajectoryWorkspace(plan, rho; mode=:full)
     TrajectoryWorkspace(model, rho; mode=:full)
@@ -554,6 +559,10 @@ Preallocated mutable stage vectors and Schur-block scratch for one PI quantum
 trajectory at a time. Reuse it sequentially. Concurrent paths must have
 distinct workspaces, which may all refer to the same immutable
 [`TrajectoryPlan`](@ref).
+
+The workspace retains the rate-weighted jump-loss blocks at the current
+integration node. Repeated RK stages at that node reuse the prepared blocks;
+driven-rate caches are invalidated when a new trajectory starts.
 
 The default `mode=:full` supports both fixed-step RK4 and adaptive
 event-driven Dormand--Prince paths. Fixed-step RK4 uses three full-vector
@@ -574,6 +583,7 @@ struct TrajectoryWorkspace{V,R,P,W,E}
     plan::P
     liouvillian_work::W
     effective_qblocks::E
+    effective_cache::_EffectiveJumpNodeCache{R}
     mode::Symbol
 end
 
@@ -602,7 +612,8 @@ function TrajectoryWorkspace(plan::TrajectoryPlan,rho::PIState;
                         v,similar(v),zeros(R,njumps),
                         zeros(R,njumps),zeros(R,7),zeros(R,4),plan,
                         LiouvillianWorkspace(plan.liouvillian),
-                        effective_qblocks,mode)
+                        effective_qblocks,
+                        _EffectiveJumpNodeCache(zero(R),false),mode)
 end
 TrajectoryWorkspace(model::PIModel,rho::PIState;kwargs...)=
     TrajectoryWorkspace(_trajectory_plan_for_state(model,rho),rho;kwargs...)
@@ -668,6 +679,13 @@ function _trajectory_jump_scale(kernel,t,p,::Type{R}) where R<:AbstractFloat
     scale
 end
 
+@inline _trajectory_jump_rates_autonomous(::Tuple{})=true
+@inline function _trajectory_jump_rates_autonomous(
+        jumps::Tuple{K,Vararg{Any}}) where K
+    first(jumps).scale isa Number&&
+        _trajectory_jump_rates_autonomous(Base.tail(jumps))
+end
+
 function _apply_gain!(y,x,k::DissipatorPIKernel,b,scale,work)
     fill!(y,zero(eltype(y)))
     for s in eachindex(b.sectors)
@@ -724,22 +742,28 @@ function _store_intensity!(w,index,value)
     w.intensities[index]=max(zero(R),value)
 end
 
-@inline _channel_intensities!(w,x,b,t,p,::Tuple{},index)=nothing
-@inline function _channel_intensities!(w,x,b,t,p,
+@inline _channel_intensities_from_scales!(w,x,b,::Tuple{},index)=nothing
+@inline function _channel_intensities_from_scales!(w,x,b,
         jumps::Tuple{K,Vararg{Any}},index) where K
     kernel=first(jumps);R=eltype(w.intensities)
-    scale=_trajectory_jump_scale(kernel,t,p,R);w.jump_scales[index]=scale
+    scale=w.jump_scales[index]
     if iszero(scale)
         w.intensities[index]=zero(R)
-        return _channel_intensities!(w,x,b,t,p,Base.tail(jumps),index+1)
+        return _channel_intensities_from_scales!(
+            w,x,b,Base.tail(jumps),index+1)
     end
     value=scale*_unscaled_channel_intensity(x,kernel,b,w.plan.trace_weights)
     _store_intensity!(w,index,value)
-    _channel_intensities!(w,x,b,t,p,Base.tail(jumps),index+1)
+    _channel_intensities_from_scales!(
+        w,x,b,Base.tail(jumps),index+1)
 end
 
 function _channel_intensities!(w::TrajectoryWorkspace,x,b,t,p)
-    _channel_intensities!(w,x,b,t,p,w.plan.jumps,1)
+    # The combined loss preparation owns the rate evaluation. Reusing those
+    # exact scales keeps a selected channel consistent with the total
+    # intensity and avoids invoking a driven schedule twice at one RK node.
+    _prepare_effective_jump_blocks!(w,t,p)
+    _channel_intensities_from_scales!(w,x,b,w.plan.jumps,1)
     w.intensities
 end
 
@@ -827,11 +851,31 @@ end
 end
 
 function _prepare_effective_jump_blocks!(w::TrajectoryWorkspace,t,p)
+    if w.effective_cache.valid&&
+       (_trajectory_jump_rates_autonomous(w.plan.jumps)||
+        isequal(w.effective_cache.time,t))
+        return w.effective_qblocks
+    end
     for block in w.effective_qblocks
         fill!(block,zero(eltype(block)))
     end
     _accumulate_effective_jump_blocks!(w,t,p,w.plan.jumps,1)
+    w.effective_cache.time=t
+    # Publish validity only after every schedule and block accumulation has
+    # completed successfully. A throwing callback therefore cannot leave a
+    # partially prepared loss operator visible to the next application.
+    w.effective_cache.valid=true
     w.effective_qblocks
+end
+
+@inline function _reset_effective_jump_cache!(w::TrajectoryWorkspace)
+    # Numeric rates are parameter- and time-independent by construction and
+    # remain valid for the lifetime of the task-owned workspace. Driven rates
+    # are invalidated at every public trajectory boundary so reusing a
+    # workspace with different parameters can never expose stale blocks.
+    _trajectory_jump_rates_autonomous(w.plan.jumps)||
+        (w.effective_cache.valid=false)
+    w
 end
 
 function _effective_jump_intensity_from_blocks(w,x,b)
@@ -1297,6 +1341,7 @@ function _quantum_trajectory_prepared(plan,rho0,ts,w,rng,options;
     save_states&&!record_jumps&&throw(ArgumentError(
         "saved trajectories require recorded jump histories"))
     _require_trajectory_workspace_mode(w,options.algorithm)
+    _reset_effective_jump_cache!(w)
     b=plan.model.basis;tau=plan.liouvillian.tracevec
     R=eltype(w.intensities)
     options.algorithm!==:fixed&&return _event_driven_trajectory(

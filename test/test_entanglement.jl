@@ -242,6 +242,39 @@ end
     @test negativity(maximally_mixed_state(b),1) ≈ 0 atol=2e-10
     @test negativity(maximally_mixed_state(PIBasis(3,3)),1) ≈ 0 atol=5e-9
 
+    # Prepared qudit reductions retain the same LR maps in exact-support
+    # discarded-factor blocks. The public subduction API above remains dense.
+    packed_plan=ReductionPlan(b,1)
+    @test PermutationalInvariantDynamics._checked_lr_product_dimension(
+        7,11)==77
+    @test_throws ArgumentError (
+        PermutationalInvariantDynamics._checked_lr_product_dimension(
+            typemax(Int),2))
+    @test packed_plan.estimates.storage===:weight_block_sparse_csc
+    @test packed_plan.estimates.retained_entries<
+          packed_plan.estimates.dense_entries
+    @test all(U->U isa PermutationalInvariantDynamics._PackedLRIntertwiner,
+        (U for coupling in packed_plan.couplings
+           for (_,intertwiners) in coupling.intertwiners
+           for U in intertwiners))
+    @test all(block->block isa SparseMatrixCSC,
+        (block for coupling in packed_plan.couplings
+           for (_,intertwiners) in coupling.intertwiners
+           for U in intertwiners for block in U.blocks))
+    @test all(U->size(U,1)==U.product_dimension,
+        (U for coupling in packed_plan.couplings
+           for (_,intertwiners) in coupling.intertwiners
+           for U in intertwiners))
+    packed_work=ReductionWorkspace(packed_plan,anti_mixed)
+    packed_output=PIState(packed_plan.output_basis)
+    reduced_state!(
+        packed_output,anti_mixed,packed_plan,packed_work;check=false)
+    packed_alloc=@allocated reduced_state!(
+        packed_output,anti_mixed,packed_plan,packed_work;check=false)
+    @test packed_alloc<=8*1024
+    @test negativity(
+        anti_mixed,1;plan=packed_plan,workspace=packed_work)≈1/3 atol=2e-10
+
     # Sanity check: the general LR engine reproduces the specialized SU(2)
     # implementation for a state spanning all total-spin sectors.
     b2=PIBasis(4,2);rho=PIState(b2;T=Float64)

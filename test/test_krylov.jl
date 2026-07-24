@@ -18,10 +18,105 @@
     @test size(P)==size(Lm)
     @test length(P.factors)==length(b.sectors)
     @test P.operator_scale>0
-    @test P.metadata.setup_liouvillian_applications==length(b)+3
+    @test P.metadata.setup_liouvillian_applications==3
+    @test P.metadata.setup_scale_applications==3
+    @test P.metadata.setup_block_applications==0
+    @test P.metadata.block_construction===:prepared_kernels
     @test P.metadata.apply_triangular_solves==length(b.sectors)
+    @test P.metadata.stored_coefficients==
+          sum((b.offsets[index+1]-b.offsets[index])^2
+              for index in eachindex(b.sectors))
     @test P.metadata.amortization_expected
     @test PermutationalInvariantDynamics.preconditioner_cost(P)===P.metadata
+
+    # A plan-less wrapper is the compatibility oracle: it still extracts every
+    # diagonal block by probing the full operator.  Direct prepared lowering
+    # must give the identical preconditioner action without those applications.
+    generic_L=MatrixFreeLiouvillian(length(b),
+        (y,x,t,p)->mul!(y,Lm,x),ComplexF64,copy(Lm.tracevec))
+    probe_P=schur_sector_preconditioner(generic_L,b;
+        operator_scale=P.operator_scale,expected_reuses=10,
+        warn_unamortized=false)
+    @test probe_P.metadata.setup_liouvillian_applications==length(b)
+    @test probe_P.metadata.setup_scale_applications==0
+    @test probe_P.metadata.setup_block_applications==length(b)
+    @test probe_P.metadata.block_construction===:operator_probes
+    preconditioner_rhs=randn(MersenneTwister(0x73636875),
+                             ComplexF64,length(b))
+    direct_solution=copy(preconditioner_rhs)
+    probe_solution=copy(preconditioner_rhs)
+    ldiv!(direct_solution,P,preconditioner_rhs)
+    ldiv!(probe_solution,probe_P,preconditioner_rhs)
+    @test direct_solution≈probe_solution atol=2e-12 rtol=2e-12
+
+    direct_plan=LiouvillianPlan(model)
+    plan_P=schur_sector_preconditioner(direct_plan,b;
+        operator_scale=P.operator_scale,expected_reuses=10,
+        warn_unamortized=false)
+    @test plan_P.metadata.setup_liouvillian_applications==0
+    @test plan_P.metadata.block_construction===:prepared_kernels
+    plan_solution=copy(preconditioner_rhs)
+    ldiv!(plan_solution,plan_P,preconditioner_rhs)
+    @test plan_solution≈probe_solution atol=2e-12 rtol=2e-12
+
+    compiled_sparse=compile(model;backend=:sparse)
+    compiled_P=schur_sector_preconditioner(compiled_sparse;
+        operator_scale=P.operator_scale,expected_reuses=10,
+        warn_unamortized=false)
+    @test compiled_P.metadata.setup_liouvillian_applications==0
+    @test compiled_P.metadata.block_construction===:prepared_kernels
+    compiled_solution=copy(preconditioner_rhs)
+    ldiv!(compiled_solution,compiled_P,preconditioner_rhs)
+    @test compiled_solution≈probe_solution atol=2e-12 rtol=2e-12
+
+    family=compile_family(model)
+    specialized=specialize(family,(0.31,0.09);backend=:matrixfree)
+    specialized_P=schur_sector_preconditioner(specialized;
+        expected_reuses=10,warn_unamortized=false)
+    @test specialized_P.metadata.setup_liouvillian_applications==3
+    @test specialized_P.metadata.setup_block_applications==0
+    @test specialized_P.metadata.block_construction===:prepared_kernels
+    specialized_generic=MatrixFreeLiouvillian(length(b),
+        (y,x,t,p)->mul!(y,specialized,x),ComplexF64,
+        copy(specialized.plan.tracevec))
+    specialized_probe_P=schur_sector_preconditioner(
+        specialized_generic,b;operator_scale=specialized_P.operator_scale,
+        expected_reuses=10,warn_unamortized=false)
+    specialized_direct_solution=copy(preconditioner_rhs)
+    specialized_probe_solution=copy(preconditioner_rhs)
+    ldiv!(specialized_direct_solution,specialized_P,preconditioner_rhs)
+    ldiv!(specialized_probe_solution,specialized_probe_P,preconditioner_rhs)
+    @test specialized_direct_solution≈specialized_probe_solution atol=2e-12 rtol=2e-12
+    specialized_steady=steady_state(specialized;method=:krylov,
+        preconditioner=:schur,krylovdim=10,maxiter=200,
+        atol=1e-12,rtol=1e-10,return_info=true)
+    @test specialized_steady.converged
+    @test specialized_steady.preconditioner_cost.block_construction===
+          :prepared_kernels
+    @test specialized_steady.preconditioner_cost.setup_liouvillian_applications==
+          3
+    @test specialized_steady.residual<1e-9
+
+    # Exercise the term-resolved Hamiltonian, collective-gain, local one-body,
+    # and Appendix-D local-gain lowering independently of fixed-kernel fusion.
+    sz_preconditioner=ComplexF64[1 0;0 -1]
+    pbody_model=PIModel(b,(
+        PBodyHamiltonian(kron(sz_preconditioner,sz_preconditioner),2;
+                         rate=0.13),
+        LocalPBodyJump(kron(sm,sm),2;rate=0.07),
+        CollectivePBodyJump(kron(sm,sm),2;rate=0.03),
+        LocalJump(sm;rate=0.11)))
+    pbody_plan=LiouvillianPlan(pbody_model;fuse_static=false)
+    pbody_blocks=PermutationalInvariantDynamics._prepared_schur_blocks(
+        pbody_plan,ComplexF64)
+    pbody_matrix=Matrix(liouvillian(
+        pbody_model;representation=:sparse))
+    for sector in eachindex(b.sectors)
+        sector_range=b.offsets[sector]:b.offsets[sector+1]-1
+        @test pbody_blocks[sector]≈
+              pbody_matrix[sector_range,sector_range] atol=2e-12 rtol=2e-12
+    end
+
     pks=steady_state(Lm;basis=b,method=:krylov,preconditioner=P,
                      workspace=ws,maxiter=200,atol=1e-12,rtol=1e-10,
                      return_info=true)
@@ -323,6 +418,9 @@
     p32=schur_sector_preconditioner(L32,b;expected_reuses=10,
                                     warn_unamortized=false)
     @test eltype(p32)===ComplexF32
+    @test p32.metadata.setup_liouvillian_applications==3
+    @test p32.metadata.setup_block_applications==0
+    @test p32.metadata.block_construction===:prepared_kernels
     ks32=krylov_steady_state(L32;basis=b,workspace=kws32,krylovdim=10,
         maxiter=200,atol=2f-6,rtol=2f-5,return_info=true)
     @test eltype(ks32.state)===ComplexF32

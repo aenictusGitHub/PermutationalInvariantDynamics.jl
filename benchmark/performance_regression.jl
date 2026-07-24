@@ -98,6 +98,29 @@ collective_dense_temporary_bytes=
     big(length(collective_basis))^2*sizeof(ComplexF64)
 @assert collective_materialization_alloc<collective_dense_temporary_bytes "symmetric sparse materialization allocated $collective_materialization_alloc bytes, consistent with a dense PI-coordinate temporary"
 
+# A collective-only mixed-sector model must not retain rectangular one-box
+# contractions that only local gain channels can consume.
+mixed_collective_model=PIModel(
+    b,(CollectiveHamiltonian(sx;rate=0.2),
+       CollectiveJump(sm;rate=0.1)))
+mixed_collective_context=
+    PermutationalInvariantDynamics.TermCompileContext(
+        mixed_collective_model)
+full_onebody_geometry=OneBodyGeometry(b)
+@assert all(key->key[1]==key[3],
+    keys(mixed_collective_context.onebody.contractions))
+@assert length(mixed_collective_context.onebody.contractions)<
+    length(full_onebody_geometry.contractions)
+@assert Base.summarysize(mixed_collective_context.onebody)<
+    Base.summarysize(full_onebody_geometry)
+mixed_geometry_report=recommend_solver(
+    mixed_collective_model;memory_budget=Inf)
+@assert mixed_geometry_report.geometry_setup_upper_bytes==
+    PermutationalInvariantDynamics._estimate_diagonal_onebody_geometry(
+        b).setup_bytes
+@assert mixed_geometry_report.geometry_setup_upper_bytes<
+    estimate_geometry_bytes(b).setup_bytes
+
 z=ComplexF64[1 0;0 -1]
 restricted_model=PIModel(b,(
     LocalHamiltonian(z;rate=0.2),LocalJump(z;rate=0.05)))
@@ -271,6 +294,39 @@ composite_trajectory_batch_alloc=@allocated quantum_trajectories(
     dt=0.005,seed=83,workspace=composite_batch)
 @assert composite_trajectory_batch_alloc<=256*1024 "reused composite trajectory batch allocated $composite_trajectory_batch_alloc bytes"
 
+# Composite block methods batch equal tensor fibers through every factor and
+# keep capacity immutable.
+composite_batch_generator=CompositeSuperoperator(
+    composite_basis,
+    local_superoperator_term(composite_basis,1,matrixfree))
+composite_batch_source=hcat(
+    composite_state.data,0.7composite_state.data,
+    complex.(reverse(composite_state.data)))
+composite_batch_output=similar(composite_batch_source)
+composite_batch_work=CompositeSuperoperatorBatchWorkspace(
+    composite_batch_generator;capacity=3)
+apply!(composite_batch_output,composite_batch_generator,
+       composite_batch_source,0.0,nothing,composite_batch_work)
+composite_batch_reference=hcat((
+    composite_batch_generator*view(composite_batch_source,:,column)
+    for column in axes(composite_batch_source,2))...)
+@assert isapprox(composite_batch_output,composite_batch_reference;
+                 atol=2e-11,rtol=2e-11)
+composite_batch_alloc=@allocated apply!(
+    composite_batch_output,composite_batch_generator,
+    composite_batch_source,0.0,nothing,composite_batch_work)
+@assert composite_batch_alloc<=4096 "prepared composite matrix RHS allocated $composite_batch_alloc bytes"
+apply_adjoint!(composite_batch_output,composite_batch_generator,
+               composite_batch_source,0.0,nothing,composite_batch_work)
+composite_batch_adjoint_alloc=@allocated apply_adjoint!(
+    composite_batch_output,composite_batch_generator,
+    composite_batch_source,0.0,nothing,composite_batch_work)
+@assert composite_batch_adjoint_alloc<=4096 "prepared composite adjoint matrix RHS allocated $composite_batch_adjoint_alloc bytes"
+@assert PermutationalInvariantDynamics._performance_linear_operator_workspace_bytes(
+    composite_batch_generator;batch_columns=3)>
+    PermutationalInvariantDynamics._performance_linear_operator_workspace_bytes(
+        composite_batch_generator)
+
 weak_state=weak_pi_pseudoket(trajectory_state)
 weak_plan=WeakPITrajectoryPlan(model)
 weak_batch=WeakPITrajectoryBatchWorkspace(
@@ -323,10 +379,149 @@ collective_moments(rho,observable)
 planned=@allocated collective_moments(rho,observable)
 @assert planned<=64*1024 "prepared collective moments allocated $planned bytes"
 
+# Repeated one-body reductions reuse the largest Schur block instead of
+# allocating one multiplicity-weighted block per sector.  The independent
+# particle-reduction route is the correctness oracle.
+onebody_reduction=ReductionPlan(b,1)
+onebody_reference=one_body_rdm(rho;plan=onebody_reduction)
+onebody_work=OneBodyRDMWorkspace(geometry,rho)
+onebody_output=zeros(ComplexF64,b.d,b.d)
+one_body_rdm!(onebody_output,rho,onebody_work;check=false)
+@assert isapprox(onebody_output,onebody_reference;atol=2e-11,rtol=2e-11)
+onebody_alloc=@allocated one_body_rdm!(
+    onebody_output,rho,onebody_work;check=false)
+@assert onebody_alloc<=2048 "validate-once one-body RDM contraction allocated $onebody_alloc bytes"
+onebody_max_block=maximum(length.(b.patterns))
+onebody_block_payload=
+    onebody_max_block^2*sizeof(eltype(onebody_work.weighted_block))
+@assert length(onebody_work.weighted_block)==onebody_max_block^2
+@assert length(onebody_work.multiplicity_scales)==length(b.sectors)
+@assert Base.summarysize(onebody_work.weighted_block)<
+    onebody_block_payload+1024
+
+# The local-factor partial trace retains exact-support CSC transforms.  This
+# representative supersite has a sparse plan more than an order of magnitude
+# smaller than the corresponding dense rectangular transforms.
+local_factor_basis=PIBasis(3,4)
+local_factor_system=ComplexF64[0.7 0.08im;-0.08im 0.3]
+local_factor_auxiliary=ComplexF64[0.6 0.05;0.05 0.4]
+local_factor_source=iid_state(
+    local_factor_basis,kron(local_factor_system,local_factor_auxiliary))
+local_factor_plan=LocalFactorTracePlan(
+    local_factor_source,(2,2);traced_factor=2)
+local_factor_work=LocalFactorTraceWorkspace(local_factor_plan)
+local_factor_output=PIState(local_factor_plan.output_basis)
+local_factor_expected=iid_state(
+    local_factor_plan.output_basis,local_factor_system)
+local_factor_trace!(
+    local_factor_output,local_factor_source,
+    local_factor_plan,local_factor_work;check=false)
+@assert isapprox(
+    local_factor_output.data,local_factor_expected.data;
+    atol=3e-11,rtol=3e-11)
+local_factor_alloc=@allocated local_factor_trace!(
+    local_factor_output,local_factor_source,
+    local_factor_plan,local_factor_work;check=false)
+@assert local_factor_alloc<=2048 "prepared local-factor trace allocated $local_factor_alloc bytes"
+@assert local_factor_plan.lifted_columns isa SparseMatrixCSC
+@assert local_factor_plan.output_columns isa SparseMatrixCSC
+@assert local_factor_plan.estimates.storage===:exact_support_sparse_csc
+@assert local_factor_plan.estimates.gram_validation===
+    :streamed_sparse_columns
+@assert local_factor_plan.estimates.gram_workspace_bytes<
+    local_factor_plan.estimates.output_dimension^2*
+    sizeof(eltype(local_factor_plan.output_columns))
+@assert local_factor_plan.estimates.retained_entries==
+    nnz(local_factor_plan.lifted_columns)+
+    nnz(local_factor_plan.output_columns)
+@assert local_factor_plan.estimates.retained_bytes>=
+    Base.summarysize(local_factor_plan.lifted_columns)+
+    Base.summarysize(local_factor_plan.output_columns)
+@assert 10local_factor_plan.estimates.retained_entries<
+    local_factor_plan.estimates.dense_entries
+
+# Composite reductions retain only packed joint-diagonal offsets and exact
+# multiplicity groups.  They must not cache the full composite trace vector.
+composite_reduction_factor=FiniteOperatorBasis(
+    8;label=:reduction_auxiliary)
+composite_reduction_basis=CompositePIBasis(
+    b,composite_reduction_factor)
+composite_reduction_system=maximally_mixed_state(b)
+composite_reduction_auxiliary=
+    Matrix{ComplexF64}(I,8,8)/8
+composite_reduction_source=composite_tensor_state(
+    composite_reduction_basis,composite_reduction_system,
+    composite_reduction_auxiliary)
+composite_system_plan=CompositeReductionPlan(
+    composite_reduction_source,1)
+composite_auxiliary_plan=CompositeReductionPlan(
+    composite_reduction_source,2)
+composite_system_output=PIState(b)
+composite_auxiliary_output=zeros(ComplexF64,8,8)
+composite_reduced_state!(
+    composite_system_output,composite_reduction_source,
+    composite_system_plan)
+composite_reduced_state!(
+    composite_auxiliary_output,composite_reduction_source,
+    composite_auxiliary_plan)
+@assert isapprox(
+    composite_system_output.data,composite_reduction_system.data;
+    atol=2e-12,rtol=2e-12)
+@assert isapprox(
+    composite_auxiliary_output,composite_reduction_auxiliary;
+    atol=2e-12,rtol=2e-12)
+composite_system_alloc=@allocated composite_reduced_state!(
+    composite_system_output,composite_reduction_source,
+    composite_system_plan)
+composite_auxiliary_alloc=@allocated composite_reduced_state!(
+    composite_auxiliary_output,composite_reduction_source,
+    composite_auxiliary_plan)
+@assert composite_system_alloc<=1024 "prepared composite-to-PI reduction allocated $composite_system_alloc bytes"
+@assert composite_auxiliary_alloc<=1024 "prepared composite-to-finite reduction allocated $composite_auxiliary_alloc bytes"
+composite_trace_payload=
+    length(composite_reduction_basis)*sizeof(ComplexF64)
+for plan in (composite_system_plan,composite_auxiliary_plan)
+    @assert !(:trace_vector in fieldnames(typeof(plan)))
+    @assert plan.estimates.retained_bytes<composite_trace_payload
+    packed_bytes=
+        Base.summarysize(plan.traced_offsets)+
+        Base.summarysize(plan.group_boundaries)+
+        Base.summarysize(plan.exact_multiplicities)+
+        Base.summarysize(plan.scales)+
+        Base.summarysize(plan.prepared_scales)
+    @assert packed_bytes<composite_trace_payload
+end
+
 reduction=ReductionPlan(b,2)
 planned_reduced=reduced_state(rho,2;plan=reduction)
 reduction_alloc=@allocated reduced_state(rho,2;plan=reduction)
 @assert reduction_alloc<=2*1024^2 "prepared reduction allocated $reduction_alloc bytes"
+
+# Appendix-D geometry and qudit LR plans retain exact support instead of dense
+# zero-heavy path tensors or product-weight intertwiners.
+packed_pbody=PBodyGeometry(PIBasis(4,3),2)
+@assert packed_pbody.estimates.storage===:exact_support_sparse_csc
+@assert 5packed_pbody.estimates.retained_entries<
+        packed_pbody.estimates.dense_entries
+@assert packed_pbody.estimates.retained_bytes<
+        packed_pbody.estimates.dense_payload_bytes
+
+packed_reduction_basis=PIBasis(2,3)
+packed_reduction=ReductionPlan(packed_reduction_basis,1)
+@assert packed_reduction.estimates.storage===:weight_block_sparse_csc
+@assert packed_reduction.estimates.retained_entries<
+        packed_reduction.estimates.dense_entries
+packed_reduction_source=maximally_mixed_state(packed_reduction_basis)
+packed_reduction_work=ReductionWorkspace(
+    packed_reduction,packed_reduction_source;mode=:reduction)
+packed_reduction_out=PIState(packed_reduction.output_basis)
+reduced_state!(
+    packed_reduction_out,packed_reduction_source,
+    packed_reduction,packed_reduction_work;check=false)
+packed_reduction_alloc=@allocated reduced_state!(
+    packed_reduction_out,packed_reduction_source,
+    packed_reduction,packed_reduction_work;check=false)
+@assert packed_reduction_alloc<=8*1024 "packed qudit reduction allocated $packed_reduction_alloc bytes"
 
 # Compare allocations rather than wall time so this setup regression remains
 # stable across Julia versions and CI hosts.  The uncached route is retained
@@ -350,6 +545,16 @@ reduction_inplace_alloc=@allocated reduced_state!(
 # Full state validation deliberately retains LAPACK scratch.  This gate guards
 # the optimal caller-owned contraction/output path without weakening it.
 @assert reduction_inplace_alloc<=64*1024 "in-place prepared reduction allocated $reduction_inplace_alloc bytes"
+reduction_only_work=ReductionWorkspace(reduction,rho;mode=:reduction)
+@assert isempty(reduction_only_work.product_block)
+@assert size(reduction_only_work.product_tmp,1)==
+    maximum(c.da for c in reduction.couplings)
+reduced_state!(
+    reduction_out,rho,reduction,reduction_only_work;check=false)
+reduction_unchecked_alloc=@allocated reduced_state!(
+    reduction_out,rho,reduction,reduction_only_work;check=false)
+@assert reduction_out.data≈planned_reduced.data atol=2e-11
+@assert reduction_unchecked_alloc<=8*1024 "validate-once in-place reduction allocated $reduction_unchecked_alloc bytes"
 
 sigma=ComplexF64[0.62 0.08-0.03im;0.08+0.03im 0.38]
 meanfield=MeanFieldPlan(10^6,2,[CollectiveJump(sm;rate=0.4/10^6),
@@ -363,4 +568,32 @@ meanfield_alloc=@allocated meanfield_rhs!(meanfield_out,meanfield,sigma,0.0,noth
 @assert meanfield_alloc<=256 "explicit-workspace mean-field RHS allocated $meanfield_alloc bytes"
 @assert abs(tr(meanfield_out))<=1e-12 "mean-field RHS did not preserve trace"
 
-println("Performance regression gates passed (threads=$(Threads.nthreads()), apply_alloc=$allocated, batch_alloc=$batch_alloc, batch_adjoint_alloc=$batch_adjoint_alloc, collective_apply_alloc=$collective_apply_alloc, collective_materialization_alloc=$collective_materialization_alloc, threaded_alloc=$threaded_alloc, restricted_alloc=$restricted_alloc, trajectory_batch_alloc=$trajectory_batch_alloc, composite_trajectory_apply_alloc=$composite_trajectory_apply_alloc, composite_trajectory_step_alloc=$composite_trajectory_step_alloc, composite_trajectory_batch_alloc=$composite_trajectory_batch_alloc, weak_average_alloc=$weak_average_alloc, population_apply_alloc=$population_apply_alloc, population_evolve_alloc=$population_evolve_alloc, observable_alloc=$planned, reduction_alloc=$reduction_alloc, reduction_setup_alloc=$reduction_setup_alloc, reduction_uncached_alloc=$reduction_uncached_alloc, reduction_inplace_alloc=$reduction_inplace_alloc, meanfield_alloc=$meanfield_alloc)")
+# Adaptive exponential-action storage is bounded by the one Arnoldi basis,
+# projected matrices, and three full-coordinate vectors. Rejected projected
+# slices must not repeat full-space operator applications.
+expv_n=6;expv_krylovdim=4
+expv_expected_entries=
+    expv_n*(expv_krylovdim+4)+
+    (expv_krylovdim+1)*expv_krylovdim+
+    (expv_krylovdim+1)^2
+expv_workspace=KrylovExpvWorkspace(
+    ComplexF64,expv_n,expv_krylovdim)
+@assert sum(sizeof,(
+    expv_workspace.V,expv_workspace.H,expv_workspace.small,
+    expv_workspace.w,expv_workspace.current,expv_workspace.trial))==
+    expv_expected_entries*sizeof(ComplexF64)
+expv_operator=diagm(0=>ComplexF64.(range(-1,1;length=expv_n)))
+expv_source=ones(ComplexF64,expv_n)
+expv_result=krylov_expv(
+    expv_operator,expv_source,0.1;
+    krylovdim=expv_krylovdim,initial_step=0.1,
+    atol=1e-8,rtol=1e-7)
+@assert expv_result.rejected_steps>0
+@assert expv_result.arnoldi_factorizations==expv_result.accepted_steps
+@assert expv_result.operator_applications==
+    expv_krylovdim*expv_result.arnoldi_factorizations
+@assert PermutationalInvariantDynamics._performance_krylov_expv_workspace_bytes(
+    expv_n,ComplexF64,expv_krylovdim)==
+    expv_expected_entries*sizeof(ComplexF64)
+
+println("Performance regression gates passed (threads=$(Threads.nthreads()), apply_alloc=$allocated, batch_alloc=$batch_alloc, batch_adjoint_alloc=$batch_adjoint_alloc, collective_apply_alloc=$collective_apply_alloc, collective_materialization_alloc=$collective_materialization_alloc, threaded_alloc=$threaded_alloc, restricted_alloc=$restricted_alloc, trajectory_batch_alloc=$trajectory_batch_alloc, composite_trajectory_apply_alloc=$composite_trajectory_apply_alloc, composite_trajectory_step_alloc=$composite_trajectory_step_alloc, composite_trajectory_batch_alloc=$composite_trajectory_batch_alloc, weak_average_alloc=$weak_average_alloc, population_apply_alloc=$population_apply_alloc, population_evolve_alloc=$population_evolve_alloc, observable_alloc=$planned, onebody_alloc=$onebody_alloc, local_factor_alloc=$local_factor_alloc, composite_system_alloc=$composite_system_alloc, composite_auxiliary_alloc=$composite_auxiliary_alloc, reduction_alloc=$reduction_alloc, reduction_setup_alloc=$reduction_setup_alloc, reduction_uncached_alloc=$reduction_uncached_alloc, reduction_inplace_alloc=$reduction_inplace_alloc, reduction_unchecked_alloc=$reduction_unchecked_alloc, meanfield_alloc=$meanfield_alloc)")

@@ -449,10 +449,11 @@ CollectiveOneBodyBlockBuilder(
 CollectiveOneBodyBlockBuilder(
     geometry::_SymmetricCollectiveGeometry{T,D,L,B}) where {T,D,L,B}=
     CollectiveOneBodyBlockBuilder{T,D,L,B}(geometry)
-struct CollectivePBodyBlockBuilder{G,P,E}
+struct CollectivePBodyBlockBuilder{G,P,E,O}
     geometry::G
     permutations::P
     block_entries::E
+    operation_counts::O
     cancellation_risk::Bool
 end
 struct DirectPIBlockBuilder{B,S}
@@ -491,11 +492,11 @@ struct InPlaceCorrelatedLocalJumpPIKernel{S,O,G,R,B,A,Q} <: AbstractDynamicPIKer
     rtol::Q
 end
 
-struct InPlaceHamiltonianKernelWorkspace{O,B}
-    operator::O;blocks::B
+struct InPlaceHamiltonianKernelWorkspace{O,B,C}
+    operator::O;blocks::B;cancellation_scratch::C
 end
-struct InPlaceDissipatorKernelWorkspace{O,B,Q}
-    operator::O;blocks::B;qblocks::Q
+struct InPlaceDissipatorKernelWorkspace{O,B,Q,C}
+    operator::O;blocks::B;qblocks::Q;cancellation_scratch::C
 end
 struct InPlaceLocalJumpKernelWorkspace{O,Q,B,C,S}
     operator::O
@@ -504,8 +505,9 @@ struct InPlaceLocalJumpKernelWorkspace{O,Q,B,C,S}
     contractions::C
     gain_scratch::S
 end
-struct InPlaceLocalPBodyJumpKernelWorkspace{O,Q,B,C,S}
+struct InPlaceLocalPBodyJumpKernelWorkspace{O,Q,B,C,S,A}
     operator::O;qoperator::Q;qblocks::B;contractions::C;gain_scratch::S
+    cancellation_scratch::A
 end
 struct StaticFactorizedGainKernelWorkspace{S}
     gain_scratch::S
@@ -655,19 +657,23 @@ function _model_onebox_requirements(model::PIModel,
     symmetric_collective_available=
         _has_single_fully_symmetric_sector(model.basis)&&
         !_needs_wide_collective(model.basis,T)
-    needs_onebody=any(model.terms) do term
+    needs_full_onebody=any(model.terms) do term
         _term_requires_onebody_geometry(term)&&
-            !(symmetric_collective_available&&
-              _term_supports_symmetric_collective_geometry(term))
+            !_term_supports_diagonal_collective_geometry(term)
     end
+    has_collective_onebody=any(
+        _term_supports_diagonal_collective_geometry,model.terms)
     uses_symmetric_collective=symmetric_collective_available&&
-        !needs_onebody&&any(_term_supports_symmetric_collective_geometry,
-                           model.terms)
+        !needs_full_onebody&&has_collective_onebody
+    uses_diagonal_onebody=!symmetric_collective_available&&
+        !needs_full_onebody&&has_collective_onebody
+    needs_onebody=needs_full_onebody||uses_diagonal_onebody
     pbody_orders=unique(Int[body_order(term) for term in model.terms
                             if term isa _PBodyPITerm])
     required_depth=max(needs_onebody ? 1 : 0,maximum(pbody_orders;init=0))
     geometry_families=(needs_onebody ? 1 : 0)+length(pbody_orders)
-    (;needs_onebody,uses_symmetric_collective,pbody_orders,required_depth,
+    (;needs_onebody,needs_full_onebody,uses_diagonal_onebody,
+      uses_symmetric_collective,pbody_orders,required_depth,
       geometry_families)
 end
 
@@ -700,10 +706,13 @@ function TermCompileContext(model::PIModel{B};coefficient_cache=nothing) where
     requirements=_model_onebox_requirements(model,T)
     coefficients=_compile_coefficient_cache(
         model,T,requirements,coefficient_cache)
-    onebody=if requirements.needs_onebody
+    onebody=if requirements.needs_full_onebody
         OneBodyGeometry(b,T;coefficient_cache=coefficients)
     elseif requirements.uses_symmetric_collective
         _SymmetricCollectiveGeometry(b,T)
+    elseif requirements.uses_diagonal_onebody
+        _diagonal_onebody_geometry(
+            b,T;coefficient_cache=coefficients)
     else
         nothing
     end
@@ -725,6 +734,8 @@ _term_requires_onebody_geometry(::Union{DirectPIHamiltonian,DirectPIJump,
 _term_supports_symmetric_collective_geometry(::AbstractPITerm)=false
 _term_supports_symmetric_collective_geometry(::Union{LocalHamiltonian,
     CollectiveHamiltonian,CollectiveJump,CorrelatedCollectiveJumps})=true
+_term_supports_diagonal_collective_geometry(term::AbstractPITerm)=
+    _term_supports_symmetric_collective_geometry(term)
 
 function _pbody_geometry!(context::TermCompileContext,order::Integer)
     get!(()->PBodyGeometry(context.basis,order,context.geometry_type;
@@ -752,8 +763,15 @@ function _pbody_block_builder(context::TermCompileContext,term)
                 scale.numerator//scale.denominator>
                     Rational{BigInt}(inv(sqrt(eps(context.geometry_type))))
             end,entries),block_entries)
-    CollectivePBodyBlockBuilder(geometry,permutations,block_entries,
-                                cancellation_risk)
+    operation_counts=map(block_entries) do entries
+        sum(entries;init=big(1)) do entry
+            U=entry[1]
+            BigInt(size(U,2))*BigInt(size(U,3))^2+1
+        end
+    end
+    CollectivePBodyBlockBuilder(
+        geometry,permutations,block_entries,operation_counts,
+        cancellation_risk)
 end
 
 function _check_dynamic_pbody_operator(builder::CollectivePBodyBlockBuilder,X)
@@ -785,55 +803,115 @@ function _dynamic_pbody_block_uncertified(value,absolute_sum,
     forward_bound>=spacing/R(4)
 end
 
-function _fill_dynamic_blocks!(blocks,builder::CollectivePBodyBlockBuilder,X)
+function _fill_dynamic_blocks!(
+        blocks,builder::CollectivePBodyBlockBuilder,X,
+        cancellation_scratch)
     geometry=builder.geometry;b=geometry.basis
     for s in eachindex(b.sectors)
         K=blocks[s];fill!(K,zero(eltype(K)))
-        for (U,scale) in builder.block_entries[s]
-            rows,centers,local_dimension=size(U)
-            if scale.direct
-                factor=scale.factor
-                @inbounds for column in 1:rows,row in 1:rows,w in 1:centers,
-                              j in 1:local_dimension,i in 1:local_dimension
-                    K[row,column]+=factor*U[row,w,i]*U[column,w,j]*X[i,j]
-                end
-            else
-                @inbounds for column in 1:rows,row in 1:rows,w in 1:centers,
-                              j in 1:local_dimension,i in 1:local_dimension
-                    contribution=U[row,w,i]*U[column,w,j]*X[i,j]
-                    K[row,column]+=_apply_prepared_exact_scale(
-                        contribution,scale;
-                        context="dynamic collective p-body path contribution")
-                end
-            end
-        end
         if builder.cancellation_risk
-            operation_count=sum(builder.block_entries[s];init=1) do entry
-                U=entry[1]
-                size(U,2)*size(U,3)^2+1
+            size(cancellation_scratch,1)>=size(K,1)&&
+                size(cancellation_scratch,2)>=size(K,2)||
+                throw(DimensionMismatch(
+                    "dynamic p-body cancellation scratch is too small"))
+            @inbounds for column in axes(K,2),row in axes(K,1)
+                cancellation_scratch[row,column]=
+                    zero(eltype(cancellation_scratch))
             end
+            for (U,scale) in builder.block_entries[s]
+                _accumulate_dynamic_pbody_path_certified!(
+                    K,cancellation_scratch,U,X,scale)
+            end
+            operation_count=builder.operation_counts[s]
             for column in axes(K,2),row in axes(K,1)
-                absolute_sum=zero(_real_float_type(eltype(K)))
-                for (U,exact_scale) in builder.block_entries[s]
-                    rows,centers,local_dimension=size(U)
-                    for w in 1:centers,j in 1:local_dimension,i in 1:local_dimension
-                        primitive=U[row,w,i]*U[column,w,j]*X[i,j]
-                        contribution=exact_scale.direct ? exact_scale.factor*primitive :
-                            _apply_prepared_exact_scale(primitive,exact_scale;
-                                context="dynamic collective p-body cancellation check")
-                        absolute_sum+=abs(contribution)
-                    end
-                end
                 _dynamic_pbody_block_uncertified(
-                    K[row,column],absolute_sum,operation_count)&&
+                    K[row,column],cancellation_scratch[row,column],
+                    operation_count)&&
                     throw(ArgumentError(
                         "the evaluated dynamic p-body block cannot certify its " *
                         "working-precision result through large-N path accumulation; " *
                         "use a wider InPlaceTimeOperator prototype scalar type"))
             end
+        else
+            for (U,scale) in builder.block_entries[s]
+                _accumulate_dynamic_pbody_path!(K,U,X,scale)
+            end
         end
     end
     blocks
+end
+
+function _fill_dynamic_blocks!(
+        blocks,builder::CollectivePBodyBlockBuilder,X)
+    builder.cancellation_risk&&throw(ArgumentError(
+        "a cancellation-risk dynamic p-body builder requires preallocated "*
+        "certification scratch"))
+    _fill_dynamic_blocks!(blocks,builder,X,nothing)
+end
+
+function _accumulate_dynamic_pbody_path!(
+        destination,U::_PackedPathIsometry,X,scale)
+    rows,centers,local_dimension=size(U)
+    size(destination)==(rows,rows)||throw(DimensionMismatch(
+        "dynamic p-body destination has the wrong dimensions"))
+    support=U.data
+    @inbounds for centre in 1:centers,j in 1:local_dimension
+        right_column=centre+(j-1)*centers
+        for right_pointer in nzrange(support,right_column)
+            output_column=support.rowval[right_pointer]
+            right_value=support.nzval[right_pointer]
+            for i in 1:local_dimension
+                x=X[i,j]
+                iszero(x)&&continue
+                left_column=centre+(i-1)*centers
+                for left_pointer in nzrange(support,left_column)
+                    output_row=support.rowval[left_pointer]
+                    primitive=support.nzval[left_pointer]*right_value*x
+                    contribution=scale.direct ? scale.factor*primitive :
+                        _apply_prepared_exact_scale(
+                            primitive,scale;
+                            context="dynamic collective p-body path contribution")
+                    destination[output_row,output_column]+=contribution
+                end
+            end
+        end
+    end
+    destination
+end
+
+function _accumulate_dynamic_pbody_path_certified!(
+        destination,absolute_sum,U::_PackedPathIsometry,X,scale)
+    rows,centers,local_dimension=size(U)
+    size(destination)==(rows,rows)||throw(DimensionMismatch(
+        "dynamic p-body destination has the wrong dimensions"))
+    size(absolute_sum,1)>=rows&&size(absolute_sum,2)>=rows||
+        throw(DimensionMismatch(
+            "dynamic p-body certification scratch is too small"))
+    support=U.data
+    @inbounds for centre in 1:centers,j in 1:local_dimension
+        right_column=centre+(j-1)*centers
+        for right_pointer in nzrange(support,right_column)
+            output_column=support.rowval[right_pointer]
+            right_value=support.nzval[right_pointer]
+            for i in 1:local_dimension
+                x=X[i,j]
+                iszero(x)&&continue
+                left_column=centre+(i-1)*centers
+                for left_pointer in nzrange(support,left_column)
+                    output_row=support.rowval[left_pointer]
+                    primitive=support.nzval[left_pointer]*right_value*x
+                    contribution=scale.direct ? scale.factor*primitive :
+                        _apply_prepared_exact_scale(
+                            primitive,scale;
+                            context="dynamic collective p-body path contribution")
+                    destination[output_row,output_column]+=contribution
+                    absolute_sum[output_row,output_column]+=
+                        abs(contribution)
+                end
+            end
+        end
+    end
+    destination
 end
 
 function _path_contractions!(destination,UL,UR,X)
@@ -851,10 +929,43 @@ function _path_contractions!(destination,UL,UR,X)
     destination
 end
 
+function _path_contractions!(destination,
+        UL::_PackedPathIsometry,UR::_PackedPathIsometry,X)
+    fill!(destination,zero(eltype(destination)))
+    left_rows,centers,local_dimension=size(UL)
+    right_rows,centers_right,local_dimension_right=size(UR)
+    centers==centers_right&&local_dimension==local_dimension_right||
+        throw(DimensionMismatch("incompatible p-body path isometries"))
+    size(destination)==(left_rows,right_rows)||throw(DimensionMismatch(
+        "p-body contraction destination has the wrong dimensions"))
+    left=UL.data
+    right=UR.data
+    @inbounds for centre in 1:centers,j in 1:local_dimension
+        right_column=centre+(j-1)*centers
+        for right_pointer in nzrange(right,right_column)
+            output_column=right.rowval[right_pointer]
+            right_value=right.nzval[right_pointer]
+            for i in 1:local_dimension
+                x=X[i,j]
+                iszero(x)&&continue
+                left_column=centre+(i-1)*centers
+                for left_pointer in nzrange(left,left_column)
+                    output_row=left.rowval[left_pointer]
+                    destination[output_row,output_column]+=
+                        left.nzval[left_pointer]*right_value*x
+                end
+            end
+        end
+    end
+    destination
+end
+
 function _pbody_gain_factorization_data(builder::CollectivePBodyBlockBuilder)
     geometry=builder.geometry;b=geometry.basis;T=geometry_scalar_type(geometry)
     groups=NTuple{4,Int}[]
-    left_isometries=Array{T,3}[];right_isometries=Array{T,3}[]
+    I=eltype(values(geometry.isometries))
+    left_isometries=I[]
+    right_isometries=I[]
     pair_scales=_PreparedExactScale{T,true}[]
     for (li,left_sector) in pairs(b.sectors),(ni,right_sector) in pairs(b.sectors)
         first_pair=length(pair_scales)+1
@@ -946,6 +1057,9 @@ function _fill_dynamic_blocks!(blocks,builder::DirectPIBlockBuilder,
     blocks
 end
 
+_fill_dynamic_blocks!(blocks,builder,X,cancellation_scratch)=
+    _fill_dynamic_blocks!(blocks,builder,X)
+
 function _dynamic_onebody_builder(
         context::TermCompileContext{B,G,P,C,T}) where
         {D,L,B<:PIBasis{D,L},G,P,C,T}
@@ -1016,6 +1130,19 @@ function _collective_blocks(operator::AbstractMatrix{O},
     end
     blocks
 end
+
+function _sparse_collective_blocks(operator::AbstractMatrix{O},
+        context::TermCompileContext{B,G,P,C,R}) where {O,B,G,P,C,R}
+    S=promote_type(Complex{R},O)
+    blocks=Vector{SparseMatrixCSC{S,Int}}(
+        undef,length(context.basis.sectors))
+    for index in eachindex(context.basis.sectors)
+        blocks[index]=_collective_sparse_block(
+            context.basis,operator,context.basis.sectors[index];
+            cache=context.onebody)
+    end
+    blocks
+end
 _direct_term_blocks(operator,context)=_direct_blocks(context.basis,operator)
 
 # Fixed collective one-body lifts have the exact sparse support of the U(d)
@@ -1025,6 +1152,8 @@ _direct_term_blocks(operator,context)=_direct_blocks(context.basis,operator)
 # fixed collective one-body terms also keeps plan types independent of the
 # runtime sector selection. Dynamic schedules remain dense because their
 # support may change at every evaluation.
+_prepare_collective_action(
+    blocks::AbstractVector{<:SparseMatrixCSC})=blocks
 _prepare_collective_action(blocks)=[sparse(block) for block in blocks]
 
 function _compile_hamiltonian(term,context,blocks)
@@ -1040,7 +1169,7 @@ function compile_term(t::Union{LocalHamiltonian,CollectiveHamiltonian},
     operator isa InPlaceTimeOperator && return InPlaceHamiltonianPIKernel(
         operator,_dynamic_builder(context,t),_scaled_rate(term_rate(t),term_hbar(t),R))
     _compile_collective_hamiltonian(
-        t,context,_collective_blocks(operator,context))
+        t,context,_sparse_collective_blocks(operator,context))
 end
 function compile_term(t::DirectPIHamiltonian,context::TermCompileContext)
     operator=term_operator(t);R=context.geometry_type
@@ -1057,10 +1186,15 @@ function _compile_dissipator(term,blocks)
     DissipatorPIKernel(blocks,[K'*K for K in blocks],term_rate(term))
 end
 function _compile_collective_dissipator(term,blocks,context)
-    # Form Q with the established dense multiplication order before retaining
-    # exact sparse support, so this optimization does not change the prepared
-    # floating values.
-    qblocks=[K'*K for K in blocks]
+    # Fixed collective blocks already retain exact CSC support.  Sparse Gram
+    # products avoid the otherwise dominant dense K'K temporary while keeping
+    # exact structural zeros; dynamic schedules continue to use dense
+    # preallocated multiplication in their task-owned workspace.
+    qblocks=map(blocks) do K
+        Q=K'*K
+        dropzeros!(Q)
+        Q
+    end
     blocks=_prepare_collective_action(blocks)
     qblocks=_prepare_collective_action(qblocks)
     DissipatorPIKernel(blocks,qblocks,term_rate(term))
@@ -1070,7 +1204,7 @@ function compile_term(t::CollectiveJump,context::TermCompileContext)
     operator isa InPlaceTimeOperator && return InPlaceDissipatorPIKernel(
         operator,_dynamic_builder(context,t),term_rate(t))
     _compile_collective_dissipator(
-        t,_collective_blocks(operator,context),context)
+        t,_sparse_collective_blocks(operator,context),context)
 end
 function compile_term(t::DirectPIJump,context::TermCompileContext)
     operator=term_operator(t)
@@ -1091,7 +1225,7 @@ function compile_term(t::LocalJump,context::TermCompileContext)
         return InPlaceLocalJumpPIKernel(operator,context.onebody,term_rate(t),
             branches)
     end
-    Q=_collective_blocks(operator'*operator,context)
+    Q=_sparse_collective_blocks(operator'*operator,context)
     prepared_branches=_local_gain_branches(context.basis,context.onebody)
     T=promote_type(eltype(first(Q)),eltype(operator))
     contractions=_local_gain_contraction_workspace(prepared_branches,T)
@@ -1246,6 +1380,112 @@ function _fused_zero_blocks(b,::Type{T}) where T
      for index in eachindex(b.sectors)]
 end
 
+_fusion_source_blocks(kernel,::Val{:hamiltonian})=kernel.blocks
+_fusion_source_blocks(kernel,::Val{:loss})=kernel.qblocks
+_sparse_fusion_blocks_trait(
+    ::AbstractVector{<:SparseMatrixCSC})=Val(true)
+_sparse_fusion_blocks_trait(blocks)=Val(false)
+_sparse_fusion_and(::Val{true},::Val{true})=Val(true)
+_sparse_fusion_and(left,right)=Val(false)
+_sparse_fusion_trait(::Tuple{},field)=Val(true)
+function _sparse_fusion_trait(kernels::Tuple{K,Vararg{Any}},
+                              field) where K
+    _sparse_fusion_and(
+        _sparse_fusion_blocks_trait(
+            _fusion_source_blocks(first(kernels),field)),
+        _sparse_fusion_trait(Base.tail(kernels),field))
+end
+
+# Add fixed sparse Schur blocks column by column.  The accumulator is only one
+# Schur-vector wide, and contributions to each coordinate are visited in the
+# same kernel order as the former dense-block loop.  Exact cancellations are
+# removed; no numerical dropping tolerance is introduced.
+function _fused_sparse_scaled_blocks(kernels::Tuple,b,::Type{T},
+                                     field::Val) where T
+    prepared=Vector{SparseMatrixCSC{T,Int}}(
+        undef,length(b.sectors))
+    for sector in eachindex(b.sectors)
+        dimension=length(b.patterns[sector])
+        column_offsets=Vector{Int}(undef,dimension+1)
+        column_offsets[1]=1
+        row_indices=Int[]
+        nonzeros=T[]
+        support_upper_bound=try
+            foldl(kernels;init=0) do total,kernel
+                Base.checked_add(total,
+                    nnz(_fusion_source_blocks(kernel,field)[sector]))
+            end
+        catch error
+            error isa OverflowError||rethrow()
+            nothing
+        end
+        if support_upper_bound!==nothing
+            sizehint!(row_indices,support_upper_bound)
+            sizehint!(nonzeros,support_upper_bound)
+        end
+        accumulator=zeros(T,dimension)
+        marked=falses(dimension)
+        touched=Int[]
+        if support_upper_bound!==nothing
+            sizehint!(touched,min(dimension,support_upper_bound))
+        end
+        for column in 1:dimension
+            empty!(touched)
+            for kernel in kernels
+                scale=convert(T,kernel.scale)
+                source=_fusion_source_blocks(kernel,field)[sector]
+                @inbounds for pointer in
+                        source.colptr[column]:(source.colptr[column+1]-1)
+                    row=source.rowval[pointer]
+                    if !marked[row]
+                        marked[row]=true
+                        push!(touched,row)
+                    end
+                    accumulator[row]+=
+                        scale*convert(T,source.nzval[pointer])
+                end
+            end
+            sort!(touched)
+            @inbounds for row in touched
+                value=accumulator[row]
+                if !iszero(value)
+                    push!(row_indices,row)
+                    push!(nonzeros,value)
+                end
+                accumulator[row]=zero(T)
+                marked[row]=false
+            end
+            column_offsets[column+1]=length(nonzeros)+1
+        end
+        prepared[sector]=SparseMatrixCSC(
+            dimension,dimension,column_offsets,row_indices,nonzeros)
+    end
+    prepared
+end
+
+function _fused_dense_scaled_blocks(kernels::Tuple,b,::Type{T},
+                                    field::Val) where T
+    blocks=_fused_zero_blocks(b,T)
+    for kernel in kernels
+        scale=convert(T,kernel.scale)
+        sources=_fusion_source_blocks(kernel,field)
+        for sector in eachindex(blocks),index in eachindex(blocks[sector])
+            blocks[sector][index]+=scale*sources[sector][index]
+        end
+    end
+    blocks
+end
+
+_fused_scaled_blocks(::Tuple{},b,::Type{T},field) where T=nothing
+function _fused_scaled_blocks(kernels::Tuple,b,::Type{T},field) where T
+    _fused_scaled_blocks(
+        kernels,b,T,field,_sparse_fusion_trait(kernels,field))
+end
+_fused_scaled_blocks(kernels,b,::Type{T},field,::Val{true}) where T=
+    _fused_sparse_scaled_blocks(kernels,b,T,field)
+_fused_scaled_blocks(kernels,b,::Type{T},field,::Val{false}) where T=
+    _fused_dense_scaled_blocks(kernels,b,T,field)
+
 _fused_owned_matrix(matrix::Matrix{T},::Type{T}) where T=matrix
 _fused_owned_matrix(matrix::SparseMatrixCSC{T,Int},::Type{T}) where T=matrix
 _fused_owned_matrix(matrix::SparseMatrixCSC,::Type{T}) where T=
@@ -1331,19 +1571,8 @@ function _fuse_selected_fixed_kernels(
     T=foldl(promote_type,map(_kernel_scalar_type,selected))
 
     hamiltonians=_select_kernel_type(selected,HamiltonianPIKernel)
-    hamiltonian_blocks=if isempty(hamiltonians)
-        nothing
-    else
-        blocks=_fused_zero_blocks(b,T)
-        for kernel in hamiltonians
-            scale=convert(T,kernel.scale)
-            for sector in eachindex(blocks),index in eachindex(blocks[sector])
-                blocks[sector][index]+=scale*kernel.blocks[sector][index]
-            end
-        end
-        all(kernel->all(issparse,kernel.blocks),hamiltonians) ?
-            [sparse(block) for block in blocks] : blocks
-    end
+    hamiltonian_blocks=_fused_scaled_blocks(
+        hamiltonians,b,T,Val(:hamiltonian))
 
     DissipativeKernel=Union{DissipatorPIKernel,FactorizedLocalJumpPIKernel,
                             FactorizedLocalPBodyJumpPIKernel}
@@ -1353,19 +1582,8 @@ function _fuse_selected_fixed_kernels(
     # evade the ordinary dissipative application check.
     foreach(kernel->_evaluated_dissipative_rate(kernel.scale,0.0,nothing),
             dissipative)
-    loss_blocks=if isempty(dissipative)
-        nothing
-    else
-        blocks=_fused_zero_blocks(b,T)
-        for kernel in dissipative
-            scale=convert(T,kernel.scale)
-            for sector in eachindex(blocks),index in eachindex(blocks[sector])
-                blocks[sector][index]+=scale*kernel.qblocks[sector][index]
-            end
-        end
-        all(kernel->all(issparse,kernel.qblocks),dissipative) ?
-            [sparse(block) for block in blocks] : blocks
-    end
+    loss_blocks=_fused_scaled_blocks(
+        dissipative,b,T,Val(:loss))
 
     collective=_select_kernel_type(selected,DissipatorPIKernel)
     onebody=_select_kernel_type(selected,FactorizedLocalJumpPIKernel)
@@ -1553,6 +1771,12 @@ function _dynamic_block_workspace(b,T)
     [zeros(T,length(b.patterns[s]),length(b.patterns[s]))
      for s in eachindex(b.sectors)]
 end
+function _dynamic_pbody_cancellation_workspace(builder,b,::Type{T}) where T
+    required=builder isa CollectivePBodyBlockBuilder&&
+        builder.cancellation_risk
+    largest=required ? maximum(length,b.patterns;init=0) : 0
+    zeros(_real_float_type(T),largest,largest)
+end
 _kernel_workspace(::AbstractStaticPIKernel,b,T)=nothing
 function _kernel_workspace(kernel::Union{FactorizedLocalJumpPIKernel,
         FactorizedLocalPBodyJumpPIKernel},b,T)
@@ -1566,12 +1790,14 @@ function _kernel_workspace(kernel::FusedStaticPIKernel,b,T)
 end
 function _kernel_workspace(kernel::InPlaceHamiltonianPIKernel,b,T)
     InPlaceHamiltonianKernelWorkspace(_operator_workspace(kernel.schedule.prototype),
-                                      _dynamic_block_workspace(b,T))
+        _dynamic_block_workspace(b,T),
+        _dynamic_pbody_cancellation_workspace(kernel.builder,b,T))
 end
 function _kernel_workspace(kernel::InPlaceDissipatorPIKernel,b,T)
     blocks=_dynamic_block_workspace(b,T)
     InPlaceDissipatorKernelWorkspace(_operator_workspace(kernel.schedule.prototype),
-                                     blocks,_dynamic_block_workspace(b,T))
+        blocks,_dynamic_block_workspace(b,T),
+        _dynamic_pbody_cancellation_workspace(kernel.builder,b,T))
 end
 function _local_gain_contraction_workspace(branches,::Type{T},
                                            channels::Int=1) where T
@@ -1602,7 +1828,8 @@ function _kernel_workspace(kernel::InPlaceLocalPBodyJumpPIKernel,b,T)
     largest_block=maximum(length,b.patterns;init=0)
     InPlaceLocalPBodyJumpKernelWorkspace(operator,qoperator,
         _dynamic_block_workspace(b,T),contractions,
-        zeros(T,largest_block,largest_block))
+        zeros(T,largest_block,largest_block),
+        _dynamic_pbody_cancellation_workspace(kernel.builder,b,T))
 end
 function _kernel_workspace(kernel::InPlaceCorrelatedCollectiveJumpPIKernel,b,T)
     m=length(kernel.channel_blocks)
@@ -1954,14 +2181,18 @@ function _prepare_kernel!(kernel::InPlaceHamiltonianPIKernel,
     _check_dynamic_pbody_operator(kernel.builder,work.operator)
     _dynamic_ishermitian(work.operator)||throw(ArgumentError(
         "an in-place Hamiltonian callback produced a non-Hermitian operator"))
-    _fill_dynamic_blocks!(work.blocks,kernel.builder,work.operator)
+    _fill_dynamic_blocks!(
+        work.blocks,kernel.builder,work.operator,
+        work.cancellation_scratch)
     nothing
 end
 function _prepare_kernel!(kernel::InPlaceDissipatorPIKernel,
                           work::InPlaceDissipatorKernelWorkspace,b,t,p)
     _evaluate_time_operator!(work.operator,kernel.schedule,t,p)
     _check_dynamic_pbody_operator(kernel.builder,work.operator)
-    _fill_dynamic_blocks!(work.blocks,kernel.builder,work.operator)
+    _fill_dynamic_blocks!(
+        work.blocks,kernel.builder,work.operator,
+        work.cancellation_scratch)
     for s in eachindex(work.blocks)
         mul!(work.qblocks[s],adjoint(work.blocks[s]),work.blocks[s])
     end
@@ -1972,7 +2203,9 @@ function _prepare_kernel!(kernel::InPlaceLocalPBodyJumpPIKernel,
     _evaluate_time_operator!(work.operator,kernel.schedule,t,p)
     _check_dynamic_pbody_operator(kernel.builder,work.operator)
     mul!(work.qoperator,adjoint(work.operator),work.operator)
-    _fill_dynamic_blocks!(work.qblocks,kernel.builder,work.qoperator)
+    _fill_dynamic_blocks!(
+        work.qblocks,kernel.builder,work.qoperator,
+        work.cancellation_scratch)
     for index in eachindex(work.contractions)
         _path_contractions!(work.contractions[index],kernel.left_isometries[index],
                             kernel.right_isometries[index],work.operator)
@@ -3197,17 +3430,31 @@ end
 
 function _performance_kernel_workspace_bytes(kernel::InPlaceHamiltonianPIKernel,
         basis,::Type{T};bigfloat_precision::Integer=precision(BigFloat)) where T
-    _performance_operator_workspace_bytes(kernel.schedule.prototype;
+    bytes=_performance_operator_workspace_bytes(kernel.schedule.prototype;
         bigfloat_precision)+
         _performance_entries_bytes(length(basis),T;bigfloat_precision)
+    if kernel.builder isa CollectivePBodyBlockBuilder&&
+            kernel.builder.cancellation_risk
+        largest=maximum(length,basis.patterns;init=0)
+        bytes+=_performance_entries_bytes(
+            BigInt(largest)^2,_real_float_type(T);bigfloat_precision)
+    end
+    bytes
 end
 
 function _performance_kernel_workspace_bytes(kernel::InPlaceDissipatorPIKernel,
         basis,::Type{T};bigfloat_precision::Integer=precision(BigFloat)) where T
-    _performance_operator_workspace_bytes(kernel.schedule.prototype;
+    bytes=_performance_operator_workspace_bytes(kernel.schedule.prototype;
         bigfloat_precision)+
         _performance_entries_bytes(2BigInt(length(basis)),T;
                                    bigfloat_precision)
+    if kernel.builder isa CollectivePBodyBlockBuilder&&
+            kernel.builder.cancellation_risk
+        largest=maximum(length,basis.patterns;init=0)
+        bytes+=_performance_entries_bytes(
+            BigInt(largest)^2,_real_float_type(T);bigfloat_precision)
+    end
+    bytes
 end
 
 function _performance_branch_contraction_entries(branches)
@@ -3235,7 +3482,13 @@ function _performance_kernel_workspace_bytes(
                       for index in eachindex(kernel.pair_scales));init=big(0))
     largest=maximum(length,basis.patterns;init=0)
     entries=BigInt(length(basis))+contractions+BigInt(largest)^2
-    2operator_bytes+_performance_entries_bytes(entries,T;bigfloat_precision)
+    bytes=2operator_bytes+
+        _performance_entries_bytes(entries,T;bigfloat_precision)
+    if kernel.builder.cancellation_risk
+        bytes+=_performance_entries_bytes(
+            BigInt(largest)^2,_real_float_type(T);bigfloat_precision)
+    end
+    bytes
 end
 
 function _performance_kernel_workspace_bytes(
@@ -3520,6 +3773,40 @@ function _estimate_symmetric_collective_geometry(b::PIBasis,
       estimate=:conservative_structural_upper_bound)
 end
 
+function _estimate_model_geometry(model::PIModel;
+        bigfloat_precision::Integer=precision(BigFloat))
+    R=_model_geometry_type(model)
+    requirements=_model_onebox_requirements(model,R)
+    onebody=if requirements.needs_full_onebody
+        _estimate_onebody_geometry(
+            model.basis,R;bigfloat_precision)
+    elseif requirements.uses_symmetric_collective
+        _estimate_symmetric_collective_geometry(
+            model.basis,R;bigfloat_precision)
+    elseif requirements.uses_diagonal_onebody
+        _estimate_onebody_geometry(
+            model.basis,R;diagonal_only=true,bigfloat_precision)
+    else
+        nothing
+    end
+    pbody=map(requirements.pbody_orders) do order
+        order=>_estimate_pbody_geometry(
+            model.basis,order,R;bigfloat_precision)
+    end
+    retained_bytes=(onebody===nothing ? big(0) :
+                    big(onebody.retained_bytes))+
+        sum((big(entry.second.retained_bytes) for entry in pbody);
+            init=big(0))
+    setup_bytes=(onebody===nothing ? big(0) :
+                 big(onebody.setup_bytes))+
+        sum((big(entry.second.setup_bytes) for entry in pbody);
+            init=big(0))
+    (;retained_bytes,setup_bytes,onebody,pbody,
+      pbody_orders=requirements.pbody_orders,
+      geometry_families=requirements.geometry_families,
+      estimate=:sum_of_conservative_structural_upper_bounds)
+end
+
 function _model_preparation_bytes(model::PIModel;
         linear_arrays::Integer=16,
         bigfloat_precision::Integer=precision(BigFloat),
@@ -3527,14 +3814,8 @@ function _model_preparation_bytes(model::PIModel;
     n=length(model.basis);R=_model_geometry_type(model)
     T=Complex{R}
     requirements=_model_onebox_requirements(model,R)
-    geometry=if requirements.needs_onebody
-        _estimate_onebody_geometry(model.basis,R;bigfloat_precision).setup_bytes
-    elseif requirements.uses_symmetric_collective
-        _estimate_symmetric_collective_geometry(
-            model.basis,R;bigfloat_precision).setup_bytes
-    else
-        big(0)
-    end
+    geometry=_estimate_model_geometry(
+        model;bigfloat_precision).setup_bytes
     automatic_coefficients=coefficient_cache===nothing&&
         requirements.geometry_families>1&&_small_onebox_autocache(model.basis) ?
         _estimate_onebox_cache_upper(model.basis,requirements.required_depth,R;

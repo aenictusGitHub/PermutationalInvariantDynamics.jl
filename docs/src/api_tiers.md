@@ -15,19 +15,20 @@ They validate basis ownership and return package-level state or result objects.
 
 | Area | Recommended entry points |
 |---|---|
-| Representation | `PIBasis`, `PIState`, `PIOperator`, `exact_binomial`, `exact_multinomial`, Schur-block constructors, spin/state conveniences, `PIModel`, and the physical term constructors |
+| Representation | `PIBasis`, `PIState`, `PIOperator`, `PISupersite`, `GlobalPseudomodeModel`, `pseudomode_model`, `global_pseudomode_model`, `exact_binomial`, `exact_multinomial`, Schur-block constructors, spin/state conveniences, `PIModel`, and the physical term constructors |
 | Preparation | `compile`, `compile_family`, `specialize`, `isautonomous`, `freeze` |
-| Dynamics | `solve_dynamics` (including observable-only streaming), `solve_populations`, `dynamics_problem`, `floquet_steady_state`, `quantum_trajectories` (including online ensemble statistics), `trajectory_steady_state` |
+| Dynamics | `solve_dynamics` (including observable-only streaming), `solve_populations`, `dynamics_problem`, `floquet_steady_state`, `quantum_trajectories` (including online ensemble statistics), `trajectory_steady_state`, `HOPSPlan`, `hops_trajectory`, and `hops_average` |
 | Mean-field predictions | `MeanFieldPlan`, `solve_meanfield`, `meanfield_problem`, `meanfield_stationary_state`, `meanfield_stability` |
 | Stationary and spectral analysis | `stationary_state`, `liouvillian_spectrum`, `pi_liouvillian_gap`, `diagnostics`, `recommend_solver` |
 | Observables and information | `collective_expectation`, `collective_variance`, `qfi`, `qfim`, `stabilizer_renyi_entropy`, `two_time_correlation`, `delayed_second_order_correlation`, `stationary_correlation_spectrum`, entropy and distance functions |
 | Visualization | `schur_block_structure`, `visualize_schur_blocks`, `spin_husimi_q`, `spin_wigner`, `qudit_husimi_q`, `visualize_spin_phase_space`, and the density/Liouvillian/Floquet spectrum data and renderers |
-| Reductions and entanglement | `one_body_rdm`, `local_factor_trace`, `local_factor_trace!`, `reduced_state`, `reduced_state!`, `reduced_purity`, `negativity`, `partial_transpose_spectrum`, `ppt_mixture_test` |
+| Reductions and entanglement | `one_body_rdm`, `one_body_rdm!`, `local_factor_trace`, `local_factor_trace!`, `trace_pseudomodes`, `trace_pseudomodes!`, `global_pseudomode_state`, `composite_reduced_state`, `composite_reduced_state!`, `reduced_state`, `reduced_state!`, `reduced_purity`, `negativity`, `partial_transpose_spectrum`, `ppt_mixture_test` |
 | Validation | `state_diagnostics`, `positivity_diagnostics`, `validate_state` |
 
 Prefer these commands in new code. In particular, `stationary_state` returns a
-`PIState`-carrying result, while the older low-level `steady_state` interface
-may return raw PI coordinates.
+package state container (`PIState`, or `CompositePIState` for a shared global
+mode), while the older low-level `steady_state` interface may return raw
+coordinates.
 
 ## Advanced reusable API
 
@@ -36,11 +37,13 @@ They are supported and tested, but callers must obey their compatibility and
 threading contracts.
 
 - `OneBodyGeometry`, `PBodyGeometry`, `CollectiveObservablePlan`,
-  `LocalFactorTracePlan`, and `ReductionPlan` own prepared representation
+  `LocalFactorTracePlan`, `ReductionPlan`, and `CompositeReductionPlan` own prepared representation
   data. They can only be used with the exact `PIBasis` object from which they
   were constructed. `LocalFactorTracePlan` changes the local dimension by
   tracing the same internal factor from every supersite; it is distinct from
   the particle bipartition represented by `ReductionPlan`.
+  `pseudomode_trace_plan` prepares that same map for all trailing modes of one
+  exact `PISupersite`.
 - `PPTMixturePlan` owns the sparse real conic map for the PI qubit
   PPT-mixture test. It is tied to one exact basis and is safe to share across
   state scans; Clarabel solver state is call-local. Even for a
@@ -56,7 +59,8 @@ threading contracts.
 - `LiouvillianPlan`, `CompiledPIModel`, and `CompiledPIModelFamily` hold lowered model data;
   `LiouvillianWorkspace`, `ThreadedLiouvillianWorkspace`,
   `EvolutionWorkspace`, `KrylovWorkspace`,
-  `ArnoldiWorkspace`, `SymmetryProjectorWorkspace`, and `ReductionWorkspace`
+  `ArnoldiWorkspace`, `SymmetryProjectorWorkspace`,
+  `OneBodyRDMWorkspace`, and `ReductionWorkspace`
   hold mutable scratch.
 - `BlockGMRESWorkspace`, `MultiShiftGMRESWorkspace`,
   `RecycledGMRESWorkspace`, and `KrylovExpvWorkspace` reuse dominant
@@ -73,7 +77,15 @@ threading contracts.
   `HEOMWorkspace` and `HEOMEvolutionWorkspace` separate application scratch
   from the three hierarchy-sized arrays used by low-storage forward RK4. Hard
   hierarchy truncation and bath-pole convergence remain explicit research
-  choices.
+  choices. Matrix right-hand sides flatten ADO and RHS columns and reuse one
+  bounded system batch; `HEOMWorkspace(plan; batch_columns=q)` prepares the
+  bounded capacity for a repeated width `q`.
+- `HOPSPlan` stores a finite pure-state hierarchy in direct-sum Schur-irrep
+  coordinates for shared Gaussian baths. `HOPSWorkspace` owns one path's
+  hierarchy, RK4, coupling, and colored-noise scratch and is task-local.
+  Linear-HOPS roots are unnormalized; physical densities are averages of
+  their unnormalized outer products. Independent local colored noises are
+  outside this exact PI path representation.
 - `QuditHusimiPlan` retains dense coherent vectors for a fixed point/sector
   set and exact basis. Reuse it across states; setup can dominate for many
   large irreps. `ConvergenceStudyResult` retains every requested refinement
@@ -89,9 +101,18 @@ threading contracts.
   generator.
 - `CompositeSuperoperator` is a read-only sum of tensor-factor maps.
   `CompositeSuperoperatorWorkspace` owns its full-coordinate buffers, small
-  factor fibres, and nested PI application workspaces. Use explicit
-  task-owned workspaces in hot or parallel loops; the convenience matrix-free
-  wrapper serializes access to one compatibility workspace.
+  factor fibres, and nested PI application workspaces.
+  `CompositeSuperoperatorBatchWorkspace` is the fixed-capacity matrix-RHS
+  counterpart and raises rather than growing. Use explicit task-owned
+  workspaces in hot or parallel loops; the convenience matrix-free wrapper
+  serializes access to one compatibility workspace.
+- `GlobalPseudomodeModel` owns the read-only system-plus-one-mode factorization,
+  with `background` separated from explicit mode `damping_channels`.
+  `global_pseudomode_workspace` returns one task-owned composite workspace;
+  the synchronized `global_pseudomode_matrixfree` wrapper owns or reuses
+  exactly one such workspace. Read the [global-pseudomode
+  guide](global_pseudomodes.md) before choosing it instead of replicated
+  local modes.
 - `CompositeTrajectoryPlan` owns explicit fixed monitored channels, their
   assembled unconditional generator, and multiplicity-aware trace metadata.
   `CompositeTrajectoryWorkspace` shares two full channel buffers across all
@@ -146,10 +167,9 @@ spin_negativity = negativity(
     rho_spin, fld(N, 2); plan=cut, workspace=cut_work)
 ```
 
-The trace plan retains
-`length(supersite_basis)*length(trace_plan.output_basis)` dominant
-coefficients and has a 512 MiB setup guard. Reuse is therefore important, and
-large local dimensions can still make setup memory the limiting resource.
+The trace plan retains only exact nonzero sparse support and has a 512 MiB
+setup guard. Reuse is therefore important, and large local dimensions can
+still make setup memory the limiting resource.
 
 Mean-field propagation is a controlled product-state closure, not exact PI
 dynamics after correlations form. See [Mean-field predictions](meanfield.md)
@@ -304,7 +324,18 @@ for many states and one observable, the prepared plan avoids rebuilding the
 collective blocks as well.
 
 `one_body_rdm(rho; cache=geometry)` contracts every local matrix unit in one
-geometry traversal. This is especially useful for repeated qudit marginals.
+geometry traversal. For repeated states, also reuse the largest-sector
+scratch and output:
+
+```julia
+one_body_work = OneBodyRDMWorkspace(geometry, rho)
+rho_one = zeros(ComplexF64, basis.d, basis.d)
+one_body_rdm!(rho_one, rho, one_body_work)
+```
+
+This is especially useful for repeated qudit marginals. If an enclosing
+workflow has already called `validate_state`, it may select `check=false` on
+the in-place call.
 
 ## Preparing repeated reductions
 
@@ -325,23 +356,28 @@ reduced_state!(rhoA_buffer, rho, reduction, work)
 ```
 
 For qubits, the plan stores multiplicity-free SU(2) recoupling matrices. For
-qudits, it stores every required Littlewood--Richardson intertwiner. Reuse can
-remove nearly all repeated subduction setup, but it deliberately trades
-retained RAM for speed. Qudit construction still performs sparse
-rank-revealing factorizations and may have large temporary allocations.
-Construct one plan per exact
+qudits, it stores every required Littlewood--Richardson intertwiner as
+exact-support CSC blocks split by discarded-factor weight. Reuse removes
+nearly all repeated subduction setup, while `plan.estimates` reports packed
+and dense-equivalent sizes. Qudit construction still performs sparse
+rank-revealing factorizations and may have a large temporary dense nullspace
+basis. Construct one plan per exact
 `(basis,k)`, benchmark its setup and retained size, and avoid retaining plans
 for bipartitions that are used only once.
 
 `ReductionPlan` remains immutable and may be shared between tasks.
-`ReductionWorkspace` owns the mutable product-block, multiplication,
-partial-trace, partial-transpose, and reduced-block buffers, plus recoupling
-matrices matched once to its working scalar type. Compact real qubit matrices
-are therefore copied into a complex workspace, while already matching qudit
-matrices are shared read-only. Use one workspace per task. `reduced_state`
-still allocates its returned `PIState`, whereas `reduced_state!` also reuses
-caller-owned output. Spectral routines necessarily allocate their returned
-eigenvalue arrays.
+`ReductionWorkspace` owns mutable multiplication, partial-transpose, and
+reduced-block buffers plus recoupling data matched once to its working scalar
+type. Matching qudit workspaces share immutable packed blocks; wider
+workspaces copy only their nonzeros. The reduced-state path evaluates
+`tr_B(U*C*U') = sum_q U_q*C*U_q'` with one discarded-factor slice, so
+`mode=:reduction` omits the complete product block. Negativity retains that
+block because it must partially transpose it. Compact real qubit matrices are
+copied into a complex workspace. Use one workspace per task. `reduced_state`
+still allocates
+its returned `PIState`, whereas `reduced_state!` also reuses caller-owned
+output. Spectral routines necessarily allocate their returned eigenvalue
+arrays.
 
 ## Validation before analysis
 

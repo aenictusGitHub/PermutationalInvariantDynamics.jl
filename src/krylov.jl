@@ -208,6 +208,388 @@ function ldiv!(dest::AbstractVector,P::SchurSectorPreconditioner,src::AbstractVe
     dest
 end
 
+# A prepared PI plan already owns every physical Schur block and every
+# rectangular local-gain contraction.  Extract its block-diagonal
+# superoperator directly instead of recovering those same coefficients by one
+# ambient Liouvillian application per coordinate.  These helpers deliberately
+# write into dense destination blocks because the reusable preconditioner
+# factorizes each complete sector block.
+function _add_left_schur_superoperator!(B,A,scale)
+    m=size(A,1)
+    size(A,2)==m&&size(B)==(m^2,m^2)||throw(DimensionMismatch(
+        "incompatible Schur block in preconditioner construction"))
+    @inbounds for column in axes(A,2),row in axes(A,1)
+        value=A[row,column]
+        iszero(value)&&continue
+        contribution=scale*value
+        for bra in 1:m
+            B[row+(bra-1)*m,column+(bra-1)*m]+=contribution
+        end
+    end
+    B
+end
+
+function _add_left_schur_superoperator!(B,A::SparseMatrixCSC,scale)
+    m=size(A,1)
+    size(A,2)==m&&size(B)==(m^2,m^2)||throw(DimensionMismatch(
+        "incompatible Schur block in preconditioner construction"))
+    @inbounds for column in 1:m
+        for pointer in A.colptr[column]:(A.colptr[column+1]-1)
+            row=A.rowval[pointer]
+            contribution=scale*A.nzval[pointer]
+            iszero(contribution)&&continue
+            for bra in 1:m
+                B[row+(bra-1)*m,column+(bra-1)*m]+=contribution
+            end
+        end
+    end
+    B
+end
+
+function _add_right_schur_superoperator!(B,A,scale)
+    m=size(A,1)
+    size(A,2)==m&&size(B)==(m^2,m^2)||throw(DimensionMismatch(
+        "incompatible Schur block in preconditioner construction"))
+    @inbounds for output_bra in axes(A,2),input_bra in axes(A,1)
+        value=A[input_bra,output_bra]
+        iszero(value)&&continue
+        contribution=scale*value
+        for ket in 1:m
+            B[ket+(output_bra-1)*m,ket+(input_bra-1)*m]+=contribution
+        end
+    end
+    B
+end
+
+function _add_right_schur_superoperator!(B,A::SparseMatrixCSC,scale)
+    m=size(A,1)
+    size(A,2)==m&&size(B)==(m^2,m^2)||throw(DimensionMismatch(
+        "incompatible Schur block in preconditioner construction"))
+    @inbounds for output_bra in 1:m
+        for pointer in A.colptr[output_bra]:(A.colptr[output_bra+1]-1)
+            input_bra=A.rowval[pointer]
+            contribution=scale*A.nzval[pointer]
+            iszero(contribution)&&continue
+            for ket in 1:m
+                B[ket+(output_bra-1)*m,ket+(input_bra-1)*m]+=
+                    contribution
+            end
+        end
+    end
+    B
+end
+
+function _add_sandwich_schur_superoperator!(B,A,scale)
+    output_dimension,input_dimension=size(A)
+    output_dimension==input_dimension||throw(DimensionMismatch(
+        "a diagonal Schur-sector gain contraction must be square"))
+    m=output_dimension
+    size(B)==(m^2,m^2)||throw(DimensionMismatch(
+        "incompatible Schur block in preconditioner construction"))
+    @inbounds for input_bra in 1:m,output_bra in 1:m
+        right=A[output_bra,input_bra]
+        iszero(right)&&continue
+        right_factor=scale*conj(right)
+        for input_ket in 1:m,output_ket in 1:m
+            left=A[output_ket,input_ket]
+            iszero(left)&&continue
+            B[output_ket+(output_bra-1)*m,
+              input_ket+(input_bra-1)*m]+=left*right_factor
+        end
+    end
+    B
+end
+
+function _add_sandwich_schur_superoperator!(
+        B,A::SparseMatrixCSC,scale)
+    m=size(A,1)
+    size(A,2)==m&&size(B)==(m^2,m^2)||throw(DimensionMismatch(
+        "incompatible Schur block in preconditioner construction"))
+    @inbounds for input_bra in 1:m
+        for right_pointer in
+                A.colptr[input_bra]:(A.colptr[input_bra+1]-1)
+            output_bra=A.rowval[right_pointer]
+            right_factor=scale*conj(A.nzval[right_pointer])
+            iszero(right_factor)&&continue
+            for input_ket in 1:m
+                for left_pointer in
+                        A.colptr[input_ket]:(A.colptr[input_ket+1]-1)
+                    output_ket=A.rowval[left_pointer]
+                    left=A.nzval[left_pointer]
+                    iszero(left)&&continue
+                    B[output_ket+(output_bra-1)*m,
+                      input_ket+(input_bra-1)*m]+=left*right_factor
+                end
+            end
+        end
+    end
+    B
+end
+
+function _add_sandwich_schur_superoperator!(
+        B,A::_StaticOneBodyContraction,scale)
+    A.use_support||return _add_sandwich_schur_superoperator!(
+        B,A.matrix,scale)
+    output_dimension,input_dimension=size(A)
+    output_dimension==input_dimension||throw(DimensionMismatch(
+        "a diagonal Schur-sector gain contraction must be square"))
+    m=output_dimension
+    size(B)==(m^2,m^2)||throw(DimensionMismatch(
+        "incompatible Schur block in preconditioner construction"))
+    rows=A.output_rows;columns=A.input_columns;values=A.values
+    @inbounds for right_index in eachindex(values)
+        output_bra=rows[right_index]
+        input_bra=columns[right_index]
+        right_factor=scale*conj(values[right_index])
+        iszero(right_factor)&&continue
+        for left_index in eachindex(values)
+            left=values[left_index]
+            iszero(left)&&continue
+            output_ket=rows[left_index]
+            input_ket=columns[left_index]
+            B[output_ket+(output_bra-1)*m,
+              input_ket+(input_bra-1)*m]+=left*right_factor
+        end
+    end
+    B
+end
+
+function _add_exact_sandwich_schur_superoperator!(B,A,scale,exact_scale)
+    exact_scale.direct&&return _add_sandwich_schur_superoperator!(
+        B,A,scale*exact_scale.factor)
+    output_dimension,input_dimension=size(A)
+    output_dimension==input_dimension||throw(DimensionMismatch(
+        "a diagonal Schur-sector gain contraction must be square"))
+    m=output_dimension
+    size(B)==(m^2,m^2)||throw(DimensionMismatch(
+        "incompatible Schur block in preconditioner construction"))
+    @inbounds for input_bra in 1:m,output_bra in 1:m
+        right=A[output_bra,input_bra]
+        iszero(right)&&continue
+        for input_ket in 1:m,output_ket in 1:m
+            left=A[output_ket,input_ket]
+            iszero(left)&&continue
+            primitive=scale*left*conj(right)
+            B[output_ket+(output_bra-1)*m,
+              input_ket+(input_bra-1)*m]+=
+                _apply_prepared_exact_scale(
+                    primitive,exact_scale;
+                    context="Schur preconditioner local p-body gain")
+        end
+    end
+    B
+end
+
+function _add_exact_sandwich_schur_superoperator!(
+        B,A::SparseMatrixCSC,scale,exact_scale)
+    exact_scale.direct&&return _add_sandwich_schur_superoperator!(
+        B,A,scale*exact_scale.factor)
+    m=size(A,1)
+    size(A,2)==m&&size(B)==(m^2,m^2)||throw(DimensionMismatch(
+        "incompatible Schur block in preconditioner construction"))
+    @inbounds for input_bra in 1:m
+        for right_pointer in
+                A.colptr[input_bra]:(A.colptr[input_bra+1]-1)
+            output_bra=A.rowval[right_pointer]
+            right=A.nzval[right_pointer]
+            iszero(right)&&continue
+            for input_ket in 1:m
+                for left_pointer in
+                        A.colptr[input_ket]:(A.colptr[input_ket+1]-1)
+                    output_ket=A.rowval[left_pointer]
+                    left=A.nzval[left_pointer]
+                    iszero(left)&&continue
+                    primitive=scale*left*conj(right)
+                    B[output_ket+(output_bra-1)*m,
+                      input_ket+(input_bra-1)*m]+=
+                        _apply_prepared_exact_scale(
+                            primitive,exact_scale;
+                            context="Schur preconditioner local p-body gain")
+                end
+            end
+        end
+    end
+    B
+end
+
+function _add_schur_loss_blocks!(blocks,qblocks,scale)
+    @inbounds for sector in eachindex(blocks)
+        _add_left_schur_superoperator!(
+            blocks[sector],qblocks[sector],-scale/2)
+        _add_right_schur_superoperator!(
+            blocks[sector],qblocks[sector],-scale/2)
+    end
+    blocks
+end
+
+function _add_schur_collective_gains!(blocks,gains)
+    for gain in gains
+        @inbounds for sector in eachindex(blocks)
+            _add_sandwich_schur_superoperator!(
+                blocks[sector],gain.blocks[sector],gain.scale)
+        end
+    end
+    blocks
+end
+
+function _add_schur_onebody_gains!(blocks,gains)
+    for gain in gains
+        branches=gain.branches
+        @inbounds for branch_index in eachindex(branches.entries)
+            branch=branches.entries[branch_index]
+            branch.output_sector==branch.input_sector||continue
+            _add_sandwich_schur_superoperator!(
+                blocks[branch.output_sector],gain.contractions[branch_index],
+                gain.scale*branch.scale)
+        end
+    end
+    blocks
+end
+
+function _add_schur_pbody_gains!(blocks,gains)
+    for gain in gains
+        @inbounds for (output_sector,input_sector,first_pair,last_pair) in
+                gain.groups
+            output_sector==input_sector||continue
+            for pair in first_pair:last_pair
+                _add_exact_sandwich_schur_superoperator!(
+                    blocks[output_sector],gain.contractions[pair],gain.scale,
+                    gain.pair_scales[pair])
+            end
+        end
+    end
+    blocks
+end
+
+function _add_schur_kernel!(blocks,b,kernel::HamiltonianPIKernel,parameters)
+    scale=convert(eltype(first(blocks)),
+                  _family_kernel_scale(kernel,parameters))
+    @inbounds for sector in eachindex(blocks)
+        _add_left_schur_superoperator!(
+            blocks[sector],kernel.blocks[sector],-1im*scale)
+        _add_right_schur_superoperator!(
+            blocks[sector],kernel.blocks[sector],1im*scale)
+    end
+    blocks
+end
+
+function _add_schur_kernel!(blocks,b,kernel::DissipatorPIKernel,parameters)
+    scale=convert(eltype(first(blocks)),
+                  _family_kernel_scale(kernel,parameters))
+    @inbounds for sector in eachindex(blocks)
+        _add_sandwich_schur_superoperator!(
+            blocks[sector],kernel.blocks[sector],scale)
+    end
+    _add_schur_loss_blocks!(blocks,kernel.qblocks,scale)
+end
+
+function _add_schur_kernel!(blocks,b,kernel::LocalJumpPIKernel,parameters)
+    scale=convert(eltype(first(blocks)),
+                  _family_kernel_scale(kernel,parameters))
+    @inbounds for index in eachindex(kernel.gain.V)
+        global_row=kernel.gain.I[index]
+        global_column=kernel.gain.J[index]
+        row_sector=searchsortedlast(b.offsets,global_row)
+        column_sector=searchsortedlast(b.offsets,global_column)
+        row_sector==column_sector||continue
+        sector=row_sector
+        local_row=global_row-b.offsets[sector]+1
+        local_column=global_column-b.offsets[sector]+1
+        blocks[sector][local_row,local_column]+=
+            scale*kernel.gain.V[index]
+    end
+    _add_schur_loss_blocks!(blocks,kernel.qblocks,scale)
+end
+
+function _add_schur_kernel!(
+        blocks,b,kernel::FactorizedLocalJumpPIKernel,parameters)
+    scale=convert(eltype(first(blocks)),
+                  _family_kernel_scale(kernel,parameters))
+    branches=kernel.branches
+    @inbounds for branch_index in eachindex(branches.entries)
+        branch=branches.entries[branch_index]
+        branch.output_sector==branch.input_sector||continue
+        _add_sandwich_schur_superoperator!(
+            blocks[branch.output_sector],kernel.contractions[branch_index],
+            scale*branch.scale)
+    end
+    _add_schur_loss_blocks!(blocks,kernel.qblocks,scale)
+end
+
+function _add_schur_kernel!(
+        blocks,b,kernel::FactorizedLocalPBodyJumpPIKernel,parameters)
+    scale=convert(eltype(first(blocks)),
+                  _family_kernel_scale(kernel,parameters))
+    @inbounds for (output_sector,input_sector,first_pair,last_pair) in
+            kernel.groups
+        output_sector==input_sector||continue
+        for pair in first_pair:last_pair
+            _add_exact_sandwich_schur_superoperator!(
+                blocks[output_sector],kernel.contractions[pair],scale,
+                kernel.pair_scales[pair])
+        end
+    end
+    _add_schur_loss_blocks!(blocks,kernel.qblocks,scale)
+end
+
+function _add_schur_kernel!(blocks,b,kernel::FusedStaticPIKernel,parameters)
+    T=eltype(first(blocks))
+    if kernel.hamiltonian_blocks!==nothing
+        @inbounds for sector in eachindex(blocks)
+            _add_left_schur_superoperator!(
+                blocks[sector],kernel.hamiltonian_blocks[sector],-1im*one(T))
+            _add_right_schur_superoperator!(
+                blocks[sector],kernel.hamiltonian_blocks[sector],1im*one(T))
+        end
+    end
+    _add_schur_collective_gains!(blocks,kernel.collective_gains)
+    kernel.loss_blocks===nothing||
+        _add_schur_loss_blocks!(blocks,kernel.loss_blocks,one(T))
+    _add_schur_onebody_gains!(blocks,kernel.onebody_gains)
+    _add_schur_pbody_gains!(blocks,kernel.pbody_gains)
+    blocks
+end
+
+_add_schur_kernels!(blocks,b,::Tuple{},parameters)=blocks
+function _add_schur_kernels!(
+        blocks,b,kernels::Tuple{K,Vararg{Any}},parameters) where K
+    _add_schur_kernel!(blocks,b,first(kernels),parameters)
+    _add_schur_kernels!(blocks,b,Base.tail(kernels),parameters)
+end
+
+function _prepared_schur_blocks(
+        plan::LiouvillianPlan,::Type{T},parameters=nothing) where T
+    plan.kernels===nothing&&return nothing
+    if parameters===nothing
+        _require_autonomous(plan,"Schur-sector preconditioner construction")
+    else
+        all(kernel->kernel isa AbstractStaticPIKernel,plan.kernels)||
+            throw(ArgumentError(
+                "bound Schur-sector preconditioner construction requires fixed prepared operator kernels"))
+    end
+    blocks=Matrix{T}[
+        zeros(T,length(plan.basis.patterns[sector])^2,
+                length(plan.basis.patterns[sector])^2)
+        for sector in eachindex(plan.basis.sectors)]
+    _add_schur_kernels!(blocks,plan.basis,plan.kernels,parameters)
+end
+
+_schur_preconditioner_plan(::Any,basis)=nothing
+_schur_preconditioner_plan(plan::LiouvillianPlan,basis)=
+    plan.basis===basis&&plan.kernels!==nothing&&isautonomous(plan) ?
+        (;plan,parameters=nothing) : nothing
+_schur_preconditioner_plan(source::MatrixFreeLiouvillian,basis)=
+    source.plan isa LiouvillianPlan ?
+        _schur_preconditioner_plan(source.plan,basis) : nothing
+_schur_preconditioner_plan(source::CompiledPIModel,basis)=
+    _schur_preconditioner_plan(source.plan,basis)
+_schur_preconditioner_plan(source::SpecializedPIModel,basis)=
+    source.plan.basis===basis&&source.plan.kernels!==nothing ?
+        (;plan=source.plan,parameters=source.rates) : nothing
+
+_schur_scale_source(source)=source
+_schur_scale_source(plan::LiouvillianPlan)=_matrixfree_liouvillian(plan)
+
 """
     schur_sector_preconditioner(L, basis; trace_vector=nothing,
                                 regularization=0)
@@ -215,7 +597,10 @@ end
 Construct a left preconditioner from the diagonal Schur-sector blocks of the
 scale-normalized trace-fixed operator `L/s + v*t'`. Only `sum_s n_s^2` coefficients are retained,
 where `n_s` is a sector's Liouville dimension. Construction uses matrix-free
-applications of `L`; the resulting LU factors should be reused across solves.
+applications of `L` for an arbitrary source. A compatible prepared PI
+Liouvillian instead lowers the blocks directly from its immutable physical
+term plan, so only the operator-scale probes apply the complete Liouvillian.
+The resulting LU factors should be reused across solves.
 The implementation normalizes `L` by a reproducible operator-scale estimate,
 matching `krylov_steady_state`. Set a small positive `regularization` only when
 a sector block is singular. Cost and amortization estimates are available as
@@ -243,22 +628,40 @@ function schur_sector_preconditioner(L,basis::PIBasis;trace_vector=nothing,
     t=T.(raw_t)
     length(t)==n||throw(DimensionMismatch("trace vector has wrong length"))
     v=t/dot(t,t);e=zeros(T,n);y=zeros(T,n)
+    direct_plan=_schur_preconditioner_plan(L,basis)
     scale_probes=operator_scale===nothing && !(L isa AbstractMatrix) ? 3 : 0
-    Lscale=_validated_operator_scale(operator_scale===nothing ?
-        _estimated_operator_scale!(L,e,y;probes=max(scale_probes,1)) : operator_scale)
+    Lscale=_validated_operator_scale(if operator_scale===nothing
+        scale_source=_schur_scale_source(L)
+        _estimated_operator_scale!(
+            scale_source,e,y;probes=max(scale_probes,1))
+    else
+        operator_scale
+    end)
     ranges=[basis.offsets[s]:basis.offsets[s+1]-1 for s in eachindex(basis.sectors)]
-    blocks=Matrix{T}[]
-    for r in ranges
-        B=zeros(T,length(r),length(r))
-        for (j,gj) in enumerate(r)
-            fill!(e,zero(T));e[gj]=one(T);mul!(y,L,e)
-            @views B[:,j].=y[r]./Lscale
+    blocks = if direct_plan===nothing
+        probed=Matrix{T}[]
+        for r in ranges
+            B=zeros(T,length(r),length(r))
+            for (j,gj) in enumerate(r)
+                fill!(e,zero(T));e[gj]=one(T);mul!(y,L,e)
+                @views B[:,j].=y[r]./Lscale
+            end
+            push!(probed,B)
         end
+        probed
+    else
+        prepared=_prepared_schur_blocks(
+            direct_plan.plan,T,direct_plan.parameters)
+        for B in prepared
+            B ./= Lscale
+        end
+        prepared
+    end
+    for (B,r) in zip(blocks,ranges)
         @views B .+= v[r]*adjoint(t[r])
         if !iszero(regularization)
             @inbounds for i in axes(B,1);B[i,i]+=regularization;end
         end
-        push!(blocks,B)
     end
     factors=map(B->try
             lu(B;check=true)
@@ -268,9 +671,16 @@ function schur_sector_preconditioner(L,basis::PIBasis;trace_vector=nothing,
         end,blocks)
     F=eltype(factors);R=eltype(ranges)
     stored_coefficients=sum(length(r)^2 for r in ranges)
-    recommended_reuses=max(2,cld(n+scale_probes,expected_solve_applications))
+    block_applications=direct_plan===nothing ? n : 0
+    setup_applications=block_applications+scale_probes
+    recommended_reuses=max(2,cld(setup_applications,
+                                 expected_solve_applications))
     metadata=(setup_seconds=(time_ns()-started)/1e9,
-              setup_liouvillian_applications=n+scale_probes,
+              setup_liouvillian_applications=setup_applications,
+              setup_scale_applications=scale_probes,
+              setup_block_applications=block_applications,
+              block_construction=direct_plan===nothing ?
+                  :operator_probes : :prepared_kernels,
               setup_factorizations=length(factors),
               stored_coefficients,
               stored_bytes=Base.summarysize(factors),
@@ -290,6 +700,10 @@ function schur_sector_preconditioner(model::PIModel;representation=:matrixfree,k
     L=liouvillian(model;representation=representation)
     schur_sector_preconditioner(L,model.basis;kwargs...)
 end
+schur_sector_preconditioner(model::CompiledPIModel;kwargs...)=
+    schur_sector_preconditioner(model,model.plan.basis;kwargs...)
+schur_sector_preconditioner(model::SpecializedPIModel;kwargs...)=
+    schur_sector_preconditioner(model,model.plan.basis;kwargs...)
 
 function _complex_givens(a,b)
     T=promote_type(typeof(a),typeof(b));R=_real_float_type(T)

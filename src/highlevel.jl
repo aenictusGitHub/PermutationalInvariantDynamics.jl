@@ -64,6 +64,65 @@ function RecycledGMRESAlgorithm(;krylovdim::Integer=30,
         preconditioner)
 end
 
+"""
+    ExpvAlgorithm(; krylovdim=30, atol=1e-10, rtol=1e-8,
+                  initial_step=nothing, minimum_step=nothing,
+                  maximum_step=nothing, max_steps=10_000, safety=0.9)
+
+Adaptive restarted-Arnoldi exponential action for autonomous high-level
+dynamics. Each interval between requested output times is propagated as
+`exp(Δt * L)ρ` without materializing either `L` or its exponential. The
+workspace and task-owned source-action scratch are prepared once and reused
+for every interval.
+
+This algorithm deliberately rejects driven generators and non-`nothing`
+`parameters`; use the RK4 or SciML paths for explicit time dependence.
+"""
+struct ExpvAlgorithm{A<:Real,R<:Real,I,M,X,S<:Real} <: AbstractPIAlgorithm
+    krylovdim::Int
+    atol::A
+    rtol::R
+    initial_step::I
+    minimum_step::M
+    maximum_step::X
+    max_steps::Int
+    safety::S
+end
+function _checked_expv_algorithm_control(
+        value,label::AbstractString;allow_zero::Bool)
+    value===nothing&&return nothing
+    value isa Real&&!(value isa Bool)&&isfinite(value)||throw(ArgumentError(
+        "$label must be nothing or a finite real number"))
+    (allow_zero ? value>=0 : value>0)||throw(ArgumentError(
+        "$label must be $(allow_zero ? "nonnegative" : "positive")"))
+    value
+end
+function ExpvAlgorithm(;krylovdim::Integer=30,atol::Real=1e-10,
+        rtol::Real=1e-8,initial_step=nothing,minimum_step=nothing,
+        maximum_step=nothing,max_steps::Integer=10_000,safety::Real=0.9)
+    !(atol isa Bool)&&!(rtol isa Bool)&&isfinite(atol)&&isfinite(rtol)&&
+        atol>=0&&rtol>=0||throw(ArgumentError(
+            "atol and rtol must be finite nonnegative real numbers"))
+    !(safety isa Bool)&&isfinite(safety)&&0<safety<1||throw(ArgumentError(
+        "safety must lie strictly between zero and one"))
+    initial=_checked_expv_algorithm_control(
+        initial_step,"initial_step";allow_zero=false)
+    minimum=_checked_expv_algorithm_control(
+        minimum_step,"minimum_step";allow_zero=true)
+    maximum=_checked_expv_algorithm_control(
+        maximum_step,"maximum_step";allow_zero=false)
+    minimum===nothing||maximum===nothing||minimum<=maximum||
+        throw(ArgumentError(
+            "minimum_step must not exceed maximum_step"))
+    minimum===nothing||initial===nothing||initial>=minimum||
+        throw(ArgumentError(
+            "initial_step must not be smaller than minimum_step"))
+    ExpvAlgorithm(
+        _checked_algorithm_int(krylovdim,"krylovdim"),atol,rtol,
+        initial,minimum,maximum,
+        _checked_algorithm_int(max_steps,"max_steps"),safety)
+end
+
 """Thick-restarted harmonic Arnoldi parameters for modes near zero."""
 struct HarmonicArnoldiAlgorithm <: AbstractPIAlgorithm
     nev::Int
@@ -97,7 +156,7 @@ struct SteadyStateResult{S,I,A}
     algorithm::A
 end
 
-"""Fixed-step dynamics result with collection semantics over saved states."""
+"""High-level dynamics result with collection semantics over saved states."""
 struct DynamicsResult{T,S,A}
     times::Vector{T}
     states::S
@@ -107,7 +166,7 @@ end
 """
     DynamicsStreamResult
 
-Memory-conscious fixed-step dynamics output returned by
+Memory-conscious high-level dynamics output returned by
 [`solve_dynamics`](@ref) when `observables` are requested or
 `save_states=false`. `observables` maps each user-supplied name to its sampled
 expectation-value vector. `states` is either the ordinary saved `PIState`
@@ -223,6 +282,23 @@ function _algorithm_options(algorithm)
     throw(ArgumentError("unsupported stationary-state algorithm $(typeof(algorithm))"))
 end
 
+function _dynamics_algorithm_options(algorithm)
+    algorithm isa Symbol&&return (
+        _canonical_dynamics_algorithm(algorithm),NamedTuple())
+    algorithm isa AutoAlgorithm&&return (:auto,NamedTuple())
+    algorithm isa ExpvAlgorithm&&return (:expv,(
+        krylovdim=algorithm.krylovdim,
+        atol=algorithm.atol,
+        rtol=algorithm.rtol,
+        initial_step=algorithm.initial_step,
+        minimum_step=algorithm.minimum_step,
+        maximum_step=algorithm.maximum_step,
+        max_steps=algorithm.max_steps,
+        safety=algorithm.safety))
+    throw(ArgumentError(
+        "unsupported dynamics algorithm $(typeof(algorithm)); use a dynamics algorithm symbol, AutoAlgorithm(), or ExpvAlgorithm()"))
+end
+
 function _basis_metadata(x,basis)
     basis!==nothing&&return basis
     _operator_basis(x)
@@ -280,6 +356,75 @@ function stationary_state(x;algorithm=AutoAlgorithm(),basis=nothing,
     return_info ? result : rho
 end
 
+"""
+    stationary_state(model::GlobalPseudomodeModel;
+                     algorithm=AutoAlgorithm(),
+                     memory_budget=512*1024^2,
+                     return_info=false, kwargs...)
+
+High-level stationary-state solve for a PI ensemble coupled to one shared
+truncated pseudomode. The result is a [`CompositePIState`](@ref). Automatic
+and iterative routes use the factorized matrix-free generator; no global
+Kronecker superoperator is assembled. `AutoAlgorithm()` selects matrix-free
+GMRES. Explicit choices are limited to [`GMRESAlgorithm`](@ref) and
+[`RecycledGMRESAlgorithm`](@ref); dense, direct, and shift-invert algorithms
+are rejected.
+"""
+function stationary_state(
+        model::GlobalPseudomodeModel;
+        algorithm=AutoAlgorithm(),
+        memory_budget=_DEFAULT_HIGHLEVEL_MEMORY_BUDGET,
+        return_info::Bool=false,kwargs...)
+    method,options=_algorithm_options(algorithm)
+    method in (:auto,:gmres)||throw(ArgumentError(
+        "global pseudomode stationary states support AutoAlgorithm or " *
+        "GMRESAlgorithm/RecycledGMRESAlgorithm; direct, dense, and " *
+        "shift-invert routes would materialize the composite superoperator"))
+    haskey(options,:preconditioner)&&
+        options.preconditioner===:schur&&throw(ArgumentError(
+            "the PI Schur-sector preconditioner is not a preconditioner for " *
+            "the PI-system × global-mode composite coordinate; pass a " *
+            "compatible composite preconditioner or nothing"))
+    _global_pseudomode_with_precision(model) do
+        initial=get(kwargs,:initial_state,nothing)
+        initial_vector=if initial isa CompositePIState
+            initial.basis===model.basis||throw(ArgumentError(
+                "initial composite state belongs to a different basis"))
+            initial.data
+        else
+            initial
+        end
+        operator=global_pseudomode_matrixfree(
+            model;memory_budget)
+        report_krylovdim=haskey(options,:krylovdim) ?
+            options.krylovdim : get(kwargs,:krylovdim,30)
+        report_recycle_dim=haskey(options,:recycle_dim) ?
+            options.recycle_dim : get(kwargs,:recycle_dim,0)
+        preflight=recommend_solver(
+            operator;task=:steady_state,algorithm=:gmres,
+            memory_budget,krylovdim=report_krylovdim,
+            recycle_dim=report_recycle_dim,
+            T=_resource_scalar_type(operator,initial_vector),
+            bigfloat_precision=model.precision_bits)
+        _enforce_memory_budget(
+            preflight,"global pseudomode stationary_state")
+        selected=:gmres
+        solver_method=_stationary_solver_method(selected)
+        solve_kwargs=initial isa CompositePIState ?
+            merge((;kwargs...),(;initial_state=initial_vector)) :
+            (;kwargs...)
+        info=steady_state(
+            operator;trace_vector=model.trace_vector,
+            method=solver_method,return_info=true,memory_budget,
+            options...,solve_kwargs...)
+        info=merge(info,(;resource_preflight=preflight,
+            requested_algorithm=method,selected_algorithm=selected))
+        rho=CompositePIState(model.basis,info.state)
+        result=SteadyStateResult(rho,info,algorithm)
+        return_info ? result : rho
+    end
+end
+
 function _guard_saved_time_storage(count::Integer,::Type{T},memory_budget) where T
     estimate=_performance_entries_bytes(BigInt(count),T)
     _require_performance_budget("saved time grid",estimate,memory_budget;
@@ -319,16 +464,79 @@ function _saved_times(tspan,saveat;
     ts
 end
 
+struct _HighLevelExpvOperator{T,S,W}
+    source::S
+    workspace::W
+end
+Base.size(operator::_HighLevelExpvOperator)=size(operator.source)
+Base.size(operator::_HighLevelExpvOperator,index::Integer)=
+    index in (1,2) ? size(operator.source,index) : 1
+Base.eltype(::_HighLevelExpvOperator{T}) where T=T
+function LinearAlgebra.mul!(destination::AbstractVector,
+        operator::_HighLevelExpvOperator{T},
+        input::AbstractVector) where T
+    if operator.workspace===nothing
+        mul!(destination,operator.source,input)
+    else
+        apply!(destination,operator.source,input,
+            zero(_real_float_type(T)),nothing,operator.workspace)
+    end
+    destination
+end
+(operator::_HighLevelExpvOperator)(destination,input)=
+    mul!(destination,operator,input)
+
+function _highlevel_expv_setup(source,rho0::PIState,options)
+    prepared=_evolution_liouvillian(source)
+    source_basis=_operator_basis(prepared)
+    source_basis===nothing||source_basis===rho0.basis||throw(ArgumentError(
+        "Liouvillian source and initial state use incompatible PI bases"))
+    n=length(rho0.data)
+    size(prepared)==(n,n)||throw(DimensionMismatch(
+        "Liouvillian and initial state dimensions differ"))
+    T=_complex_float_type(_resource_scalar_type(prepared,rho0))
+    _check_liouvillian_source_precision(
+        prepared,T,"exponential-action state")
+    current=eltype(rho0.data)===T ? copy(rho0) :
+        PIState(rho0.basis,T.(rho0.data))
+    action_workspace=_linear_operator_workspace(prepared)
+    operator=_HighLevelExpvOperator{T,typeof(prepared),
+        typeof(action_workspace)}(prepared,action_workspace)
+    workspace=KrylovExpvWorkspace(
+        T,n,get(options,:krylovdim,30))
+    current,operator,workspace
+end
+
+function _highlevel_expv_interval!(current::PIState,operator,
+        workspace::KrylovExpvWorkspace,interval,options)
+    iszero(interval)&&return current
+    interval>zero(interval)||throw(ArgumentError(
+        "Krylov exponential output times must be nondecreasing"))
+    krylov_expv!(current.data,operator,current.data,interval,workspace;
+        atol=get(options,:atol,1e-10),
+        rtol=get(options,:rtol,1e-8),
+        initial_step=get(options,:initial_step,nothing),
+        minimum_step=get(options,:minimum_step,nothing),
+        maximum_step=get(options,:maximum_step,nothing),
+        max_steps=get(options,:max_steps,10_000),
+        safety=get(options,:safety,0.9),
+        require_convergence=true)
+    current
+end
+
 """
-    solve_dynamics(x, rho0, tspan; saveat=nothing,
+    solve_dynamics(x, rho0, tspan; algorithm=:auto, saveat=nothing,
                    steps_per_interval=64, parameters=nothing,
                    observables=nothing, save_states=true,
                    memory_budget=512*1024^2)
 
 Compile a model once when needed and propagate with the allocation-conscious
-fixed-step RK4 path. The result carries saved times and PI states and supports
-indexing and iteration. Use `dynamics_problem` directly for adaptive SciML
-algorithms.
+fixed-step RK4 path by default. `algorithm=:expv` (or
+`:krylov_expv`) selects adaptive restarted-Arnoldi exponential action for an
+autonomous generator. Use [`ExpvAlgorithm`](@ref) to set its Krylov dimension,
+tolerances, and step controls. The result carries saved times and PI states and
+supports indexing and iteration. Use `dynamics_problem` directly for general
+adaptive SciML algorithms.
 
 Pass a named tuple, dictionary, pair collection, or one local matrix/
 `PIOperator` as `observables`. This returns a [`DynamicsStreamResult`](@ref).
@@ -339,15 +547,19 @@ accepted and retain complex expectation values. A state-free call without an
 observable is rejected because it would return no dynamics output.
 
 Before compiling a raw model, this command accounts for the matrix-free plan,
-RK4 workspace, saved states, sampled times, prepared observables, and scalar
+the selected RK4 or Krylov exponential workspace, task-owned source-action
+scratch, saved states, sampled times, prepared observables, and scalar
 observable series. It throws when the known peak exceeds `memory_budget`; use
 `save_states=false` to stream output or `memory_budget=Inf` to opt out.
 """
 function solve_dynamics(x,rho0::PIState,tspan;saveat=nothing,
+                        algorithm=:auto,
                         steps_per_interval::Integer=64,parameters=nothing,
                         observables=nothing,save_states::Bool=true,
                         memory_budget=_DEFAULT_HIGHLEVEL_MEMORY_BUDGET)
     steps_per_interval>0||throw(ArgumentError("steps_per_interval must be positive"))
+    requested_algorithm,algorithm_options=
+        _dynamics_algorithm_options(algorithm)
     ts=_saved_times(tspan,saveat;memory_budget)
     named_observables=observables===nothing ? Pair[] :
         _named_observables(observables)
@@ -359,7 +571,10 @@ function solve_dynamics(x,rho0::PIState,tspan;saveat=nothing,
         candidate===nothing||
             (observable_type=promote_type(observable_type,candidate))
     end
-    preflight=recommend_solver(x;task=:dynamics,algorithm=:rk4,
+    report_krylovdim=get(algorithm_options,:krylovdim,30)
+    preflight=recommend_solver(x;task=:dynamics,
+        algorithm=requested_algorithm,
+        krylovdim=report_krylovdim,
         memory_budget,T=state_type,observable_type,
         time_type=eltype(ts),samples=length(ts),
         saved_states=save_states ? length(ts) : 0,
@@ -368,17 +583,42 @@ function solve_dynamics(x,rho0::PIState,tspan;saveat=nothing,
     source = x isa PIModel && isdefined(@__MODULE__,:compile) ?
         getfield(@__MODULE__,:compile)(x;backend=:matrixfree,
             memory_budget=memory_budget) : x
+    selected_algorithm=preflight.algorithm
+    if selected_algorithm===:expv
+        parameters===nothing||throw(ArgumentError(
+            "Krylov exponential dynamics requires parameters=nothing because it represents one autonomous generator"))
+        applicable(isautonomous,source)||throw(ArgumentError(
+            "Krylov exponential dynamics requires a source that explicitly declares whether it is autonomous"))
+        isautonomous(source)||throw(ArgumentError(
+            "Krylov exponential dynamics requires an autonomous generator; use RK4 or dynamics_problem for driven dynamics"))
+        isempty(algorithm_options)&&(algorithm_options=
+            last(_dynamics_algorithm_options(ExpvAlgorithm())))
+    end
     _solve_dynamics_output(observables,source,rho0,ts;
-        steps_per_interval,parameters,save_states)
+        steps_per_interval,parameters,save_states,
+        algorithm=selected_algorithm,algorithm_options)
 end
 
 function _solve_dynamics_output(::Nothing,source,rho0,ts;
-                                steps_per_interval,parameters,save_states)
+                                steps_per_interval,parameters,save_states,
+                                algorithm,algorithm_options)
     save_states||throw(ArgumentError(
         "save_states=false requires at least one observable"))
-    states=time_evolution(source,rho0,ts;
-        steps_per_interval=steps_per_interval,parameters=parameters)
-    DynamicsResult(ts,states,:rk4)
+    if algorithm===:rk4
+        states=time_evolution(source,rho0,ts;
+            steps_per_interval=steps_per_interval,parameters=parameters)
+        return DynamicsResult(ts,states,:rk4)
+    end
+    current,operator,workspace=_highlevel_expv_setup(
+        source,rho0,algorithm_options)
+    states=Vector{typeof(current)}(undef,length(ts))
+    states[1]=copy(current)
+    for time_index in 2:length(ts)
+        _highlevel_expv_interval!(current,operator,workspace,
+            ts[time_index]-ts[time_index-1],algorithm_options)
+        states[time_index]=copy(current)
+    end
+    DynamicsResult(ts,states,:expv)
 end
 
 _dynamics_observable_buffers(::Tuple{},current,nsamples)=()
@@ -405,26 +645,41 @@ function _dynamics_observable_dictionary(ops,buffers)
 end
 
 function _solve_dynamics_output(observables,source,rho0,ts;
-                                steps_per_interval,parameters,save_states)
+                                steps_per_interval,parameters,save_states,
+                                algorithm,algorithm_options)
     ops=_prepare_streaming_observables(rho0.basis,observables;
                                        require_hermitian=false)
     prepared=_evolution_liouvillian(source)
-    current=copy(rho0);workspace=EvolutionWorkspace(prepared,current)
-    states=save_states ? Vector{typeof(rho0)}(undef,length(ts)) : nothing
+    current,workspace,operator = if algorithm===:rk4
+        state=copy(rho0)
+        (state,EvolutionWorkspace(prepared,state),nothing)
+    else
+        state,expv_operator,expv_workspace=_highlevel_expv_setup(
+            prepared,rho0,algorithm_options)
+        (state,expv_workspace,expv_operator)
+    end
+    states=save_states ? Vector{typeof(current)}(undef,length(ts)) : nothing
     save_states&&(states[1]=copy(current))
     buffers=_dynamics_observable_buffers(ops,current,length(ts))
     _record_dynamics_observables!(buffers,ops,current,1)
     for time_index in 2:length(ts)
-        ts[time_index]==ts[time_index-1]||evolve!(current,prepared,current,
-            (ts[time_index-1],ts[time_index]);steps=steps_per_interval,
-            parameters=parameters,workspace=workspace)
+        if algorithm===:rk4
+            ts[time_index]==ts[time_index-1]||evolve!(
+                current,prepared,current,
+                (ts[time_index-1],ts[time_index]);
+                steps=steps_per_interval,parameters=parameters,
+                workspace=workspace)
+        else
+            _highlevel_expv_interval!(current,operator,workspace,
+                ts[time_index]-ts[time_index-1],algorithm_options)
+        end
         save_states&&(states[time_index]=copy(current))
         _record_dynamics_observables!(buffers,ops,current,time_index)
     end
     values=_dynamics_observable_dictionary(ops,buffers)
-    S=Union{Nothing,Vector{typeof(rho0)}}
+    S=Union{Nothing,Vector{typeof(current)}}
     DynamicsStreamResult{eltype(ts),S,typeof(values),Symbol}(
-        ts,states,values,:rk4)
+        ts,states,values,algorithm)
 end
 
 function _spectrum_algorithm(algorithm,target,n,nev)
@@ -529,6 +784,25 @@ function liouvillian_spectrum(x;target=:largest_real,nev::Integer=6,
     return_info ? result : (vectors ? (values=values,vectors=vecs) : values)
 end
 
+"""
+    liouvillian_spectrum(model::GlobalPseudomodeModel; kwargs...)
+
+Compute selected modes of a shared-pseudomode Liouvillian through its
+factorized matrix-free wrapper. Automatic selection uses Arnoldi (or harmonic
+Arnoldi for `target=:near_zero`); materializing dense-spectrum algorithms are
+rejected by the ordinary resource preflight.
+"""
+function liouvillian_spectrum(
+        model::GlobalPseudomodeModel;
+        memory_budget=_DEFAULT_HIGHLEVEL_MEMORY_BUDGET,kwargs...)
+    _global_pseudomode_with_precision(model) do
+        operator=global_pseudomode_matrixfree(
+            model;memory_budget)
+        liouvillian_spectrum(
+            operator;memory_budget,kwargs...)
+    end
+end
+
 """Return the PI-coordinate dimension of a basis, state, model, or operator."""
 pi_dimension(b::PIBasis)=length(b)
 pi_dimension(x::AbstractPIOperator)=length(x.data)
@@ -579,6 +853,21 @@ function estimate_geometry_bytes(b::PIBasis;T=Float64,
     R<:AbstractFloat||throw(ArgumentError(
         "geometry scalar type must promote to an AbstractFloat type"))
     raw=_estimate_onebody_geometry(b,R;bigfloat_precision)
+    retained_scalar=_scalar_retained_bytes(R;bigfloat_precision)
+    merge(raw,(;scalar_type=R,scalar_retained_bytes=retained_scalar,
+               scalar_storage_estimate=_scalar_storage_estimate(R),
+               bigfloat_precision_assumption=
+                   _scalar_precision_assumption(R,bigfloat_precision),
+               estimate=:conservative_structural_upper_bound))
+end
+
+function _estimate_diagonal_onebody_geometry(b::PIBasis;T=Float64,
+        bigfloat_precision::Integer=precision(BigFloat))
+    R=_real_float_type(T)
+    R<:AbstractFloat||throw(ArgumentError(
+        "geometry scalar type must promote to an AbstractFloat type"))
+    raw=_estimate_onebody_geometry(
+        b,R;diagonal_only=true,bigfloat_precision)
     retained_scalar=_scalar_retained_bytes(R;bigfloat_precision)
     merge(raw,(;scalar_type=R,scalar_retained_bytes=retained_scalar,
                scalar_storage_estimate=_scalar_storage_estimate(R),
@@ -678,6 +967,8 @@ function estimate_solver_bytes(x;algorithm=:gmres,krylovdim::Integer=30,
         bigfloat_precision)
     algorithm===:svd&&return _solver_dense_upper_bytes(ni,T,10;
         bigfloat_precision)
+    algorithm in (:expv,:krylov_expv)&&return _performance_krylov_expv_workspace_bytes(
+            ni,T,mi;bigfloat_precision)
     algorithm in (:rk4,:dynamics)&&return 3scalar_bytes*n
     throw(ArgumentError("unknown solver-memory algorithm $algorithm"))
 end
@@ -741,8 +1032,10 @@ function _enforce_memory_budget(report,operation::AbstractString)
         "pass memory_budget=Inf to opt out explicitly."))
 end
 
-_resource_source_prepared(x)=x isa Union{CompiledPIModel,SpecializedPIModel,
-    LiouvillianPlan,MatrixFreeLiouvillian,AbstractMatrix}
+_resource_source_prepared(x)=x isa Union{
+    CompiledPIModel,SpecializedPIModel,LiouvillianPlan,
+    MatrixFreeLiouvillian,CompositeSuperoperator,
+    GlobalPseudomodeModel,AbstractMatrix}
 
 function _resource_source_has_sparse_operator(x)
     x isa SparseMatrixCSC&&return true
@@ -804,12 +1097,22 @@ function _recommended_geometry_policy(x,basis)
     if model!==nothing
         requirements=_model_onebox_requirements(
             model,_model_geometry_type(model))
-        if requirements.needs_onebody
+        if requirements.needs_full_onebody
             return (include=true,requirement=:required,source=:model_terms,
-                    kind=:onebody)
+                    kind=isempty(requirements.pbody_orders) ?
+                        :onebody : :onebody_and_pbody)
         elseif requirements.uses_symmetric_collective
             return (include=true,requirement=:required,source=:model_terms,
-                    kind=:symmetric_collective)
+                    kind=isempty(requirements.pbody_orders) ?
+                        :symmetric_collective :
+                        :symmetric_collective_and_pbody)
+        elseif requirements.uses_diagonal_onebody
+            return (include=true,requirement=:required,source=:model_terms,
+                    kind=isempty(requirements.pbody_orders) ?
+                        :diagonal_onebody : :diagonal_onebody_and_pbody)
+        elseif !isempty(requirements.pbody_orders)
+            return (include=true,requirement=:required,source=:model_terms,
+                    kind=:pbody)
         end
         return (include=false,requirement=:not_required,source=:model_terms,
                 kind=:none)
@@ -859,15 +1162,16 @@ only basis metadata retain a conservative geometry allowance, identified by
 Coordinate precision is inferred from `x` unless `T` is supplied. For a
 dynamics-only estimate, `observable_type` and `time_type` can describe wider
 prepared observables or saved-time vectors without incorrectly widening the
-state and RK4 workspace. Dense compatibility solvers account for their actual
-or conservatively bounded storage at no less than `ComplexF64` precision.
+state and selected RK4/Krylov-exponential workspace. Dense compatibility
+solvers account for their actual or conservatively bounded storage at no less
+than `ComplexF64` precision.
 For `task=:spectrum, algorithm=:block_arnoldi`, `block_size` is included in
 the complete reusable block-workspace estimate rather than treated as a free
 matrix--matrix optimization. Prepared sources also contribute their bounded
 per-action materialization transient and any first-use batched Schur buffer;
 `operator_action_per_worker_upper_bytes` reports that part separately.
-Prepared dynamics additionally includes the fresh task-owned application
-workspace constructed by the propagator.
+Prepared dynamics additionally includes the mutable propagation state and the
+fresh task-owned application workspace constructed by the propagator.
 """
 function recommend_solver(x;task=:steady_state,algorithm=:auto,
                           memory_budget=_DEFAULT_HIGHLEVEL_MEMORY_BUDGET,
@@ -941,13 +1245,23 @@ function recommend_solver(x;task=:steady_state,algorithm=:auto,
     block_arnoldi_bytes=estimate_solver_bytes(x;algorithm=:block_arnoldi,
         krylovdim=krylovdim,block_size,T=T,bigfloat_precision)
     dynamics_bytes=estimate_solver_bytes(x;algorithm=:rk4,T=T,bigfloat_precision)
+    expv_bytes=estimate_solver_bytes(x;algorithm=:expv,
+        krylovdim,T=T,bigfloat_precision)
     basis=_basis_metadata(x,nothing)
     geometry_policy=_recommended_geometry_policy(x,basis)
-    geometry = if !geometry_policy.include
+    geometry_model=x isa PIModel ? x :
+        x isa Union{CompiledPIModel,SpecializedPIModel} ? x.model : nothing
+    geometry = if geometry_model!==nothing
+        _estimate_model_geometry(
+            geometry_model;bigfloat_precision)
+    elseif !geometry_policy.include
         nothing
     elseif geometry_policy.kind===:symmetric_collective
         _estimate_symmetric_collective_geometry(
             basis,_real_float_type(T);bigfloat_precision)
+    elseif geometry_policy.kind===:diagonal_onebody
+        _estimate_diagonal_onebody_geometry(
+            basis;T=_real_float_type(T),bigfloat_precision)
     else
         estimate_geometry_bytes(basis;T=_real_float_type(T),bigfloat_precision)
     end
@@ -968,6 +1282,17 @@ function recommend_solver(x;task=:steady_state,algorithm=:auto,
         _canonical_stationary_algorithm(algorithm) : task===:spectrum ?
         _canonical_spectrum_algorithm(algorithm) :
         _canonical_dynamics_algorithm(algorithm)
+    matrixfree_only=_operator_requires_matrixfree(x)
+    if matrixfree_only&&normalized!==:auto
+        supported=task===:steady_state ? normalized===:gmres :
+            task===:spectrum ? normalized in
+                (:arnoldi,:block_arnoldi,:harmonic,:iram,:jd) :
+            normalized in (:rk4,:expv)
+        supported||throw(ArgumentError(
+            "this composite source supports only matrix-free $task " *
+            "algorithms; full composite materialization is intentionally " *
+            "disabled"))
+    end
 
     function output_bytes_for(chosen_algorithm)
         outputT = chosen_algorithm in
@@ -1010,8 +1335,9 @@ function recommend_solver(x;task=:steady_state,algorithm=:auto,
                                    big(0))
             _resource_component(geometry_temporary+assembly,:estimate;
                 includes=(:one_body_geometry_temporary_setup,
+                          :pbody_geometry_temporary_setup,
                           :operator_assembly_temporary),
-                excludes=(:allocator_metadata,:pbody_or_custom_term_transients))
+                excludes=(:allocator_metadata,:custom_term_transients))
         end
 
         retained = if prepared_source
@@ -1037,8 +1363,7 @@ function recommend_solver(x;task=:steady_state,algorithm=:auto,
                 includes=(:input_source,:geometry_retention,
                           :compiled_kernel_estimate,:prepared_observables,
                           :requested_operator_representation),
-                excludes=(:allocator_metadata,:custom_term_payloads,
-                          :pbody_geometry_not_captured_by_onebody_estimate))
+                excludes=(:allocator_metadata,:custom_term_payloads))
         end
 
         solverT=chosen_algorithm in
@@ -1059,8 +1384,12 @@ function recommend_solver(x;task=:steady_state,algorithm=:auto,
                 algorithm=:harmonic,krylovdim=krylovdim,T=T,bigfloat_precision) :
             arnoldi_bytes
         else
-            dynamics_bytes
+            chosen_algorithm===:expv ? expv_bytes : dynamics_bytes
         end
+        # The propagator owns one mutable PI state independently of any
+        # returned snapshots. This remains present for observable-only
+        # streaming and is not part of either integration workspace.
+        task===:dynamics&&(solver_workspace_single+=state_bytes)
         iterative=task===:dynamics||chosen_algorithm in
             (:gmres,:arnoldi,:block_arnoldi,:harmonic,:iram,:jd,
              :jacobi_davidson)
@@ -1102,10 +1431,15 @@ function recommend_solver(x;task=:steady_state,algorithm=:auto,
     requested_algorithm=normalized
     if normalized===:auto
         if task===:steady_state
-            direct_resources=resources_for(:sparse,:direct)
-            direct_fits=budget.disabled||
-                direct_resources.known_peak_bytes<=budget.bytes
-            if autonomous&&n<=512&&direct_fits
+            direct_resources=matrixfree_only ? nothing :
+                resources_for(:sparse,:direct)
+            direct_fits=!matrixfree_only&&(
+                budget.disabled||
+                direct_resources.known_peak_bytes<=budget.bytes)
+            if matrixfree_only
+                backend=:matrixfree;selected_algorithm=:gmres
+                reason="the prepared composite source intentionally exposes only factorized matrix-free application"
+            elseif autonomous&&n<=512&&direct_fits
                 backend=:sparse;selected_algorithm=:direct
                 reason="autonomous PI dimension and conservative direct-solve peak are below the crossover and budget"
             else
@@ -1116,9 +1450,15 @@ function recommend_solver(x;task=:steady_state,algorithm=:auto,
                     "the conservative direct-solve peak exceeds the requested memory budget"
             end
         elseif task===:spectrum
-            dense_resources=resources_for(:sparse,:dense)
-            dense_fits=budget.disabled||dense_resources.known_peak_bytes<=budget.bytes
-            if autonomous&&n<=256&&dense_fits
+            dense_resources=matrixfree_only ? nothing :
+                resources_for(:sparse,:dense)
+            dense_fits=!matrixfree_only&&(
+                budget.disabled||
+                dense_resources.known_peak_bytes<=budget.bytes)
+            if matrixfree_only
+                backend=:matrixfree;selected_algorithm=:arnoldi
+                reason="the prepared composite source intentionally exposes only factorized matrix-free application"
+            elseif autonomous&&n<=256&&dense_fits
                 backend=:sparse;selected_algorithm=:dense
                 reason="autonomous PI dimension and conservative dense-spectrum peak are below the crossover and budget"
             else
@@ -1167,6 +1507,7 @@ function recommend_solver(x;task=:steady_state,algorithm=:auto,
       gmres_vector_bytes=gmres_bytes,arnoldi_vector_bytes=arnoldi_bytes,
       block_arnoldi_vector_bytes=block_arnoldi_bytes,block_size,
       dynamics_workspace_bytes=dynamics_bytes,
+      expv_workspace_bytes=expv_bytes,
       selected_solver_bytes,geometry_retained_upper_bytes=geometry_retained,
       geometry_setup_upper_bytes=geometry_setup,
       geometry_requirement=geometry_policy.requirement,

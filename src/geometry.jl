@@ -516,8 +516,9 @@ end
 _onebody_transitions(parent_patterns,child_patterns,::Type{R},::Nothing) where
     {R<:AbstractFloat}=_onebody_transitions(parent_patterns,child_patterns,R)
 
-function OneBodyGeometry(b::B,::Type{R};coefficient_cache=nothing) where
-        {D,L,B<:PIBasis{D,L},R<:AbstractFloat}
+function _onebody_geometry(b::B,::Type{R},::Val{diagonal_only};
+        coefficient_cache=nothing) where
+        {D,L,B<:PIBasis{D,L},R<:AbstractFloat,diagonal_only}
     coefficient_cache===nothing||_check_onebox_coefficient_cache(
         coefficient_cache,b,iszero(b.N) ? 0 : 1,R)
     Term=Tuple{Int,Int,R}
@@ -539,6 +540,7 @@ function OneBodyGeometry(b::B,::Type{R};coefficient_cache=nothing) where
 
     connection_data=Dict{Tuple{Int,Int},Vector{Partition{D}}}()
     for (li,l) in pairs(b.sectors),(ni,n) in pairs(b.sectors)
+        diagonal_only&&li!=ni&&continue
         common=Partition{D}[mu for mu in removed[li] if mu in removed[ni]]
         isempty(common)||setindex!(connection_data,common,(li,ni))
         for mu in common
@@ -559,6 +561,24 @@ function OneBodyGeometry(b::B,::Type{R};coefficient_cache=nothing) where
     OneBodyGeometry{R,D,L,B}(b,dict,scales,connections)
 end
 
+function OneBodyGeometry(b::B,::Type{R};coefficient_cache=nothing) where
+        {D,L,B<:PIBasis{D,L},R<:AbstractFloat}
+    _onebody_geometry(
+        b,R,Val(false);coefficient_cache)
+end
+
+# Collective one-body terms preserve every Schur sector. Mixed-sector models
+# therefore need only the `(sector, sector)` removal contractions, not the
+# rectangular sector-changing maps retained for local gain channels. Keep this
+# constructor private: a diagonal-only cache is not valid for public local
+# kernels.
+function _diagonal_onebody_geometry(
+        b::B,::Type{R};coefficient_cache=nothing) where
+        {D,L,B<:PIBasis{D,L},R<:AbstractFloat}
+    _onebody_geometry(
+        b,R,Val(true);coefficient_cache)
+end
+
 # Structural pre-construction estimate.  Counts and byte estimates are exact
 # BigInts and require no CG evaluation or geometry construction.  A transition
 # candidate is identified only from GT-pattern content: for a child pattern and
@@ -576,6 +596,7 @@ end
 # garbage-collector allocation volume.
 function _estimate_onebody_geometry(b::PIBasis{D,L},
                                     ::Type{R}=Float64;
+                                    diagonal_only::Bool=false,
                                     bigfloat_precision::Integer=
                                         precision(BigFloat)) where {D,L,R<:AbstractFloat}
     removed=[[remove_corner(p,r) for r in removable_corners(p)] for p in b.sectors]
@@ -609,6 +630,7 @@ function _estimate_onebody_geometry(b::PIBasis{D,L},
     connection_count=big(0);connected_pair_count=big(0)
     cell_count=big(0);term_upper=big(0);largest_cell_count=big(0)
     for li in eachindex(b.sectors),ni in eachindex(b.sectors)
+        diagonal_only&&li!=ni&&continue
         pair_connected=false
         for mu in removed[li]
             mu in removed[ni]||continue
@@ -637,7 +659,8 @@ function _estimate_onebody_geometry(b::PIBasis{D,L},
     tuple_bytes=2int_bytes+value_bytes
     partition_bytes=big(D)*int_bytes
     pattern_bytes_per_entry=big(L)*int_bytes
-    sector_pairs=big(length(b.sectors))^2
+    sector_pairs=diagonal_only ? big(length(b.sectors)) :
+        big(length(b.sectors))^2
 
     # Retained contraction tables use one offset per logical matrix cell and
     # one contiguous tuple array.  There are no per-cell Vector headers or
@@ -678,7 +701,7 @@ function _estimate_onebody_geometry(b::PIBasis{D,L},
     setup_bytes=retained_bytes+transition_dictionary+transition_tables+
         pattern_dictionary+pattern_storage+parent_weight_scratch+
         removed_storage+packing_scratch
-    (sector_pairs=big(length(b.sectors))^2,
+    (sector_pairs,
      removal_count=big(removal_count),connection_count,connected_pair_count,
      cell_count,
      contraction_terms_upper=term_upper,
@@ -686,7 +709,7 @@ function _estimate_onebody_geometry(b::PIBasis{D,L},
      cgc_evaluations_upper=transition_candidate_count,
      transition_vector_count,
      child_pattern_count=big(child_pattern_count),
-     retained_bytes,setup_bytes)
+     retained_bytes,setup_bytes,diagonal_only)
 end
 geometry_scalar_type(::OneBodyGeometry{T}) where T=T
 function _check_geometry_basis(cache::OneBodyGeometry,b::PIBasis)
@@ -810,6 +833,37 @@ function _collective_block_fast(b::PIBasis,X,p::Partition,
     K
 end
 
+# Sparse counterpart used only for fixed model terms.  It evaluates every
+# candidate entry with the same connection and contraction order as
+# `_collective_block_fast`, but retains only exact nonzeros and therefore uses
+# linear triplet storage instead of an n-by-n dense block.
+function _collective_sparse_block_fast(b::PIBasis,X,p::Partition,
+        cache::OneBodyGeometry{T}) where T
+    s=_sidx(b,p)
+    n=length(b.patterns[s])
+    S=promote_type(Complex{T},eltype(X))
+    rows=Int[]
+    columns=Int[]
+    values=S[]
+    connections=cache.connections[(s,s)]
+    for column in 1:n,row in 1:n
+        value=zero(S)
+        for mu in connections
+            scale=cache.scales[(s,mu,s)]
+            value+=scale*
+                _contract(cache.contractions[(s,mu,s)][row,column],X)
+        end
+        iszero(value)&&continue
+        isfinite(value)||throw(ArgumentError(
+            "collective Schur block is outside the finite range of $S; " *
+            "use a wider operator/geometry scalar type"))
+        push!(rows,row)
+        push!(columns,column)
+        push!(values,value)
+    end
+    sparse(rows,columns,values,n,n)
+end
+
 function _checked_occupation_product(left::Int,right::Int)
     try
         Base.checked_mul(left,right)
@@ -901,6 +955,81 @@ function _symmetric_collective_block(b::PIBasis,X,p::Partition,
     S=promote_type(Complex{T},eltype(X))
     K=Matrix{S}(undef,length(cache.occupations),length(cache.occupations))
     _fill_symmetric_collective_block!(K,cache,X)
+end
+
+# Fixed collective terms only need the exact support present in their local
+# operator.  Assemble that support directly in CSC form so a Dicke ladder (or
+# any other sparse one-body lift) never pays for a dense Schur block during
+# model lowering.  Dynamic schedules retain `_fill_symmetric_collective_block!`
+# because their support may change at every evaluation.
+function _symmetric_collective_sparse_block(b::PIBasis,X,p::Partition,
+        cache::_SymmetricCollectiveGeometry{T}) where T
+    _check_geometry_basis(cache,b)
+    p==only(b.sectors)||throw(ArgumentError(
+        "partition $p is not retained by the symmetric collective geometry"))
+    D=b.d
+    size(X)==(D,D)||throw(DimensionMismatch(
+        "local collective operator must be $D×$D"))
+    S=promote_type(Complex{T},eltype(X))
+    n=length(cache.occupations)
+    rows=Int[]
+    columns=Int[]
+    values=S[]
+    # One diagonal value and at most one transition for every exact nonzero
+    # off-diagonal local entry can contribute to a column. Reserve that
+    # structural upper bound when its machine-integer representation is safe.
+    offdiagonal_support=count(
+        !iszero(X[row,column])
+        for column in 1:D for row in 1:D if row!=column)
+    support_hint=try
+        Base.checked_mul(n,Base.checked_add(1,offdiagonal_support))
+    catch error
+        error isa OverflowError||rethrow()
+        nothing
+    end
+    if support_hint!==nothing
+        sizehint!(rows,support_hint)
+        sizehint!(columns,support_hint)
+        sizehint!(values,support_hint)
+    end
+    for (column,occupation) in pairs(cache.occupations)
+        diagonal=zero(S)
+        @inbounds for local_label in 1:D
+            count=occupation[local_label]
+            (iszero(count)||iszero(X[local_label,local_label]))&&continue
+            diagonal+=_symmetric_scaled_component(
+                X[local_label,local_label],
+                cache.diagonal_factors[column][local_label],count,Val(false),
+                "symmetric collective diagonal contribution")
+        end
+        if !iszero(diagonal)
+            push!(rows,column)
+            push!(columns,column)
+            push!(values,diagonal)
+        end
+        transition_range=(cache.transition_offsets[column]:
+            (cache.transition_offsets[column+1]-1))
+        @inbounds for transition_index in transition_range
+            row,target_label,source_label,factor=
+                cache.transitions[transition_index]
+            value=X[target_label,source_label]
+            iszero(value)&&continue
+            factor_squared=_checked_occupation_product(
+                Base.checked_add(occupation[target_label],1),
+                occupation[source_label])
+            contribution=_symmetric_scaled_component(
+                value,factor,factor_squared,Val(true),
+                "symmetric collective transition contribution")
+            iszero(contribution)&&continue
+            push!(rows,row)
+            push!(columns,column)
+            push!(values,contribution)
+        end
+    end
+    all(isfinite,values)||throw(ArgumentError(
+        "collective Schur block is outside the finite range of $S; " *
+        "use a wider operator/geometry scalar type"))
+    sparse(rows,columns,values,n,n)
 end
 
 function _collective_wider_type(::Type{T},N::Int) where T<:AbstractFloat
@@ -1121,6 +1250,25 @@ function collective_block(b::PIBasis,X,p::Partition;cache=nothing)
         "collective Schur block is outside the finite range of $S; "*
         "use a wider operator/geometry scalar type"))
     K
+end
+
+# Internal fixed-term lowering route.  Public `collective_block` intentionally
+# keeps returning a dense matrix, while prepared Liouvillian kernels retain
+# exact sparse support from construction onward.
+function _collective_sparse_block(b::PIBasis,X,p::Partition;cache=nothing)
+    cache=_collective_geometry(b,Float64,cache)
+    cache isa _SymmetricCollectiveGeometry&&
+        return _symmetric_collective_sparse_block(b,X,p,cache)
+    T=geometry_scalar_type(cache)
+    S=promote_type(Complex{T},eltype(X))
+    if _needs_wide_collective(b,T)
+        # The guarded-wide path is reached only at cancellation-risk particle
+        # counts.  Its feasible retained irreps are small; preserve its
+        # certified conversion and discard exact zeros after that computation.
+        W=_collective_wider_type(T,b.N)
+        return sparse(_collective_block_wide(b,X,p,W,S))
+    end
+    _collective_sparse_block_fast(b,X,p,cache)
 end
 
 """

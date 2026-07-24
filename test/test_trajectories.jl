@@ -295,8 +295,9 @@
         @test driven_event.jump_times[1]≈expected_driven atol=3e-8
 
         # One accepted DOPRI trial evaluates every scalar channel rate once
-        # per stage. Dense event localization and root-state reconstruction
-        # reuse those seven stages and perform no additional RHS evaluation.
+        # per distinct physical node. Its sixth and seventh stages share the
+        # endpoint, while dense event localization and root-state
+        # reconstruction perform no additional RHS evaluation.
         rate_calls=Ref(0)
         counted_decay=PIModel(b1,[LocalJump(sm;rate=(t,p)->begin
             rate_calls[]+=1
@@ -308,7 +309,7 @@
             counted_work,excited1.data,b1,0.0,0.4,nothing,
             counted_plan.liouvillian.tracevec,1e-11,1e-10)
         @test isfinite(hazard)&&isfinite(error)
-        @test rate_calls[]==7
+        @test rate_calls[]==6
         PermutationalInvariantDynamics._prepare_dopri_dense_output!(
             counted_work)
         root=PermutationalInvariantDynamics._dopri_dense_root(
@@ -316,7 +317,42 @@
         @test root!==nothing
         PermutationalInvariantDynamics._dopri_dense_state!(
             counted_work.tmp,excited1.data,counted_work,0.4,root/0.4)
-        @test rate_calls[]==7
+        @test rate_calls[]==6
+
+        # Fixed RK4 similarly prepares only t, t+h/2, and t+h. Channel
+        # resolution at the endpoint reuses the already evaluated scales.
+        rate_calls[]=0
+        copyto!(counted_work.current,excited1.data)
+        PermutationalInvariantDynamics._reset_effective_jump_cache!(
+            counted_work)
+        PermutationalInvariantDynamics._conditional_rk4!(
+            counted_work.current,counted_work,b1,0.0,0.1,nothing,
+            counted_plan.liouvillian.tracevec)
+        @test rate_calls[]==3
+        PermutationalInvariantDynamics._channel_intensities!(
+            counted_work,counted_work.current,b1,0.1,nothing)
+        @test rate_calls[]==3
+
+        # Reusing a workspace for a new driven trajectory invalidates the
+        # node cache before applying a different parameter set.
+        parameter_calls=Ref(0)
+        parameter_model=PIModel(b1,[LocalJump(sm;
+            rate=(t,p)->begin
+                parameter_calls[]+=1
+                p.gamma*(1+t)
+            end)])
+        parameter_plan=TrajectoryPlan(parameter_model)
+        parameter_work=TrajectoryWorkspace(parameter_plan,excited1)
+        quantum_trajectory(parameter_plan,excited1,[0.0,0.02];
+            dt=0.01,parameters=(gamma=0.1,),rng=MersenneTwister(1701),
+            workspace=parameter_work)
+        @test parameter_calls[]==5
+        @test parameter_work.jump_scales[1]≈0.102
+        quantum_trajectory(parameter_plan,excited1,[0.0,0.02];
+            dt=0.01,parameters=(gamma=0.2,),rng=MersenneTwister(1701),
+            workspace=parameter_work)
+        @test parameter_calls[]==10
+        @test parameter_work.jump_scales[1]≈0.204
 
         # Combining Q=sum_c gamma_c K_c'K_c gives the same normalized
         # no-jump RHS as the channel-by-channel reference contraction.

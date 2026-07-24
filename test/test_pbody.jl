@@ -4,6 +4,49 @@
     @test PID._pbody_word_count(3,4)==81
     @test_throws ArgumentError PID._pbody_word_count(typemax(Int),2)
     @test_throws ArgumentError PID._pbody_word_count(2,-1)
+
+    # Prepared Appendix-D geometry retains only exact path support.  Its
+    # three-index compatibility view is bit-identical to the former dense
+    # recurrence, while contractions iterate CSC nonzeros directly.
+    packed_basis=PIBasis(4,3)
+    packed_geometry=PBodyGeometry(packed_basis,2)
+    @test PID._pbody_combined_columns(7,11)==77
+    @test_throws ArgumentError PID._pbody_combined_columns(
+        typemax(Int),2)
+    @test packed_geometry.estimates.storage===:exact_support_sparse_csc
+    @test packed_geometry.estimates.retained_entries<
+          packed_geometry.estimates.dense_entries÷5
+    @test packed_geometry.estimates.retained_bytes<
+          packed_geometry.estimates.dense_payload_bytes
+    structural_estimate=PID._estimate_pbody_geometry(
+        packed_basis,2,Float64)
+    @test structural_estimate.dense_entries==
+          packed_geometry.estimates.dense_entries
+    @test structural_estimate.retained_entries_upper>=
+          packed_geometry.estimates.retained_entries
+    @test structural_estimate.retained_bytes>=
+          packed_geometry.estimates.retained_bytes
+    packed_path=first(first(values(packed_geometry.paths)))
+    packed_U=packed_geometry.isometries[Tuple(packed_path)]
+    dense_U=PID._path_isometry(packed_path)
+    @test Array(packed_U)==dense_U
+    packed_operator=reshape(ComplexF64.(1:81),9,9)
+    @test PID._path_contractions(
+        packed_U,packed_U,packed_operator)≈
+        PID._path_contractions(
+            dense_U,dense_U,packed_operator) atol=3e-13
+
+    packed32=PBodyGeometry(packed_basis,2,Float32)
+    packed_big=setprecision(BigFloat,128) do
+        PBodyGeometry(packed_basis,2,BigFloat)
+    end
+    @test eltype(first(values(packed32.isometries)))===Float32
+    @test eltype(first(values(packed_big.isometries)))===BigFloat
+    @test packed32.estimates.retained_entries<
+          packed32.estimates.dense_entries÷5
+    @test packed_big.estimates.retained_entries<
+          packed_big.estimates.dense_entries÷5
+
     for d in (2,3),N in 2:4
         b=PIBasis(N,d);X=diagm(ComplexF64.(collect(1:d)))
         @test pbody_collective_operator(b,X,1).data≈collective_operator(b,X).data atol=3e-11
@@ -25,6 +68,25 @@
     m=PIModel(b,collect(terms));Ls=liouvillian(m;representation=:sparse);Lm=liouvillian(m;representation=:matrixfree)
     rho=iid_pure_state(b,ComplexF64[0,1]);@test Ls*rho.data≈Lm*rho.data atol=2e-10
     @test check_generator(m).trace_preservation_error<2e-9
+    model_geometry=PID._estimate_model_geometry(m)
+    @test model_geometry.pbody_orders==[2]
+    @test length(model_geometry.pbody)==1
+    @test model_geometry.setup_bytes==
+          PID._estimate_pbody_geometry(b,2).setup_bytes
+    model_preparation=PID._model_preparation_bytes(m)
+    @test_throws ArgumentError PID._require_model_preparation_budget(
+        m,model_preparation-1)
+    model_report=recommend_solver(m;memory_budget=Inf)
+    @test model_report.geometry_setup_upper_bytes==
+          model_geometry.setup_bytes
+
+    mixed_geometry_model=PIModel(b,(
+        LocalHamiltonian(sz),PBodyHamiltonian(kron(sz,sz),2)))
+    mixed_geometry=PID._estimate_model_geometry(mixed_geometry_model)
+    @test !isnothing(mixed_geometry.onebody)
+    @test mixed_geometry.setup_bytes==
+          mixed_geometry.onebody.setup_bytes+
+          only(mixed_geometry.pbody).second.setup_bytes
 
     # With p=N there is only one subset, so local and collective dissipators coincide.
     b2=PIBasis(2,2);X=kron(sm,sm)
@@ -200,8 +262,14 @@
     @test PID._dynamic_pbody_block_uncertified(1.0f0+0.0f0im,1.0f0,2)
     dynamic_blocks=[zeros(ComplexF32,length(patterns),length(patterns))
                     for patterns in bdynamic.patterns]
+    dynamic_cancellation_scratch=zeros(
+        Float32,maximum(length,bdynamic.patterns),
+        maximum(length,bdynamic.patterns))
     @test_throws ArgumentError PID._fill_dynamic_blocks!(
         dynamic_blocks,dynamic_builder,dynamic_identity)
+    @test_throws ArgumentError PID._fill_dynamic_blocks!(
+        dynamic_blocks,dynamic_builder,dynamic_identity,
+        dynamic_cancellation_scratch)
 
     # A feasible complete basis exercises the public compilation route too.
     # At N=24 the Float16 path factors are direct but exceed the cancellation

@@ -10,7 +10,9 @@ collective_expectation
 collective_variance
 collective_moments
 CollectiveObservablePlan
+OneBodyRDMWorkspace
 one_body_rdm
+one_body_rdm!
 trace_error
 collective_covariance
 collective_covariance_matrix
@@ -98,6 +100,9 @@ LocalFactorTracePlan
 LocalFactorTraceWorkspace
 local_factor_trace
 local_factor_trace!
+pseudomode_trace_plan
+trace_pseudomodes
+trace_pseudomodes!
 negativity
 logarithmic_negativity
 ReductionPlan

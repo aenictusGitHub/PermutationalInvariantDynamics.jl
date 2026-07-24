@@ -256,6 +256,12 @@ reduction_plan=measure("five-particle reduction plan",()->ReductionPlan(b,5);sam
 reduction_setup_basis=PIBasis(16,2)
 measure("qubit reduction plan (N=16)",()->ReductionPlan(
     reduction_setup_basis,8);samples=1)
+qutrit_reduction_plan=measure("packed qutrit reduction plan (N=2)",()->
+    ReductionPlan(PIBasis(2,3),1);samples=1)
+@printf("  Qutrit LR support: %s / %s entries, retained %.3f KiB\n",
+        string(qutrit_reduction_plan.estimates.retained_entries),
+        string(qutrit_reduction_plan.estimates.dense_entries),
+        Float64(qutrit_reduction_plan.estimates.retained_bytes)/2.0^10)
 measure("reduced state (prepared)",()->reduced_state(rho,5;plan=reduction_plan))
 reduction_work=ReductionWorkspace(reduction_plan,rho)
 reduction_only_work=ReductionWorkspace(reduction_plan,rho;mode=:reduction)
@@ -344,6 +350,10 @@ pbody_cached=measure("p-body geometry d=3 p=3 cached",()->
         coefficient_cache=coefficient_cache);samples=1)
 @printf("  Cached p-body geometry retained: %.3f MiB\n",
         (Base.summarysize(pbody_cached)-Base.summarysize(pbody_setup_basis))/2.0^20)
+@printf("  Packed p-body support: %s / %s entries (dense payload %.3f MiB)\n",
+        string(pbody_cached.estimates.retained_entries),
+        string(pbody_cached.estimates.dense_entries),
+        Float64(pbody_cached.estimates.dense_payload_bytes)/2.0^20)
 
 # Benchmark comparisons remain guarded by numerical equivalence; the cache is
 # a setup optimization and must not alter a coefficient or Appendix-D path.

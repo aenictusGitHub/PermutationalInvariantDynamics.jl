@@ -84,6 +84,30 @@ time_evolve
 time_evolution
 ```
 
+For an autonomous prepared generator, the high-level solver can replace many
+fixed RK4 applications by adaptive restarted-Arnoldi exponential actions:
+
+```julia
+solution = solve_dynamics(
+    prepared, rho0, (0.0, 20.0);
+    saveat=0.1,
+    algorithm=ExpvAlgorithm(
+        krylovdim=30,
+        atol=1e-11,
+        rtol=1e-9,
+    ),
+)
+```
+
+The output grid remains exact: each adjacent interval is propagated as
+``\exp(\Delta t\,\mathcal L)\rho``. One `KrylovExpvWorkspace` and one
+task-owned Liouvillian application workspace are reused across all intervals.
+Rejected time slices only reevaluate the small projected exponential and
+reuse their Arnoldi factorization. Driven generators and parameter-dependent
+applications are rejected because one fixed exponential does not represent
+their dynamics. Keep the default RK4 route for driven models, or use
+`dynamics_problem` with an adaptive SciML solver.
+
 ## Certified Schur-diagonal populations
 
 ```@docs
@@ -140,6 +164,22 @@ weak_pi_trajectory_steady_state
 weak_pi_trajectory_average
 weak_pi_trajectory_statistics
 ```
+
+## PI hierarchy of pure states
+
+For finite-memory environments represented by exponential correlations,
+PI--HOPS evolves a hierarchy of weak-PI pseudo-kets instead of density-valued
+ADOs. The exact PI backend requires shared baths with collective/PI coupling
+operators: independent local colored noises generally break permutation
+symmetry on each realization even when their ensemble average is PI.
+
+Prepare one immutable `HOPSPlan`, then give each simultaneous stochastic path
+its own `HOPSWorkspace` and RNG. Linear HOPS returns an unnormalized root
+pseudo-ket. `hops_density` forms its outer-product contribution and
+`hops_average` averages those contributions without pathwise normalization.
+Converge the exponential decomposition, hierarchy depth, time step, and
+trajectory count independently. See [PI hierarchy of pure states
+(HOPS)](../hops.md) for conventions and a complete workflow.
 
 ## Diffusive conditional dynamics
 

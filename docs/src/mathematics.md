@@ -204,7 +204,15 @@ generalized partition triangle and generalized three-nu tensors of equations
 `d^N`. Setup indexes each GT-pattern list once, caches every one-box edge
 matrix shared by several removal paths, and propagates all centre patterns
 through two preallocated buffers. It does not construct a pattern-amplitude
-dictionary for every local word.
+dictionary for every local word. Each completed path is retained as one exact-
+support CSC matrix whose columns combine the centre pattern and local word;
+Appendix-D contractions iterate those nonzeros rather than scanning the
+zero-heavy three-index tensor. `geometry.estimates` reports retained and dense
+entry counts and payload sizes. Before raw-model compilation, a
+coefficient-free memory bound follows removal-path multiplicities and
+GT-content selection rules for every distinct body order. Driven
+cancellation-risk blocks accumulate their error bound in preallocated real
+scratch while traversing the same packed support as the value kernel.
 
 `pbody_collective_operator(basis,X,p)` represents
 ``\sum_{n_1<\cdots<n_p}X^{(n_1,\ldots,n_p)}``, while
@@ -268,11 +276,16 @@ C_{\lambda,\mathbf n}
 ```
 
 Thus setup never enumerates ``d^N`` local words. A
-`LocalFactorTracePlan` retains ``L`` and ``Q``; a
+`LocalFactorTracePlan` retains the exact nonzero support of ``L`` and ``Q`` as
+sparse CSC matrices; structural zeros are selected with `iszero`, never a
+numerical dropping tolerance. A
 `LocalFactorTraceWorkspace` owns the one short occupation vector used by the
 two matrix-vector contractions. The complete kept-factor output basis is
 required even for a sector-restricted source because local tracing can
-populate several output Young sectors.
+populate several output Young sectors. Setup validates
+``\lVert Q^\dagger Q-I\rVert_\infty`` one sparse Gram column at a time. It
+retains row adjacency plus one stamped output-sized accumulator, rather than
+materializing the potentially dense ``Q^\dagger Q`` matrix.
 
 ## Entanglement negativity
 
@@ -285,8 +298,10 @@ Littlewood--Richardson/subduction multiplicity spaces as nullspaces of U(d)
 generator intertwining equations. All representations have polynomial size in
 `N` at fixed `d`. LR multiplicities are counted exactly by lattice tableaux;
 forbidden weights are removed before sparse simple-root assembly and SPQR
-nullspace recovery. The factorization and retained dense intertwiner basis can
-nevertheless become the practical bottleneck for larger `d` and partitions.
+nullspace recovery. Prepared plans retain only exact-support discarded-weight
+blocks, but the rank-revealing factorization and temporary dense nullspace
+basis can nevertheless become the practical setup bottleneck for larger `d`
+and partitions.
 Large-spin qubit recoupling switches from an allocation-light factorial
 formula to an exact-rational Racah recurrence before machine factorials can
 overflow. Reduction and negativity contractions fuse exact Schur
@@ -459,7 +474,11 @@ Plans may be shared; use one mutable workspace per concurrent task.
 Observable plans retain one Schur-sized matrix per sector. Qudit reduction
 plans can be substantially larger because they retain all required LR
 intertwiners. Setup uses exact tableau counts and weight-restricted sparse
-simple-root constraints; SPQR can still dominate for large qudit irreps.
+simple-root constraints; the prepared result keeps only exact-support CSC
+blocks at fixed discarded-factor weight. `plan.estimates` exposes the packed
+and dense-equivalent entry counts. Product-irrep dimensions are checked before
+allocation and retained in each packed map. SPQR can still dominate setup for
+large qudit irreps.
 See [API tiers and prepared analysis](api_tiers.md) for usage and memory
 tradeoffs.
 

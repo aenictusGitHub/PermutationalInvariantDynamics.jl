@@ -14,6 +14,13 @@ Matsubara/Padé and underdamped-Brownian Matsubara expansions. Their truncation
 and white-noise residue are explicit metadata; the library never silently
 changes a user-supplied decomposition.
 
+For a stochastic pure-state hierarchy of a *shared* Gaussian bath, see
+[Permutationally invariant HOPS](hops.md). PI--HOPS replaces every density
+ADO by a direct-sum Schur pseudo-ket and then averages independent
+unnormalized root outer products. It has a different pathwise symmetry
+requirement and statistical convergence limit; it is not an automatic
+drop-in replacement for independent local baths.
+
 ## Convention
 
 For bath `b`, the coefficients supplied to [`HEOMBath`](@ref) define the
@@ -302,30 +309,53 @@ an implementation of `N` independent local baths. A true local-bath HEOM
 requires symmetry-adapted occupations carrying both site and hierarchy labels;
 those coordinates do not fit the current global-ADO `HEOMPlan`.
 
-For a physically realizable damped pole, the library instead provides the
-exact finite-cutoff supersite embedding
-[`independent_local_pseudomode_model`](@ref):
+For a physically realizable collection of damped poles, use the exact
+finite-cutoff supersite embedding described in [Local pseudomodes and PI
+supersites](pseudomodes.md):
 
 ```julia
-embedding = independent_local_pseudomode_model(
-    N, Hlocal, Llocal;
-    nmax=3, frequency=omega_c,
-    coupling_strength=g, damping=kappa,
-    thermal_occupation=nbar)
+mode = BosonicPseudomode(
+    3;
+    label=:local_bath,
+    frequency=omega_c,
+    damping=kappa,
+    thermal_occupation=nbar,
+)
+
+coupling = PseudomodeCoupling(
+    Llocal;
+    mode=:local_bath,
+    strength=g,
+)
+
+embedding = pseudomode_model(
+    N, Hlocal, mode;
+    couplings=(coupling,),
+)
 
 basis = embedding.basis
 model = embedding.model
 ```
 
-Every system+pseudomode pair is one identical PI supersite, while `LocalJump`
-creates independent damping on every mode. This is a time-local pseudomode
-embedding in `system ⊗ mode` local basis order, not global-ADO HEOM. At zero occupation it realizes
-`c=g^2`, `nu=kappa/2+i*frequency` through
-`g*(L*a' + L'*a)`; both `L=sigma_-` and Hermitian `L=sigma_z` are supported.
-An arbitrary fitted complex pole set need not admit this positive realization.
-Converge the explicit oscillator cutoff `nmax`. Additional all-to-all system
-interactions must be lifted to the same supersite basis before adding them to
-the returned model.
+Every system together with all of its local modes is one identical PI
+supersite. `LocalJump` creates independent damping on every copy of a mode.
+This is a time-local Markovian embedding in
+`system ⊗ mode1 ⊗ mode2 ⊗ ...` local order, not global-ADO HEOM. At zero
+occupation, one rotating-wave mode realizes the pole
+`c=abs2(g)` and `nu=kappa/2 + im*frequency` through
+`g*L*a' + conj(g)*L'*a`. Non-Hermitian `L`, Hermitian longitudinal
+couplings, several modes, and counter-rotating terms are supported.
+
+`pseudomode_model` lifts fixed local, collective, and symmetric `p`-body
+system terms into the paired supersite ordering. Independent mode damping
+usually requires every Schur sector; a restricted basis is accepted only when
+`PIModel` validates it. The oscillator cutoffs are explicit approximations and
+must be converged separately. An arbitrary fitted complex pole set need not
+admit a positive damped-mode realization.
+
+The historical single-mode convenience
+[`independent_local_pseudomode_model`](@ref) remains available, but the
+`BosonicPseudomode`/`PseudomodeCoupling` workflow is the general interface.
 
 ## Repeated and matrix-free calculations
 
@@ -347,6 +377,24 @@ incidences are ordered by source ADO and bath. Consequently, `Q_b*rho_n` and
 scattered to every pole edge in that group. Forward and adjoint application
 share the same packed topology and use algebraically adjoint weights; this is
 only a contraction reordering and does not alter the hierarchy equations.
+
+Matrix right-hand sides are flattened as `n_PI` by
+`(number of ADOs * number of right-hand sides)`. A driven system schedule is
+prepared once for that complete application even when the flattened matrix is
+processed in several bounded chunks. Prepare a wider bounded chunk up front
+when it is reused often:
+
+```julia
+X = hcat(hierarchy0.data, hierarchy_probe_1, hierarchy_probe_2)
+Y = similar(X)
+batch_work = HEOMWorkspace(plan; batch_columns=size(X, 2))
+apply!(Y, plan, X, 0.0, parameters, batch_work)
+```
+
+The system batch never exceeds the internal width bound. A default
+`HEOMWorkspace(plan)` remains valid for arbitrary matrix widths; it uses more
+chunks without growing its retained arrays. Forward and adjoint matrix
+applications use the same layout.
 
 [`HEOMEvolutionWorkspace`](@ref) additionally owns three hierarchy-sized
 vectors for low-storage fixed-step RK4: a stage state, one derivative, and a
@@ -520,7 +568,6 @@ drude_lorentz_bath
 underdamped_brownian_bath
 heom_bath_metadata
 heom_bath_residue
-independent_local_pseudomode_model
 HEOMPlan
 HEOMWorkspace
 HEOMEvolutionWorkspace

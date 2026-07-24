@@ -390,7 +390,7 @@ end
 """
     independent_local_pseudomode_model(N, system_hamiltonian, coupling;
         nmax, frequency, coupling_strength, damping,
-        thermal_occupation=0)
+        thermal_occupation=0, memory_budget=512*1024^2)
 
 Build a finite-cutoff PI supersite model for `N` identical, *independent*
 local damped pseudomodes. Each supersite contains one `d`-level system and one
@@ -409,6 +409,9 @@ physical pole ``c=g^2`` and ``\\nu=\\kappa/2+i\\omega`` for channel ``L``.
 Hermitian ``L=Q`` reduces to ``gQ(a+a^\\dagger)``. The returned named tuple
 contains `basis`, `model`, the lifted local operators, and immutable cutoff
 metadata so additional PI interactions can be built on the exact same basis.
+For several local modes, automatic lifting of system-only `p`-body terms, and
+prepared local-mode tracing, use the generalized [`pseudomode_model`](@ref)
+workflow.
 
 This is a time-local pseudomode embedding, not a collective-coupling
 [`HEOMPlan`](@ref). It is the safe existing-coordinate route for identical
@@ -419,10 +422,15 @@ explicit approximation and must be converged in `nmax`.
 function independent_local_pseudomode_model(
         N::Integer,system_hamiltonian::AbstractMatrix,
         coupling::AbstractMatrix;nmax::Integer,frequency,coupling_strength,
-        damping,thermal_occupation=0)
+        damping,thermal_occupation=0,
+        memory_budget=_DEFAULT_HIGHLEVEL_MEMORY_BUDGET)
+    N isa Integer&&!(N isa Bool)||throw(ArgumentError(
+        "N must be an integer"))
     N>=1||throw(ArgumentError("N must be positive"))
     BigInt(N)<=typemax(Int)||throw(ArgumentError(
         "N must be representable as an Int"))
+    nmax isa Integer&&!(nmax isa Bool)||throw(ArgumentError(
+        "nmax must be an integer"))
     nmax>=1||throw(ArgumentError("nmax must be positive"))
     BigInt(nmax)<typemax(Int)||throw(ArgumentError(
         "nmax is too large for local indexing"))
@@ -433,62 +441,95 @@ function independent_local_pseudomode_model(
         "coupling must match system_hamiltonian"))
     ishermitian(system_hamiltonian)||throw(ArgumentError(
         "system_hamiltonian must be Hermitian"))
-    all(_heom_isfinite,system_hamiltonian)&&all(_heom_isfinite,coupling)||
+    all(_heom_isfinite,_supersite_stored_values(system_hamiltonian))&&
+        all(_heom_isfinite,_supersite_stored_values(coupling))||
         throw(ArgumentError(
         "system_hamiltonian and coupling must contain only finite values"))
-    Rparams=_physical_heom_parameters(
-        frequency,coupling_strength,damping,thermal_occupation)
-    R=promote_type(Rparams,_real_float_type(eltype(system_hamiltonian)),
+    all(value->value isa Real&&!(value isa Bool)&&isfinite(value),
+        (frequency,coupling_strength,damping,thermal_occupation))||
+        throw(ArgumentError(
+        "pseudomode parameters must be finite real numbers"))
+    _physical_heom_positive(
+        frequency,"frequency";allow_zero=true)
+    _physical_heom_positive(
+        coupling_strength,"coupling_strength";allow_zero=true)
+    _physical_heom_positive(damping,"damping")
+    _physical_heom_positive(
+        thermal_occupation,"thermal_occupation";allow_zero=true)
+    R=promote_type(_real_float_type(eltype(system_hamiltonian)),
                    _real_float_type(eltype(coupling)))
-    omega=R(frequency);g=R(coupling_strength);kappa=R(damping)
-    occupation=R(thermal_occupation)
-    _physical_heom_positive(omega,"frequency";allow_zero=true)
-    _physical_heom_positive(g,"coupling_strength";allow_zero=true)
-    _physical_heom_positive(kappa,"damping")
-    _physical_heom_positive(occupation,"thermal_occupation";allow_zero=true)
-    levels=Int(nmax)+1
-    BigInt(d)*BigInt(levels)<=typemax(Int)||throw(ArgumentError(
-        "the supersite dimension exceeds Int indexing"))
-    identity_system=Matrix{Complex{R}}(I,d,d)
-    identity_mode=Matrix{Complex{R}}(I,levels,levels)
-    annihilation=zeros(Complex{R},levels,levels)
-    for number in 1:Int(nmax)
-        annihilation[number,number+1]=sqrt(R(number))
+    for value in (frequency,coupling_strength,damping,
+                  thermal_occupation)
+        R=_supersite_promote_parameter_type(R,value)
     end
-    number_operator=adjoint(annihilation)*annihilation
-    Hs=Matrix{Complex{R}}(system_hamiltonian)
-    Q=Matrix{Complex{R}}(coupling)
-    lifted_system_hamiltonian=kron(Hs,identity_mode)
-    lifted_coupling=kron(Q,identity_mode)
-    lifted_annihilation=kron(identity_system,annihilation)
-    lifted_number=kron(identity_system,number_operator)
-    site_hamiltonian=lifted_system_hamiltonian+omega*lifted_number+
-        g*(kron(Q,adjoint(annihilation))+
-           kron(adjoint(Q),annihilation))
-    dsite=d*levels
-    basis=PIBasis(Int(N),dsite)
-    emission=LocalJump(lifted_annihilation;
-                       rate=kappa*(occupation+one(R)))
-    terms=if iszero(occupation)
-        (LocalHamiltonian(site_hamiltonian),emission)
-    else
-        pumping=LocalJump(adjoint(lifted_annihilation);
-                          rate=kappa*occupation)
-        (LocalHamiltonian(site_hamiltonian),emission,pumping)
-    end
+    mode=BosonicPseudomode(
+        Int(nmax);frequency,damping,
+        thermal_occupation,label=:mode,T=R,memory_budget)
+    coupling_specification=PseudomodeCoupling(
+        coupling;mode=:mode,strength=coupling_strength,
+        memory_budget)
+    generalized=pseudomode_model(
+        Int(N),system_hamiltonian,mode;
+        couplings=coupling_specification,memory_budget)
+    supersite=generalized.supersite
+    basis=generalized.basis
+    site_hamiltonian=generalized.site_hamiltonian
+    lifted_system_hamiltonian=
+        generalized.lifted_system_hamiltonian
+    operators=only(generalized.mode_operators)
+
+    precision_bits=generalized.resource_estimates.precision_bits
+    components=(coupling_specification.operator,mode.identity)
+    extra_output_bytes=_supersite_sparse_csc_bytes(
+        supersite.basis.d,
+        BigInt(_supersite_structural_nnz(
+            coupling_specification.operator))*mode.levels,
+        Complex{R};bigfloat_precision=precision_bits)
+    extra_peak=_supersite_tensor_peak_bytes(
+        supersite.factor_dimensions,components,Complex{R};
+        bigfloat_precision=precision_bits)
+    legacy_peak=max(
+        generalized.resource_estimates.setup_peak_bytes,
+        generalized.resource_estimates.site_bytes+
+        generalized.resource_estimates.generated_retained_bytes+
+        extra_output_bytes+extra_peak)
+    _require_performance_budget(
+        "legacy pseudomode model construction",legacy_peak,memory_budget;
+        guidance="Reduce N, nmax, or the system-operator support.")
+    lifted_coupling=lift_system_operator(
+        supersite,coupling_specification.operator;memory_budget=Inf)
+
+    # Preserve the historical three-term layout (one combined Hamiltonian and
+    # one or two jumps) while all physical lowering comes from the generalized
+    # builder above.
+    terms=(LocalHamiltonian(site_hamiltonian;check=false),
+           generalized.damping_terms...)
     model=PIModel(basis,terms)
+    omega=mode.frequency
+    g=real(coupling_specification.strength)
+    kappa=mode.damping
+    occupation=mode.thermal_occupation
+    dsite=basis.d
+    resource_estimates=merge(
+        generalized.resource_estimates,
+        (legacy_setup_peak_bytes=legacy_peak,
+         legacy_lifted_coupling_bytes=extra_output_bytes))
     metadata=(embedding=:independent_local_pseudomode,
               exact_permutation_symmetry=true,
               oscillator_cutoff=Int(nmax),cutoff_approximation=true,
               system_dimension=d,local_dimension=dsite,
               frequency=omega,coupling_strength=g,damping=kappa,
               thermal_occupation=occupation,
-              coupling_hermitian=ishermitian(Q),
-              zero_temperature_pole=(coefficient=g^2,
-                  frequency=Complex{R}(kappa/R(2),omega)))
-    (;basis,model,site_hamiltonian,lifted_system_hamiltonian,
-      lifted_coupling,annihilation=lifted_annihilation,
-      number_operator=lifted_number,metadata)
+              coupling_hermitian=ishermitian(
+                  coupling_specification.operator),
+              zero_temperature_pole=(coefficient=abs2(g),
+                  frequency=Complex{R}(kappa/R(2),omega)),
+              generalized_metadata=generalized.metadata,
+              resource_estimates)
+    (;supersite,basis,model,site_hamiltonian,lifted_system_hamiltonian,
+      lifted_coupling,annihilation=operators.annihilation,
+      number_operator=operators.number_operator,
+      resource_estimates,metadata)
 end
 
 _heom_basis(source)=_operator_basis(source)
@@ -1120,13 +1161,16 @@ _heom_system_workspace(system)=_linear_operator_workspace(system)
 const _HEOM_SYSTEM_BATCH_WIDTH=16
 
 """
-    HEOMWorkspace(plan)
+    HEOMWorkspace(plan; batch_columns=1)
 
 Task-owned mutable storage for matrix-free HEOM generator application. A
 workspace may be reused sequentially but not
 concurrently. RK4 stage arrays live separately in
 [`HEOMEvolutionWorkspace`](@ref), so spectral and steady-state calculations do
-not retain three hierarchy-sized evolution vectors.
+not retain three hierarchy-sized evolution vectors. `batch_columns` prepares
+the bounded system-action scratch for that many hierarchy right-hand sides;
+the retained system batch width is capped by the implementation's fixed
+chunk width.
 """
 struct HEOMWorkspace{T,P,S}
     plan::P
@@ -1136,11 +1180,18 @@ struct HEOMWorkspace{T,P,S}
     mixed::Vector{T}
 end
 
-function HEOMWorkspace(plan::HEOMPlan)
+function HEOMWorkspace(plan::HEOMPlan;batch_columns::Integer=1)
+    batch_columns isa Integer&&!(batch_columns isa Bool)&&batch_columns>0||
+        throw(ArgumentError("HEOM batch_columns must be a positive integer"))
+    BigInt(batch_columns)<=typemax(Int)||throw(ArgumentError(
+        "HEOM batch_columns must be representable as an Int"))
     T=plan.Ttype
     system_work=_heom_system_workspace(plan.system)
+    system_columns=Int(min(
+        BigInt(heom_number_ados(plan))*BigInt(batch_columns),
+        BigInt(_HEOM_SYSTEM_BATCH_WIDTH)))
     system_work isa LiouvillianWorkspace&&_ensure_batch_capacity!(
-        system_work.batch,min(heom_number_ados(plan),_HEOM_SYSTEM_BATCH_WIDTH))
+        system_work.batch,system_columns)
     HEOMWorkspace{T,typeof(plan),typeof(system_work)}(
         plan,system_work,zeros(T,plan.npi),zeros(T,plan.npi),
         zeros(T,plan.npi))
@@ -1150,30 +1201,46 @@ end
 # task-owned HEOM scratch instead of falling back to the synchronized
 # compatibility callback retained by `heom_liouvillian`.
 _linear_operator_workspace(plan::HEOMPlan)=HEOMWorkspace(plan)
+_linear_operator_batch_workspace(
+    plan::HEOMPlan,columns::Integer,::Type{T}) where T=
+    HEOMWorkspace(plan;batch_columns=columns)
 function _linear_operator_workspace(
         L::MatrixFreeLiouvillian{F,T,V,P}) where {F,T,V,P<:HEOMPlan}
     HEOMWorkspace(L.plan)
 end
+function _linear_operator_batch_workspace(
+        L::MatrixFreeLiouvillian{F,T,V,P},columns::Integer,::Type{S}) where
+        {F,T,V,P<:HEOMPlan,S}
+    HEOMWorkspace(L.plan;batch_columns=columns)
+end
 _operator_trace_vector(plan::HEOMPlan)=plan.tracevec
 _operator_has_adjoint(::HEOMPlan)=true
 
-function _performance_heom_workspace_bytes(plan::HEOMPlan)
-    system_columns=min(heom_number_ados(plan),_HEOM_SYSTEM_BATCH_WIDTH)
+function _performance_heom_workspace_bytes(
+        plan::HEOMPlan,batch_columns::Integer=1)
+    batch_columns>0||throw(ArgumentError(
+        "HEOM batch column count must be positive"))
+    system_columns=Int(min(
+        BigInt(heom_number_ados(plan))*BigInt(batch_columns),
+        BigInt(_HEOM_SYSTEM_BATCH_WIDTH)))
     _performance_array_bytes(plan.npi,plan.Ttype,0;linear_arrays=3)+
         _performance_batched_operator_workspace_bytes(
             plan.system,system_columns)
 end
 _performance_linear_operator_workspace_bytes(plan::HEOMPlan;
-    batch_columns::Integer=0)=_performance_heom_workspace_bytes(plan)
+    batch_columns::Integer=0)=_performance_heom_workspace_bytes(
+        plan,batch_columns==0 ? 1 : batch_columns)
 function _performance_linear_operator_workspace_bytes(
         L::MatrixFreeLiouvillian{F,T,V,P};
         batch_columns::Integer=0) where {F,T,V,P<:HEOMPlan}
-    _performance_heom_workspace_bytes(L.plan)
+    _performance_heom_workspace_bytes(
+        L.plan,batch_columns==0 ? 1 : batch_columns)
 end
 _performance_source_action_bytes(plan::HEOMPlan,::Type{T}) where T=
     _performance_source_action_bytes(plan.system,T)
 function _performance_source_action_bytes(
-        L::MatrixFreeLiouvillian{F,T,V,P},::Type{S}) where {F,T,V,P<:HEOMPlan,S}
+        L::MatrixFreeLiouvillian{F,T,V,P,W},::Type{S}) where
+        {F,T,V,P<:HEOMPlan,W<:HEOMWorkspace,S}
     _performance_source_action_bytes(L.plan.system,S)
 end
 
@@ -1195,11 +1262,7 @@ function apply!(destination::AbstractMatrix,
         "HEOM batch source and destination must not share storage"))
     work.plan===L.plan||throw(ArgumentError(
         "HEOM workspace belongs to a different matrix-free adapter"))
-    for column in axes(source,2)
-        apply!(view(destination,:,column),L.plan,view(source,:,column),
-               time,parameters,work)
-    end
-    destination
+    apply!(destination,L.plan,source,time,parameters,work)
 end
 
 function _check_heom_workspace(work::HEOMWorkspace,plan::HEOMPlan)
@@ -1279,6 +1342,38 @@ function _heom_system_apply_batch!(destination,system,source,time,parameters,wor
     apply!(destination,system,source,time,parameters,work)
 end
 
+function _heom_apply_prepared_pi_chunks!(
+        destination,plan::LiouvillianPlan,source,time,parameters,
+        work::LiouvillianWorkspace,width::Int)
+    n=length(plan.basis)
+    size(source,1)==n&&size(destination)==size(source)||
+        throw(DimensionMismatch(
+            "HEOM system batch has incompatible PI dimensions"))
+    _check_liouvillian_workspace(work,plan)
+    _check_liouvillian_apply_types(destination,source,plan)
+    if plan.kernels===nothing
+        # Evaluate an allocating fallback schedule once for all ADO/RHS
+        # columns.
+        return mul!(destination,_matrix_at(plan.fallback_model,time,parameters),
+                    source)
+    end
+    width=min(width,work.batch.capacity)
+    width>0||throw(ArgumentError(
+        "HEOM system workspace has zero batch capacity"))
+    _prepare_kernels!(
+        plan.kernels,work.kernel_workspaces,plan.basis,time,parameters)
+    for first_column in 1:width:size(source,2)
+        last_column=min(first_column+width-1,size(source,2))
+        output=view(destination,:,first_column:last_column)
+        input=view(source,:,first_column:last_column)
+        fill!(output,zero(eltype(output)))
+        _apply_batch_kernels!(
+            output,input,plan.kernels,work.kernel_workspaces,
+            plan.basis,time,parameters,work)
+    end
+    destination
+end
+
 function _heom_system_apply_hierarchy!(destination,system,source,time,
                                        parameters,work)
     columns=size(source,2)
@@ -1295,6 +1390,44 @@ function _heom_system_apply_hierarchy!(destination,system,source,time,
             view(source,:,first_column:last_column),time,parameters,work)
     end
     destination
+end
+
+function _heom_system_apply_hierarchy!(
+        destination,system::LiouvillianPlan,source,time,parameters,
+        work::LiouvillianWorkspace)
+    width=min(max(size(source,2),1),_HEOM_SYSTEM_BATCH_WIDTH)
+    _heom_apply_prepared_pi_chunks!(
+        destination,system,source,time,parameters,work,width)
+end
+
+function _heom_system_apply_hierarchy!(
+        destination,system::CompiledPIModel,source,time,parameters,
+        work::LiouvillianWorkspace)
+    system.backend===:matrixfree||return mul!(
+        destination,system.operator,source)
+    width=min(max(size(source,2),1),_HEOM_SYSTEM_BATCH_WIDTH)
+    _heom_apply_prepared_pi_chunks!(
+        destination,system.plan,source,time,parameters,work,width)
+end
+
+function _heom_system_apply_hierarchy!(
+        destination,system::SpecializedPIModel,source,time,parameters,
+        work::LiouvillianWorkspace)
+    system.backend===:matrixfree||return mul!(
+        destination,system.operator,source)
+    width=min(max(size(source,2),1),_HEOM_SYSTEM_BATCH_WIDTH)
+    _heom_apply_prepared_pi_chunks!(
+        destination,system.plan,source,time,system.rates,work,width)
+end
+
+function _heom_system_apply_hierarchy!(
+        destination,system::MatrixFreeLiouvillian,source,time,parameters,
+        work::LiouvillianWorkspace)
+    system.plan isa LiouvillianPlan||return apply!(
+        destination,system,source,time,parameters)
+    width=min(max(size(source,2),1),_HEOM_SYSTEM_BATCH_WIDTH)
+    _heom_apply_prepared_pi_chunks!(
+        destination,system.plan,source,time,parameters,work,width)
 end
 
 function _heom_coupling_actions!(left,right,plan::HEOMPlan,source,bath_number)
@@ -1338,6 +1471,90 @@ function _heom_residue_action!(destination,plan::HEOMPlan,source,
     destination
 end
 
+@inline function _heom_apply_columns!(
+        destination,plan::HEOMPlan,source,right_hand_sides::Int,
+        time,parameters,work::HEOMWorkspace)
+    npi=plan.npi
+    number_ados=length(plan.multiindices)
+    total_columns=number_ados*right_hand_sides
+    length(source)==npi*total_columns&&length(destination)==length(source)||
+        throw(DimensionMismatch("flattened HEOM storage has incompatible dimensions"))
+    source_ados=reshape(source,npi,total_columns)
+    destination_ados=reshape(destination,npi,total_columns)
+    size(source_ados)==(npi,total_columns)&&
+        size(destination_ados)==(npi,total_columns)||
+        throw(DimensionMismatch("flattened HEOM columns have incompatible dimensions"))
+    _heom_system_apply_hierarchy!(
+        destination_ados,plan.system,source_ados,time,parameters,work.system)
+    if plan.terminator===:residue
+        for column in 1:total_columns
+            for bath in eachindex(plan.residue_coefficients)
+                _heom_residue_action!(
+                    view(destination_ados,:,column),plan,
+                    view(source_ados,:,column),bath,work)
+            end
+        end
+    end
+    for rhs in 1:right_hand_sides,ado in 1:number_ados
+        column=ado+(rhs-1)*number_ados
+        output=view(destination_ados,:,column)
+        input=view(source_ados,:,column)
+        decay=plan.decays[ado]
+        if !iszero(decay)
+            @inbounds @simd for coordinate in eachindex(output,input)
+                output[coordinate]-=decay*input[coordinate]
+            end
+        end
+    end
+
+    topology=plan.topology
+    for rhs in 1:right_hand_sides,source_ado in 1:number_ados
+        source_column=source_ado+(rhs-1)*number_ados
+        position=Int(topology.ado_edge_ptr[source_ado])
+        stop=Int(topology.ado_edge_ptr[source_ado+1])-1
+        while position<=stop
+            edge=Int(topology.incident_edges[position])
+            term=Int(topology.term[edge])
+            bath=plan.exponent_baths[term]
+            _heom_coupling_actions!(
+                work.left,work.right,plan,
+                view(source_ados,:,source_column),bath)
+            while position<=stop
+                edge=Int(topology.incident_edges[position])
+                term=Int(topology.term[edge])
+                plan.exponent_baths[term]==bath||break
+                lower=Int(topology.lower[edge])
+                upper=Int(topology.upper[edge])
+                occupation=Int(topology.level[edge])
+                if source_ado==lower
+                    output=view(destination_ados,:,
+                                upper+(rhs-1)*number_ados)
+                    factor=plan.downward_level_factors[occupation,term]
+                    coefficient=plan.coefficients[term]
+                    right_coefficient=plan.right_coefficients[term]
+                    @inbounds @simd for coordinate in eachindex(output)
+                        output[coordinate]+=-im*factor*(
+                            coefficient*work.left[coordinate]-
+                            right_coefficient*work.right[coordinate])
+                    end
+                else
+                    source_ado==upper||error(
+                        "internal HEOM incidence mismatch")
+                    output=view(destination_ados,:,
+                                lower+(rhs-1)*number_ados)
+                    factor=plan.upward_level_factors[occupation,term]
+                    @inbounds @simd for coordinate in eachindex(output)
+                        output[coordinate]+=-im*factor*(
+                            work.left[coordinate]-work.right[coordinate])
+                    end
+                end
+                position+=1
+            end
+        end
+    end
+    destination_ados
+end
+
 """
     apply!(destination, plan::HEOMPlan, source, time, parameters, workspace)
     apply!(destination, plan::HEOMPlan, source, workspace)
@@ -1358,67 +1575,26 @@ function apply!(destination::AbstractVector,plan::HEOMPlan,
         "HEOM source scalar type is wider than the prepared plan"))
     promote_type(plan.Ttype,eltype(source),eltype(destination))===eltype(destination)||
         throw(ArgumentError("HEOM destination scalar type cannot represent the result"))
-    npi=plan.npi;number_ados=length(plan.multiindices)
-    source_ados=reshape(source,npi,number_ados)
-    destination_ados=reshape(destination,npi,number_ados)
-    _heom_system_apply_hierarchy!(destination_ados,plan.system,source_ados,
-                                  time,parameters,work.system)
-    if plan.terminator===:residue
-        for ado in 1:number_ados,bath in eachindex(plan.residue_coefficients)
-            _heom_residue_action!(view(destination_ados,:,ado),plan,
-                                  view(source_ados,:,ado),bath,work)
-        end
-    end
-    for ado in 1:number_ados
-        output=view(destination_ados,:,ado);input=view(source_ados,:,ado)
-        decay=plan.decays[ado]
-        if !iszero(decay)
-            @inbounds @simd for coordinate in eachindex(output,input)
-                output[coordinate]-=decay*input[coordinate]
-            end
-        end
-    end
+    _heom_apply_columns!(
+        destination,plan,source,1,time,parameters,work)
+    destination
+end
 
-    topology=plan.topology
-    for source_ado in 1:number_ados
-        position=Int(topology.ado_edge_ptr[source_ado])
-        stop=Int(topology.ado_edge_ptr[source_ado+1])-1
-        while position<=stop
-            edge=Int(topology.incident_edges[position])
-            term=Int(topology.term[edge])
-            bath=plan.exponent_baths[term]
-            _heom_coupling_actions!(work.left,work.right,plan,
-                                    view(source_ados,:,source_ado),bath)
-            while position<=stop
-                edge=Int(topology.incident_edges[position])
-                term=Int(topology.term[edge])
-                plan.exponent_baths[term]==bath||break
-                lower=Int(topology.lower[edge]);upper=Int(topology.upper[edge])
-                occupation=Int(topology.level[edge])
-                if source_ado==lower
-                    output=view(destination_ados,:,upper)
-                    factor=plan.downward_level_factors[occupation,term]
-                    coefficient=plan.coefficients[term]
-                    right_coefficient=plan.right_coefficients[term]
-                    @inbounds @simd for coordinate in eachindex(output)
-                        output[coordinate]+=-im*factor*(
-                            coefficient*work.left[coordinate]-
-                            right_coefficient*work.right[coordinate])
-                    end
-                else
-                    source_ado==upper||error(
-                        "internal HEOM incidence mismatch")
-                    output=view(destination_ados,:,lower)
-                    factor=plan.upward_level_factors[occupation,term]
-                    @inbounds @simd for coordinate in eachindex(output)
-                        output[coordinate]+=-im*factor*(
-                            work.left[coordinate]-work.right[coordinate])
-                    end
-                end
-                position+=1
-            end
-        end
-    end
+function apply!(destination::AbstractMatrix,plan::HEOMPlan,
+                source::AbstractMatrix,time,parameters,
+                work::HEOMWorkspace)
+    size(source,1)==size(plan,1)&&size(destination)==size(source)||
+        throw(DimensionMismatch("HEOM matrix batch has incompatible dimensions"))
+    Base.mightalias(destination,source)&&throw(ArgumentError(
+        "HEOM generator source and destination must not share storage"))
+    _check_heom_workspace(work,plan)
+    promote_type(plan.Ttype,eltype(source))===plan.Ttype||throw(ArgumentError(
+        "HEOM source scalar type is wider than the prepared plan"))
+    promote_type(plan.Ttype,eltype(source),eltype(destination))===
+        eltype(destination)||throw(ArgumentError(
+        "HEOM destination scalar type cannot represent the result"))
+    _heom_apply_columns!(
+        destination,plan,source,size(source,2),time,parameters,work)
     destination
 end
 
@@ -1465,6 +1641,159 @@ function _heom_system_adjoint_apply_hierarchy!(destination,system,source,time,
     destination
 end
 
+function _heom_apply_prepared_pi_adjoint_chunks!(
+        destination,plan::LiouvillianPlan,source,time,parameters,
+        work::LiouvillianWorkspace,width::Int)
+    n=length(plan.basis)
+    size(source,1)==n&&size(destination)==size(source)||
+        throw(DimensionMismatch(
+            "adjoint HEOM system batch has incompatible PI dimensions"))
+    _check_liouvillian_workspace(work,plan)
+    _check_liouvillian_apply_types(destination,source,plan)
+    if plan.kernels===nothing
+        matrix=_matrix_at(plan.fallback_model,time,parameters)
+        return mul!(destination,adjoint(matrix),source)
+    end
+    width=min(width,work.batch.capacity)
+    width>0||throw(ArgumentError(
+        "adjoint HEOM system workspace has zero batch capacity"))
+    _prepare_kernels!(
+        plan.kernels,work.kernel_workspaces,plan.basis,time,parameters)
+    for first_column in 1:width:size(source,2)
+        last_column=min(first_column+width-1,size(source,2))
+        output=view(destination,:,first_column:last_column)
+        input=view(source,:,first_column:last_column)
+        fill!(output,zero(eltype(output)))
+        _apply_adjoint_batch_kernels!(
+            output,input,plan.kernels,work.kernel_workspaces,
+            plan.basis,time,parameters,work)
+    end
+    destination
+end
+
+function _heom_system_adjoint_apply_hierarchy!(
+        destination,system::LiouvillianPlan,source,time,parameters,
+        work::LiouvillianWorkspace)
+    width=min(max(size(source,2),1),_HEOM_SYSTEM_BATCH_WIDTH)
+    _heom_apply_prepared_pi_adjoint_chunks!(
+        destination,system,source,time,parameters,work,width)
+end
+
+function _heom_system_adjoint_apply_hierarchy!(
+        destination,system::CompiledPIModel,source,time,parameters,
+        work::LiouvillianWorkspace)
+    system.backend===:matrixfree||return mul!(
+        destination,adjoint(system.operator),source)
+    width=min(max(size(source,2),1),_HEOM_SYSTEM_BATCH_WIDTH)
+    _heom_apply_prepared_pi_adjoint_chunks!(
+        destination,system.plan,source,time,parameters,work,width)
+end
+
+function _heom_system_adjoint_apply_hierarchy!(
+        destination,system::SpecializedPIModel,source,time,parameters,
+        work::LiouvillianWorkspace)
+    system.backend===:matrixfree||return mul!(
+        destination,adjoint(system.operator),source)
+    width=min(max(size(source,2),1),_HEOM_SYSTEM_BATCH_WIDTH)
+    _heom_apply_prepared_pi_adjoint_chunks!(
+        destination,system.plan,source,time,system.rates,work,width)
+end
+
+function _heom_system_adjoint_apply_hierarchy!(
+        destination,system::MatrixFreeLiouvillian,source,time,parameters,
+        work::LiouvillianWorkspace)
+    system.plan isa LiouvillianPlan||return apply_adjoint!(
+        destination,system,source,time,parameters)
+    width=min(max(size(source,2),1),_HEOM_SYSTEM_BATCH_WIDTH)
+    _heom_apply_prepared_pi_adjoint_chunks!(
+        destination,system.plan,source,time,parameters,work,width)
+end
+
+@inline function _heom_apply_adjoint_columns!(
+        destination,plan::HEOMPlan,source,right_hand_sides::Int,
+        time,parameters,work::HEOMWorkspace)
+    npi=plan.npi
+    number_ados=length(plan.multiindices)
+    total_columns=number_ados*right_hand_sides
+    length(source)==npi*total_columns&&length(destination)==length(source)||
+        throw(DimensionMismatch(
+            "flattened adjoint HEOM storage has incompatible dimensions"))
+    source_ados=reshape(source,npi,total_columns)
+    destination_ados=reshape(destination,npi,total_columns)
+    size(source_ados)==(npi,total_columns)&&
+        size(destination_ados)==(npi,total_columns)||
+        throw(DimensionMismatch(
+            "flattened adjoint HEOM columns have incompatible dimensions"))
+    _heom_system_adjoint_apply_hierarchy!(
+        destination_ados,plan.system,source_ados,time,parameters,work.system)
+    if plan.terminator===:residue
+        for column in 1:total_columns
+            for bath in eachindex(plan.residue_coefficients)
+                _heom_residue_action!(
+                    view(destination_ados,:,column),plan,
+                    view(source_ados,:,column),bath,work)
+            end
+        end
+    end
+    for rhs in 1:right_hand_sides,ado in 1:number_ados
+        column=ado+(rhs-1)*number_ados
+        output=view(destination_ados,:,column)
+        input=view(source_ados,:,column)
+        decay=conj(plan.decays[ado])
+        if !iszero(decay)
+            @inbounds @simd for coordinate in eachindex(output,input)
+                output[coordinate]-=decay*input[coordinate]
+            end
+        end
+    end
+    topology=plan.topology
+    for rhs in 1:right_hand_sides,source_ado in 1:number_ados
+        source_column=source_ado+(rhs-1)*number_ados
+        position=Int(topology.ado_edge_ptr[source_ado])
+        stop=Int(topology.ado_edge_ptr[source_ado+1])-1
+        while position<=stop
+            edge=Int(topology.incident_edges[position])
+            term=Int(topology.term[edge])
+            bath=plan.exponent_baths[term]
+            _heom_coupling_actions!(
+                work.left,work.right,plan,
+                view(source_ados,:,source_column),bath)
+            while position<=stop
+                edge=Int(topology.incident_edges[position])
+                term=Int(topology.term[edge])
+                plan.exponent_baths[term]==bath||break
+                lower=Int(topology.lower[edge])
+                upper=Int(topology.upper[edge])
+                occupation=Int(topology.level[edge])
+                if source_ado==lower
+                    output=view(destination_ados,:,
+                                upper+(rhs-1)*number_ados)
+                    factor=plan.upward_level_factors[occupation,term]
+                    @inbounds @simd for coordinate in eachindex(output)
+                        output[coordinate]+=im*factor*(
+                            work.left[coordinate]-work.right[coordinate])
+                    end
+                else
+                    source_ado==upper||error(
+                        "internal HEOM incidence mismatch")
+                    output=view(destination_ados,:,
+                                lower+(rhs-1)*number_ados)
+                    factor=plan.downward_level_factors[occupation,term]
+                    coefficient=conj(plan.coefficients[term])
+                    right_coefficient=conj(plan.right_coefficients[term])
+                    @inbounds @simd for coordinate in eachindex(output)
+                        output[coordinate]+=im*factor*(
+                            coefficient*work.left[coordinate]-
+                            right_coefficient*work.right[coordinate])
+                    end
+                end
+                position+=1
+            end
+        end
+    end
+    destination_ados
+end
+
 """
     apply_adjoint!(destination, plan::HEOMPlan, source, time, parameters,
                    workspace)
@@ -1488,70 +1817,27 @@ function apply_adjoint!(destination::AbstractVector,plan::HEOMPlan,
     promote_type(plan.Ttype,eltype(source),eltype(destination))===
         eltype(destination)||throw(ArgumentError(
         "HEOM adjoint destination scalar type cannot represent the result"))
-    npi=plan.npi;number_ados=length(plan.multiindices)
-    source_ados=reshape(source,npi,number_ados)
-    destination_ados=reshape(destination,npi,number_ados)
-    _heom_system_adjoint_apply_hierarchy!(
-        destination_ados,plan.system,source_ados,time,parameters,work.system)
-    if plan.terminator===:residue
-        # For Hermitian Q and explicitly real delta, -delta[Q,[Q,.]] is
-        # Hilbert--Schmidt self-adjoint.
-        for ado in 1:number_ados,bath in eachindex(plan.residue_coefficients)
-            _heom_residue_action!(view(destination_ados,:,ado),plan,
-                                  view(source_ados,:,ado),bath,work)
-        end
-    end
-    for ado in 1:number_ados
-        output=view(destination_ados,:,ado);input=view(source_ados,:,ado)
-        decay=conj(plan.decays[ado])
-        if !iszero(decay)
-            @inbounds @simd for coordinate in eachindex(output,input)
-                output[coordinate]-=decay*input[coordinate]
-            end
-        end
-    end
-    topology=plan.topology
-    for source_ado in 1:number_ados
-        position=Int(topology.ado_edge_ptr[source_ado])
-        stop=Int(topology.ado_edge_ptr[source_ado+1])-1
-        while position<=stop
-            edge=Int(topology.incident_edges[position])
-            term=Int(topology.term[edge])
-            bath=plan.exponent_baths[term]
-            _heom_coupling_actions!(work.left,work.right,plan,
-                                    view(source_ados,:,source_ado),bath)
-            while position<=stop
-                edge=Int(topology.incident_edges[position])
-                term=Int(topology.term[edge])
-                plan.exponent_baths[term]==bath||break
-                lower=Int(topology.lower[edge]);upper=Int(topology.upper[edge])
-                occupation=Int(topology.level[edge])
-                if source_ado==lower
-                    # This source is the target of the forward upward edge.
-                    output=view(destination_ados,:,upper)
-                    factor=plan.upward_level_factors[occupation,term]
-                    @inbounds @simd for coordinate in eachindex(output)
-                        output[coordinate]+=im*factor*(
-                            work.left[coordinate]-work.right[coordinate])
-                    end
-                else
-                    source_ado==upper||error(
-                        "internal HEOM incidence mismatch")
-                    # This source is the target of the forward downward edge.
-                    output=view(destination_ados,:,lower)
-                    factor=plan.downward_level_factors[occupation,term]
-                    coefficient=conj(plan.coefficients[term])
-                    right_coefficient=conj(plan.right_coefficients[term])
-                    @inbounds @simd for coordinate in eachindex(output)
-                        output[coordinate]+=im*factor*(
-                            coefficient*work.left[coordinate]-
-                            right_coefficient*work.right[coordinate])
-                    end
-                end
-                position+=1
-            end
-        end
-    end
+    _heom_apply_adjoint_columns!(
+        destination,plan,source,1,time,parameters,work)
+    destination
+end
+
+function apply_adjoint!(destination::AbstractMatrix,plan::HEOMPlan,
+                        source::AbstractMatrix,time,parameters,
+                        work::HEOMWorkspace)
+    size(source,1)==size(plan,1)&&size(destination)==size(source)||
+        throw(DimensionMismatch(
+            "adjoint HEOM matrix batch has incompatible dimensions"))
+    Base.mightalias(destination,source)&&throw(ArgumentError(
+        "HEOM adjoint source and destination must not share storage"))
+    _check_heom_workspace(work,plan)
+    promote_type(plan.Ttype,eltype(source))===plan.Ttype||throw(ArgumentError(
+        "HEOM adjoint source scalar type is wider than the prepared plan"))
+    promote_type(plan.Ttype,eltype(source),eltype(destination))===
+        eltype(destination)||throw(ArgumentError(
+        "HEOM adjoint destination scalar type cannot represent the result"))
+    _heom_apply_adjoint_columns!(
+        destination,plan,source,size(source,2),time,parameters,work)
     destination
 end
 
@@ -1589,11 +1875,7 @@ function apply_adjoint!(destination::AbstractMatrix,
         "adjoint HEOM batch source and destination must not share storage"))
     work.plan===L.plan||throw(ArgumentError(
         "HEOM workspace belongs to a different matrix-free adapter"))
-    for column in axes(source,2)
-        apply_adjoint!(view(destination,:,column),L.plan,
-                       view(source,:,column),time,parameters,work)
-    end
-    destination
+    apply_adjoint!(destination,L.plan,source,time,parameters,work)
 end
 
 """
@@ -2120,8 +2402,9 @@ end
 Return a synchronized `MatrixFreeLiouvillian` adapter for an HEOM plan. Its
 trace functional acts only on the root ADO, enabling use of the package's
 existing matrix-free Krylov routines without constructing the hierarchy
-matrix. In parallel hot loops, call `apply!` with one explicit
-`HEOMWorkspace` per task instead.
+matrix. The adapter publishes synchronized vector and matrix-RHS callbacks
+for both forward and adjoint application. In parallel hot loops, call
+`apply!` with one explicit `HEOMWorkspace` per task instead.
 """
 function heom_liouvillian(plan::HEOMPlan)
     workspace=HEOMWorkspace(plan)
@@ -2129,9 +2412,14 @@ function heom_liouvillian(plan::HEOMPlan)
         apply!(destination,plan,source,time,parameters,workspace)
     adjoint_action! = (destination,source,time,parameters)->
         apply_adjoint!(destination,plan,source,time,parameters,workspace)
+    batched_action! = (destination,source,time,parameters)->
+        apply!(destination,plan,source,time,parameters,workspace)
+    batched_adjoint_action! = (destination,source,time,parameters)->
+        apply_adjoint!(destination,plan,source,time,parameters,workspace)
     MatrixFreeLiouvillian(size(plan,1),action!,plan.Ttype,copy(plan.tracevec);
                           autonomous=plan.autonomous,plan,workspace,
-                          adjoint_action!)
+                          adjoint_action!,batched_action!,
+                          batched_adjoint_action!)
 end
 
 """

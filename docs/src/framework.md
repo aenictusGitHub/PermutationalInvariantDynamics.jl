@@ -349,8 +349,9 @@ a_a^\dagger a_b\lvert\boldsymbol n\rangle
 This avoids constructing the general one-box recoupling geometry. Fixed
 collective terms retain their exact sparse block support, while driven terms
 fill preallocated dense block scratch because their support may change with
-time. Models spanning several Schur sectors, and models with local jumps,
-continue to use the general one-box geometry.
+time. Collective-only models spanning several Schur sectors prepare only
+sector-diagonal one-box contractions. Models with local gains still use the
+complete sector-changing one-box geometry.
 
 Polynomial scaling does not make every operation inexpensive. A dense PI
 Liouvillian contains \(n_{\mathrm{PI}}^2\) entries, and a complete dense
@@ -358,7 +359,8 @@ eigendecomposition has cubic cost in \(n_{\mathrm{PI}}\). The matrix-free
 backend avoids materializing that matrix, but it still stores PI state and
 Krylov vectors of length \(n_{\mathrm{PI}}\). At fixed body order \(p\), the
 local contraction cost includes \(d^{2p}\), and general-qudit reductions can
-retain large Littlewood--Richardson intertwiner spaces. Consult
+retain large packed Littlewood--Richardson intertwiner spaces and use a dense
+temporary nullspace basis during setup. Consult
 [Architecture and efficient workflows](architecture.md) and
 [Matrix-free Krylov solvers](matrix_free_krylov.md) before a large scan.
 
@@ -516,6 +518,10 @@ PIBasis -> PIModel -> compile -> CompiledPIModel -> solver or analysis
 
 (PI and finite factors) -> CompositePIBasis -> CompositeSuperoperator
 
+(PI system, one shared mode) -> GlobalPseudomodeModel -> generator or workspace
+
+(system, identical local modes) -> PISupersite -> pseudomode_model -> compile
+
 (composite background, monitored jumps) -> CompositeTrajectoryPlan
                                          -> quantum_trajectories
 
@@ -526,13 +532,29 @@ PIBasis -> PIModel -> compile -> CompiledPIModel -> solver or analysis
 (autonomous compiled generator) -> ResponseWorkspace -> response or adjoint action
 
 (PI system, exponential baths) -> scaled/unscaled HEOMPlan -> HEOM state or solver
+
+(PI Hamiltonian, shared HOPSBaths) -> HOPSPlan -> HOPSWorkspace per path
+                                               -> root-state ensemble
 ```
+
+PI--HOPS has a stronger symmetry requirement than the averaged open-system
+equation: every individual noise realization must preserve the PI
+representation. The exact PI route therefore supports shared baths whose
+coupling operators are collective/PI. Independent local colored noises are PI
+only after ensemble averaging and generally leave the PI pseudo-ket space on
+each path; use PI--HEOM or identical local pseudomode supersites for that
+case. Linear HOPS propagates an unnormalized root pseudo-ket
+``\psi_{\boldsymbol 0}``. Its density estimate is
+``\mathbb E[|\psi_{\boldsymbol 0}\rangle\langle\psi_{\boldsymbol 0}|]``:
+average the outer products without normalizing individual paths.
 
 | Object | Role | Ownership rule |
 |:--|:--|:--|
 | `PIBasis` | Partitions, GT patterns, block offsets, and representation geometry labels | Share read-only |
+| `PISupersite`, `BosonicPseudomode` | Exact factorization and finite-cutoff metadata for one identical system plus its local auxiliaries | Share read-only; one supersite basis is reused by every model at the same cutoffs |
 | `PIState`, `PIOperator` | Dense vectors of orthonormal PI coefficients | Mutable value owned by the caller |
 | `CompositePIBasis`, `CompositePIState`, `CompositePIOperator` | Tensor products of several PI spaces and finite auxiliary matrix spaces | Basis is shared read-only; state/operator data belong to the caller |
+| `GlobalPseudomodeModel` | One PI system factor, one shared finite mode, collective couplings, and separated mode damping channels | Model and prepared maps are shared read-only; one global-pseudomode workspace per concurrent application |
 | `PIModel` | Declarative immutable tuple of physical terms | Share read-only |
 | `CompiledPIModel` | Prepared term lowering and sparse or matrix-free backend | Compile once and share read-only |
 | `LiouvillianWorkspace` and solver workspaces | Mutable multiplication and Krylov scratch | One per concurrent task or thread |
@@ -541,12 +563,13 @@ PIBasis -> PIModel -> compile -> CompiledPIModel -> solver or analysis
 | `ResponseWorkspace` | Restarted-GMRES and/or exponential-action storage for one prepared source | Reuse sequentially; one workspace per concurrent response task |
 | `ParameterScanPlan`, `ParameterScanWorkspace` | Immutable scan recipe and mutable continuation/solver scratch | Plan shared read-only; one workspace per serial caller or threaded worker |
 | `HEOMPlan`, HEOM workspaces | Immutable scaled/unscaled ADO topology/couplings and application/RK4 scratch | Plan shared read-only; one workspace per concurrent application/evolution |
+| `HOPSPlan`, `HOPSWorkspace` | Immutable shared-bath hierarchy geometry and mutable auxiliary pseudo-kets/noise/RK scratch | Plan shared read-only; one workspace and RNG per concurrent path |
 | `WeakPITrajectoryPlan`, weak-PI workspaces | Immutable Schur-Kraus unraveling and task-owned path/batch scratch | Plan shared read-only; one workspace and RNG per concurrent worker |
 | `QuditHusimiPlan` | Dense coherent vectors for one exact basis, point set, and sector selection | Share read-only across states; setup can dominate |
 | `DiffusiveBatchPlan`, batch workspaces | Prepared trajectory request and worker-local path/RNG buffers | Plan shared read-only; workspace reused sequentially only |
 | `ConvergenceStudyResult` | All raw refinement results, estimates, diagnostics, and decisions | Immutable record; memory includes every retained evaluator result |
-| `CollectiveObservablePlan`, `LocalFactorTracePlan`, `ReductionPlan` | Prepared observable, internal local-factor trace, or particle-bipartition geometry | Share read-only; tied to the exact basis object |
-| `LocalFactorTraceWorkspace`, `ReductionWorkspace` | Mutable occupation or product-Schur reduction scratch | One per concurrent task |
+| `CollectiveObservablePlan`, `LocalFactorTracePlan`, `ReductionPlan`, `CompositeReductionPlan` | Prepared observable, internal local-factor trace, particle-bipartition geometry, or composite-factor trace | Share read-only; tied to the exact basis object |
+| `OneBodyRDMWorkspace`, `LocalFactorTraceWorkspace`, `ReductionWorkspace` | Mutable one-body, occupation, or product-Schur reduction scratch | One per concurrent task |
 | `CorrelationPlan`, `CorrelationWorkspace` | Prepared quantum-regression insertions and their evolution/GMRES scratch | Plan shared read-only; one workspace per task |
 | `CompositeSuperoperator`, `CompositeSuperoperatorWorkspace` | Sum of factorized maps and its tensor-fibre scratch | Generator shared read-only; one workspace per task |
 | `CompositeTrajectoryPlan`, composite trajectory workspaces | Explicit monitored tensor-product channels and density-valued conditional evolution | Plan shared read-only; one workspace and RNG per concurrent path worker |
@@ -574,12 +597,16 @@ Prepared observables and reductions follow the same pattern: construct the
 read-only plan once, then reuse it for many states. `LocalFactorTracePlan`
 traces one internal tensor factor from every supersite and returns a complete
 PI basis at the kept local dimension. Its prepared occupation transforms are
-rectangular and memory-guarded. `ReductionPlan` instead traces or partially
-transposes groups of particles at fixed local dimension. Qudit
+rectangular, exact-support sparse, and memory-guarded. `ReductionPlan` instead
+traces or partially transposes groups of particles at fixed local dimension.
+For a reduced state it contracts the discarded product factor one slice at a
+time; only negativity needs the complete product block. Qudit
 `ReductionPlan` objects can be much larger than collective-observable plans
-because they may retain many dense subduction intertwiners. Benchmark setup
-and retained memory before caching many reductions. The detailed stable,
-advanced, and experimental interfaces are listed in
+because they may retain many subduction intertwiners. They store those maps as
+exact-support sparse discarded-weight blocks and report the packed versus
+dense-equivalent size in `plan.estimates`, but the weight-restricted SPQR setup
+can still be costly. Benchmark setup and retained memory before caching many
+reductions. The detailed stable, advanced, and experimental interfaces are listed in
 [API tiers and prepared analysis](api_tiers.md).
 
 ## A complete qubit example
@@ -655,15 +682,19 @@ show literature models and their numerical checks.
 | Two-time correlations and spectra | `CorrelationPlan`, `two_time_correlation`, `stationary_correlation_spectrum` | Autonomous QRT; converge RK4 or GMRES controls |
 | Resolvents, adjoint evolution, and susceptibility | `ResponseWorkspace`, `resolvent_norm`, `adjoint_evolve`, `steady_state_susceptibility` | Matrix-free routes require an adjoint where applicable; iterative estimates retain residual diagnostics |
 | Several PI ensembles or a finite ancilla | `CompositePIBasis`, `CompositeSuperoperator`, `CompositeTrajectoryPlan` | Cross maps and monitored gains are factorized; composite paths are density-valued |
+| One shared cavity or explicit global pseudomode | `global_pseudomode_model` | The mode is one finite global factor coupled through a collective system operator; converge its cutoff |
+| Identical systems with identical local pseudomodes | `pseudomode_supersite`, `pseudomode_model` | The complete system+local-modes tuple is one PI particle; converge every finite mode cutoff |
 | Related steady states or spectra | `ParameterScanPlan`, `parameter_scan` | Serial continuation is path dependent; independent points may be threaded/distributed |
 | Structured matrix-free linear families | `block_gmres`, `multishift_gmres`, `recycled_gmres`, `krylov_expv` | Inspect raw residuals/error estimates and reuse task-owned workspaces |
 | Finite-memory bosonic bath | `HEOMBath`, `HEOMPlan`, `heom_evolve`, `heom_steady_state` | Prefer exact scaled ADOs when conditioning benefits; converge bath poles, hierarchy depth, and time/Krylov discretization separately |
+| Shared-bath finite-memory pure-state ensemble | `HOPSBath`, `HOPSPlan`, `hops_average` | Coupling and noise must preserve PI on every path; average unnormalized root outer products and converge bath poles, hierarchy depth, time step, and sample count separately |
 | Generalized qudit coherent-state Q | `QuditHusimiPlan`, `qudit_husimi_q` | Normalized Haar data on supplied points; no qudit Wigner convention inferred |
 | Numerical refinement evidence | `convergence_study` and specialized wrappers | Final refinement agreement is distinct from inner solver convergence |
 | Large-\(N\) product prediction | `MeanFieldPlan`, `solve_meanfield` | Approximate after correlations develop |
 | Repeated collective observable | `CollectiveObservablePlan` | Reuse one plan for many states |
-| Trace a mode/ancilla inside every PI supersite | `LocalFactorTracePlan`, `LocalFactorTraceWorkspace` | Complete kept-factor PI output; setup has a rectangular-transform memory guard |
+| Trace a mode/ancilla inside every PI supersite | `LocalFactorTracePlan`, `LocalFactorTraceWorkspace` | Complete kept-factor PI output; exact-support sparse transforms have a setup memory guard |
 | Repeated marginal or negativity | `ReductionPlan`, `ReductionWorkspace` | Setup can be large for qudits |
+| Repeated one-factor composite trace | `CompositeReductionPlan` | Packed exact diagonal contraction; no full composite trace vector |
 
 For product-state predictions at \(N\) beyond a practical PI basis, the
 mean-field layer evaluates

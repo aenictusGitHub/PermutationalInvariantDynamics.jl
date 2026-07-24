@@ -10,8 +10,11 @@ factorized deterministic and density-valued stochastic dynamics of several PI
 ensembles are also available.
 Prepared continuation scans, confidence-controlled ensembles, generalized
 qudit Husimi data, advanced matrix-free Krylov families, explicit convergence
-reports, and finite-exponential PI--HEOM extend that workflow for larger
-research calculations.
+reports, finite-exponential PI--HEOM, stochastic PI--HOPS for shared
+structured baths, and exact PI supersites for identical finite-cutoff local
+pseudomodes extend that workflow for larger research calculations. A separate
+factorized embedding covers one finite-cutoff pseudomode shared by the
+complete ensemble.
 
 The exact PI representation scales polynomially with `N` at fixed `d` and
 does not construct the full `d^N` Hilbert space in production algorithms.
@@ -119,14 +122,20 @@ and convergence metadata. Adaptive or stiff integration is available through
   trajectories](weak_pi_trajectories.md), [quantum regression and
   spectra](correlations.md), [higher-order cumulant closures](cumulant_bridge.md),
   [diffusive monitoring](diffusive_monitoring.md), [research utilities and
-  control](research_utilities.md), and [composite systems](composite_systems.md)
-  describe memory-conscious research extension workflows.
+  control](research_utilities.md), [composite systems](composite_systems.md),
+  [global pseudomodes](global_pseudomodes.md), and [local pseudomode
+  supersites](pseudomodes.md) describe memory-conscious research extension
+  workflows.
 - [Prepared parameter scans](parameter_scans.md), [advanced Krylov
   families](krylov_extensions.md), and [numerical convergence
   reports](convergence.md) cover continuation and explicit numerical evidence.
-- [PI--HEOM](heom.md) documents the finite-memory bath convention, while
-  [qudit Husimi phase space](qudit_phase_space.md) describes generalized
-  coherent-state Q data.
+- [PI--HEOM](heom.md) documents the deterministic common-bath finite-memory
+  convention, while [PI--HOPS](hops.md) propagates direct-sum Schur
+  pseudo-ket hierarchies and reconstructs the density by Monte Carlo;
+  [global pseudomodes](global_pseudomodes.md) cover one explicitly retained
+  shared mode; [local pseudomodes](pseudomodes.md) cover identical independent
+  finite-mode embeddings; and [qudit Husimi phase
+  space](qudit_phase_space.md) describes generalized coherent-state Q data.
 - [Optional ecosystem integrations](interoperability.md) records the precise
   Tables, Makie, Distributed, QuantumCumulants, JLD2, and HDF5 boundaries.
 - [Complete public API index](api_reference.md) categorizes every exported

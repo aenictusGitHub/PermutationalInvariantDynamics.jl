@@ -867,59 +867,405 @@ mean_uhlmann_curvature(rho::PIState,generators;kwargs...)=sld_commutator_matrix(
 """Whether the weak SLD commutativity condition holds within tolerance."""
 multiparameter_compatible(rho::PIState,generators;atol::Real=1e-10)=maximum(abs,sld_commutator_matrix(rho,generators;atol=atol))<=atol
 
-function _one_body_rdm_geometry(rho::PIState,cache::OneBodyGeometry)
-    b=rho.basis;_check_geometry_basis(cache,b)
-    T=promote_type(eltype(rho.data),Complex{geometry_scalar_type(cache)})
-    Rtype=_real_float_type(T);R1=zeros(T,b.d,b.d)
-    inverse_particle_count=_inverse_particle_count(Rtype,b.N)
-    for (s,p) in pairs(b.sectors)
-        B=_multiplicity_weighted_block(rho,p)
-        for a in axes(B,1),c in axes(B,2),mu in cache.connections[(s,s)]
-            key=(s,mu,s)
-            prefactor=inverse_particle_count*B[a,c]*cache.scales[key]
-            # tr(R G[E_ji]) uses G[c,a].  A contraction entry `(u,v,z)`
-            # contributes conj(z) to E_{u,v}; therefore rho[v,u] receives it.
-            for (u,v,z) in cache.contractions[key][c,a]
-                R1[v,u]+=prefactor*conj(z)
+"""
+    OneBodyRDMWorkspace(geometry; T=geometry_scalar_type(geometry),
+                        memory_budget=512*1024^2)
+    OneBodyRDMWorkspace(geometry, rho)
+
+Allocate task-owned scratch for repeated one-particle reductions through a
+prepared [`OneBodyGeometry`](@ref). The workspace owns one largest-sector
+multiplicity-weighted block and exact prepared Schur-multiplicity scales.
+It is tied to the exact geometry and must not be shared by concurrent tasks.
+
+The keyword `T` is the real floating-point component type. The state
+constructor promotes the state and geometry scalar types. For `BigFloat`, the
+geometry and state must use one identical stored precision; the workspace
+captures that context and re-enters it during allocation and application.
+`memory_budget` guards the retained largest-sector scratch and prepared exact
+scales; pass `Inf` only as an explicit opt-out.
+"""
+struct OneBodyRDMWorkspace{T,R<:AbstractFloat,G,S,Q}
+    geometry::G
+    Ttype::Type{T}
+    weighted_block::Matrix{T}
+    multiplicity_scales::S
+    inverse_particle_count::R
+    precision_bits::Int
+    rounding_mode::Q
+end
+
+function _one_body_geometry_precision_bounds(cache::OneBodyGeometry)
+    R=geometry_scalar_type(cache)
+    R===BigFloat||return (precision(R),precision(R))
+    minimum_bits=typemax(Int)
+    maximum_bits=0
+    for value in values(cache.scales)
+        bits=precision(value)
+        minimum_bits=min(minimum_bits,bits)
+        maximum_bits=max(maximum_bits,bits)
+    end
+    for table in values(cache.contractions),(_,_,value) in table.terms
+        bits=precision(value)
+        minimum_bits=min(minimum_bits,bits)
+        maximum_bits=max(maximum_bits,bits)
+    end
+    maximum_bits==0 ? (precision(BigFloat),precision(BigFloat)) :
+        (minimum_bits,maximum_bits)
+end
+
+function _one_body_rdm_with_precision(f,work::OneBodyRDMWorkspace)
+    R=_real_float_type(work.Ttype)
+    R===BigFloat||return f()
+    setrounding(BigFloat,work.rounding_mode) do
+        setprecision(BigFloat,work.precision_bits) do
+            f()
+        end
+    end
+end
+
+function _one_body_rdm_precision_bounds(values)
+    isempty(values)&&return (precision(BigFloat),precision(BigFloat))
+    minimum_precision=typemax(Int)
+    maximum_precision=0
+    for value in values
+        value_precision=max(
+            precision(real(value)),precision(imag(value)))
+        minimum_precision=min(minimum_precision,value_precision)
+        maximum_precision=max(maximum_precision,value_precision)
+    end
+    minimum_precision,maximum_precision
+end
+
+function _one_body_rdm_workspace(
+        cache::G,::Type{WorkR},memory_budget) where
+        {WorkR<:AbstractFloat,GR<:AbstractFloat,D,L,
+         B<:PIBasis{D,L},G<:OneBodyGeometry{GR,D,L,B}}
+    WorkR===BigFloat&&GR!==BigFloat&&throw(ArgumentError(
+        "a BigFloat one-body RDM workspace requires OneBodyGeometry built " *
+        "with BigFloat coefficients; rebuild the geometry at the state precision"))
+    CT=Complex{WorkR}
+    precision_bounds=_one_body_geometry_precision_bounds(cache)
+    precision_bounds[1]==precision_bounds[2]||throw(ArgumentError(
+        "OneBodyGeometry BigFloat coefficients use mixed precisions " *
+        "$precision_bounds; rebuild the geometry at one precision"))
+    precision_bits=WorkR===BigFloat ? precision_bounds[2] : precision(WorkR)
+    rounding_mode=WorkR===BigFloat ? rounding(BigFloat) : nothing
+    if WorkR===BigFloat&&precision(BigFloat)!=precision_bits
+        return setrounding(BigFloat,rounding_mode) do
+            setprecision(BigFloat,precision_bits) do
+                _one_body_rdm_workspace(
+                    cache,WorkR,memory_budget)
             end
         end
     end
-    R1
+    maximum_block=maximum(
+        (length(patterns) for patterns in cache.basis.patterns);init=1)
+    block_bytes=_performance_entries_bytes(
+        BigInt(maximum_block)^2,CT;bigfloat_precision=precision_bits)
+    scale_count=BigInt(length(cache.basis.sectors))
+    pointer_bytes=BigInt(sizeof(Ptr{Cvoid}))
+    int_bytes=BigInt(sizeof(Int))
+    scalar_bytes=_scalar_retained_bytes(
+        WorkR;bigfloat_precision=precision_bits)
+    exact_payload_bytes=big(0)
+    for partition in cache.basis.sectors
+        multiplicity=symmetric_group_dimension(partition)
+        exact_payload_bytes+=
+            cld(BigInt(max(1,ndigits(multiplicity;base=2))),8)+1
+    end
+    # Each prepared scale owns two exact integers plus its direct/binary
+    # floating factors. Header padding deliberately overestimates Julia's
+    # allocator-dependent BigInt/BigFloat object metadata.
+    scale_bytes=exact_payload_bytes+
+        scale_count*(2pointer_bytes+2scalar_bytes+2int_bytes+256)+256
+    retained_bytes=block_bytes+scale_bytes+512
+    _require_performance_budget(
+        "one-body RDM workspace",retained_bytes,memory_budget;guidance=
+        "Use a smaller/restricted PI basis or increase memory_budget.")
+    Scale=_PreparedExactScale{WorkR,true}
+    scales=Vector{Scale}(undef,length(cache.basis.sectors))
+    for (sector,partition) in pairs(cache.basis.sectors)
+        scales[sector]=_prepare_exact_scale(
+            WorkR,symmetric_group_dimension(partition),big(1),Val(true);
+            context="prepared one-body RDM Schur multiplicity")
+    end
+    OneBodyRDMWorkspace{CT,WorkR,G,typeof(scales),typeof(rounding_mode)}(
+        cache,CT,zeros(CT,maximum_block,maximum_block),scales,
+        _inverse_particle_count(WorkR,cache.basis.N),
+        precision_bits,rounding_mode)
+end
+
+_one_body_rdm_promoted_type(::Type{R},::Type{R}) where
+    R<:AbstractFloat=R
+_one_body_rdm_promoted_type(::Type{R},::Type{G}) where
+    {R<:AbstractFloat,G<:AbstractFloat}=promote_type(R,G)
+
+function OneBodyRDMWorkspace(cache::G;
+        T::Type{R}=geometry_scalar_type(cache),
+        memory_budget=_DEFAULT_HIGHLEVEL_MEMORY_BUDGET) where
+        {GR<:AbstractFloat,D,L,B<:PIBasis{D,L},
+         G<:OneBodyGeometry{GR,D,L,B},R<:AbstractFloat}
+    isconcretetype(R)||throw(ArgumentError(
+        "T must be a concrete AbstractFloat type"))
+    WorkR=_one_body_rdm_promoted_type(R,GR)
+    _one_body_rdm_workspace(cache,WorkR,memory_budget)
+end
+
+function OneBodyRDMWorkspace(cache::G,rho::PIState{SR,B2};
+        memory_budget=_DEFAULT_HIGHLEVEL_MEMORY_BUDGET) where
+        {GR<:AbstractFloat,D,L,B<:PIBasis{D,L},
+         G<:OneBodyGeometry{GR,D,L,B},SR<:AbstractFloat,B2<:PIBasis}
+    _check_geometry_basis(cache,rho.basis)
+    R=_one_body_rdm_promoted_type(SR,GR)
+    if SR===BigFloat
+        source_bounds=_one_body_rdm_precision_bounds(rho.data)
+        source_bounds[1]==source_bounds[2]||throw(ArgumentError(
+            "state BigFloat storage has mixed precision range " *
+            "$source_bounds; rebuild it at one precision"))
+        GR===BigFloat||throw(ArgumentError(
+            "a BigFloat state requires OneBodyGeometry built with BigFloat " *
+            "coefficients at the same precision"))
+        geometry_bounds=_one_body_geometry_precision_bounds(cache)
+        geometry_bounds==source_bounds||throw(ArgumentError(
+            "state BigFloat storage has precision $(source_bounds[1]) bits, " *
+            "but the OneBodyGeometry uses precision range $geometry_bounds; " *
+            "rebuild the geometry at the state precision"))
+    end
+    work=_one_body_rdm_workspace(cache,R,memory_budget)
+    work
+end
+
+function show(io::IO,work::OneBodyRDMWorkspace)
+    print(io,"OneBodyRDMWorkspace(N=$(work.geometry.basis.N), ",
+          "d=$(work.geometry.basis.d), scalar_type=$(work.Ttype), ",
+          "max_block_dimension=$(size(work.weighted_block,1)))")
+end
+
+function _check_one_body_rdm_workspace(
+        destination::AbstractMatrix,rho::PIState,
+        work::OneBodyRDMWorkspace)
+    cache=work.geometry
+    _check_geometry_basis(cache,rho.basis)
+    size(destination)==(rho.basis.d,rho.basis.d)||throw(DimensionMismatch(
+        "one-body RDM destination must have size " *
+        "$(rho.basis.d)×$(rho.basis.d)"))
+    eltype(destination)===work.Ttype||throw(ArgumentError(
+        "one-body RDM destination must use workspace scalar type " *
+        "$(work.Ttype)"))
+    promote_type(work.Ttype,eltype(rho.data))===work.Ttype||
+        throw(ArgumentError(
+        "OneBodyRDMWorkspace scalar type $(work.Ttype) cannot represent " *
+        "state scalar type $(eltype(rho.data))"))
+    Base.mightalias(destination,rho.data)&&throw(ArgumentError(
+        "one-body RDM destination must not alias the source state"))
+    Base.mightalias(destination,work.weighted_block)&&throw(ArgumentError(
+        "one-body RDM destination must not alias workspace scratch"))
+    if _real_float_type(work.Ttype)===BigFloat
+        destination_bounds=_one_body_rdm_precision_bounds(destination)
+        scratch_bounds=_one_body_rdm_precision_bounds(work.weighted_block)
+        required=(work.precision_bits,work.precision_bits)
+        if _real_float_type(eltype(rho.data))===BigFloat
+            source_bounds=_one_body_rdm_precision_bounds(rho.data)
+            source_bounds==required||throw(ArgumentError(
+                "one-body RDM source precision range $source_bounds does " *
+                "not match the prepared precision $(work.precision_bits)"))
+        end
+        destination_bounds==required||throw(ArgumentError(
+            "one-body RDM destination precision range $destination_bounds " *
+            "does not match the prepared precision $(work.precision_bits)"))
+        scratch_bounds==required||error(
+            "internal one-body RDM workspace precision mismatch")
+    end
+    work
+end
+
+function _fill_one_body_weighted_block!(
+        work::OneBodyRDMWorkspace,rho::PIState,
+        sector::Int,partition::Partition)
+    source=coefficient_block(rho,partition)
+    n=size(source,1)
+    destination=view(work.weighted_block,1:n,1:n)
+    scale=work.multiplicity_scales[sector]
+    if scale.direct
+        @inbounds for index in eachindex(destination,source)
+            destination[index]=source[index]*scale.factor
+        end
+        _ordinary_scaled_value_safe(destination,source)&&return destination
+    end
+    @inbounds for index in eachindex(destination,source)
+        destination[index]=_apply_prepared_exact_scale(
+            source[index],scale;
+            context="multiplicity-weighted one-body RDM block in sector $partition")
+    end
+    destination
+end
+
+function _one_body_rdm_geometry!(
+        destination::AbstractMatrix,rho::PIState,
+        work::OneBodyRDMWorkspace)
+    cache=work.geometry
+    fill!(destination,zero(eltype(destination)))
+    for (s,p) in pairs(rho.basis.sectors)
+        B=_fill_one_body_weighted_block!(work,rho,s,p)
+        for a in axes(B,1),c in axes(B,2),mu in cache.connections[(s,s)]
+            key=(s,mu,s)
+            prefactor=work.inverse_particle_count*B[a,c]*cache.scales[key]
+            # tr(R G[E_ji]) uses G[c,a].  A contraction entry `(u,v,z)`
+            # contributes conj(z) to E_{u,v}; therefore rho[v,u] receives it.
+            for (u,v,z) in cache.contractions[key][c,a]
+                destination[v,u]+=prefactor*conj(z)
+            end
+        end
+    end
+    destination
 end
 
 """
-    one_body_rdm(rho; cache=nothing, plan=nothing,
-                 atol=_analysis_atol(rho), rtol=_state_rtol(rho))
+    one_body_rdm!(destination, rho, workspace;
+                  check=true,
+                  atol=_analysis_atol(rho), rtol=_state_rtol(rho))
 
-Return the one-particle density matrix in computational-label order.  Passing
-a reusable `OneBodyGeometry` contracts all matrix units in one traversal.
-Alternatively, a `ReductionPlan(basis,1)` reuses fixed-bipartition recoupling
-data.  Supplying both `cache` and `plan` is an error.
+Write the one-particle density matrix in computational-label order into
+`destination`, reusing a task-owned [`OneBodyRDMWorkspace`](@ref). With
+`check=true` the input state is validated first. Set `check=false` only when
+an enclosing prepared workflow has already performed equivalent validation.
+No normalization, symmetrization, or positivity repair is performed.
 """
-function one_body_rdm(rho::PIState;cache=nothing,plan=nothing,
-                      atol::Real=_analysis_atol(rho),rtol::Real=_state_rtol(rho))
+function one_body_rdm!(
+        destination::AbstractMatrix,rho::PIState,
+        work::OneBodyRDMWorkspace;
+        check::Bool=true,
+        atol::Real=_analysis_atol(rho),
+        rtol::Real=_state_rtol(rho))
     rho.basis.N>=1||throw(ArgumentError("one particle is required"))
-    if plan===nothing&&cache!==nothing
-        validate_state(rho;atol=atol,rtol=rtol)
-        return _one_body_rdm_geometry(rho,cache)
-    elseif plan===nothing
-        validate_state(rho;atol=atol,rtol=rtol)
-        T=_real_float_type(eltype(rho.data))
-        return _one_body_rdm_geometry(rho,OneBodyGeometry(rho.basis;T=T))
+    isfinite(atol)&&atol>=0||throw(ArgumentError(
+        "atol must be finite and nonnegative"))
+    isfinite(rtol)&&rtol>=0||throw(ArgumentError(
+        "rtol must be finite and nonnegative"))
+    _check_one_body_rdm_workspace(destination,rho,work)
+    if _real_float_type(work.Ttype)===BigFloat&&
+            (precision(BigFloat)!=work.precision_bits||
+             rounding(BigFloat)!=work.rounding_mode)
+        return _one_body_rdm_with_precision(work) do
+            one_body_rdm!(
+                destination,rho,work;check,atol,rtol)
+        end
     end
-    cache===nothing||throw(ArgumentError("provide either cache or plan, not both"))
-    reduced=reduced_state(rho,1;plan=plan,atol=atol,rtol=rtol)
-    p=only(reduced.basis.sectors);R=Matrix(physical_block(reduced,p));patterns=only(reduced.basis.patterns)
+    check&&validate_state(rho;atol,rtol)
+    _one_body_rdm_geometry!(destination,rho,work)
+end
+
+function _one_body_rdm_geometry(rho::PIState,cache::OneBodyGeometry;
+                                check::Bool=true,
+                                atol::Real=_analysis_atol(rho),
+                                rtol::Real=_state_rtol(rho))
+    work=OneBodyRDMWorkspace(cache,rho)
+    return _one_body_rdm_with_precision(work) do
+        destination=zeros(work.Ttype,rho.basis.d,rho.basis.d)
+        one_body_rdm!(
+            destination,rho,work;check,atol,rtol)
+    end
+end
+
+function _one_body_rdm_from_reduction(
+        rho::PIState,plan,workspace;
+        check::Bool,atol::Real,rtol::Real)
+    if workspace===nothing
+        precision_bits=_reduction_unprepared_precision(rho,plan)
+        if precision_bits!==nothing&&precision(BigFloat)!=precision_bits
+            return setprecision(BigFloat,precision_bits) do
+                _one_body_rdm_from_reduction(
+                    rho,plan,workspace;check,atol,rtol)
+            end
+        end
+    elseif workspace isa ReductionWorkspace&&
+            _real_float_type(workspace.Ttype)===BigFloat&&
+            (precision(BigFloat)!=workspace.precision_bits||
+             rounding(BigFloat)!=workspace.rounding_mode)
+        return _reduction_with_precision(workspace) do
+            _one_body_rdm_from_reduction(
+                rho,plan,workspace;check,atol,rtol)
+        end
+    end
+    reduced=reduced_state(
+        rho,1;plan,workspace,check,atol,rtol)
+    p=only(reduced.basis.sectors)
+    R=Matrix(physical_block(reduced,p))
+    patterns=only(reduced.basis.patterns)
     # GT patterns are sorted by stored entries, not by local computational
     # label. Map each one-box content vector back to the public 1:d ordering.
     order=Vector{Int}(undef,reduced.basis.d)
     for i in eachindex(order)
         q=findfirst(g->content(g)[i]==1,patterns)
-        q===nothing&&throw(ErrorException("one-box GT pattern for local label $i is missing"))
+        q===nothing&&throw(ErrorException(
+            "one-box GT pattern for local label $i is missing"))
         order[i]=q
     end
     R[order,order]
 end
+
+"""
+    one_body_rdm(rho; cache=nothing, plan=nothing, workspace=nothing,
+                 check=true,
+                 atol=_analysis_atol(rho), rtol=_state_rtol(rho))
+
+Return the one-particle density matrix in computational-label order. Passing
+a reusable `OneBodyGeometry` contracts all matrix units in one traversal.
+A matching [`OneBodyRDMWorkspace`](@ref) reuses the multiplicity-weighted
+sector scratch. Alternatively, a `ReductionPlan(basis,1)` and optional
+`ReductionWorkspace` reuse fixed-bipartition recoupling data. Geometry and
+reduction resources cannot be mixed.
+"""
+function one_body_rdm(rho::PIState;cache=nothing,plan=nothing,
+                      workspace=nothing,check::Bool=true,
+                      atol::Real=_analysis_atol(rho),
+                      rtol::Real=_state_rtol(rho))
+    rho.basis.N>=1||throw(ArgumentError("one particle is required"))
+    if plan!==nothing||workspace isa ReductionWorkspace
+        cache===nothing||throw(ArgumentError(
+            "provide either cache or plan, not both"))
+        plan===nothing&&(plan=workspace.plan)
+        workspace===nothing||workspace isa ReductionWorkspace||
+            throw(ArgumentError(
+            "a ReductionPlan requires a ReductionWorkspace"))
+        return _one_body_rdm_from_reduction(
+            rho,plan,workspace;check,atol,rtol)
+    end
+    if workspace!==nothing
+        workspace isa OneBodyRDMWorkspace||throw(ArgumentError(
+            "geometry-based one_body_rdm requires a OneBodyRDMWorkspace"))
+        cache===nothing||(workspace.geometry===cache)||throw(ArgumentError(
+            "OneBodyRDMWorkspace was prepared for a different geometry"))
+        cache=workspace.geometry
+        _check_geometry_basis(cache,rho.basis)
+        return _one_body_rdm_with_precision(workspace) do
+            destination=zeros(
+                workspace.Ttype,rho.basis.d,rho.basis.d)
+            one_body_rdm!(
+                destination,rho,workspace;check,atol,rtol)
+        end
+    end
+    if cache===nothing&&
+            _real_float_type(eltype(rho.data))===BigFloat
+        source_bounds=_one_body_rdm_precision_bounds(rho.data)
+        source_bounds[1]==source_bounds[2]||throw(ArgumentError(
+            "state BigFloat storage has mixed precision range " *
+            "$source_bounds; rebuild it at one precision"))
+        source_precision=source_bounds[1]
+        if precision(BigFloat)!=source_precision
+            return setprecision(BigFloat,source_precision) do
+                one_body_rdm(
+                    rho;cache,plan,workspace,check,atol,rtol)
+            end
+        end
+    end
+    geometry=cache===nothing ?
+        OneBodyGeometry(
+            rho.basis;T=_real_float_type(eltype(rho.data))) : cache
+    _one_body_rdm_geometry(
+        rho,geometry;check,atol,rtol)
+end
+
 """Return `abs(trace(rho) - 1)`."""
 trace_error(rho)=abs(trace(rho)-1)
 

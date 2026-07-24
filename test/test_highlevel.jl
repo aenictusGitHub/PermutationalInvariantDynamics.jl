@@ -39,6 +39,38 @@
     @test state_at(sol,0)===sol[1]
     @test sol[end].data≈time_evolve(prepared,rho0,(0.0,0.2);steps=160).data atol=2e-11
 
+    expv_algorithm=ExpvAlgorithm(
+        krylovdim=12,atol=1e-12,rtol=1e-10)
+    expv_sol=solve_dynamics(
+        prepared,rho0,(0.0,0.2);saveat=sol.times,
+        algorithm=expv_algorithm)
+    @test expv_sol isa DynamicsResult
+    @test expv_sol.algorithm===:expv
+    @test expv_sol.times==sol.times
+    @test all(isapprox(expv_sol[index].data,sol[index].data;atol=2e-9)
+              for index in eachindex(sol.times))
+    @test solve_dynamics(
+        prepared,rho0,(0.0,0.2);saveat=sol.times,
+        algorithm=:krylov_expv)[end].data≈expv_sol[end].data atol=2e-9
+    repeated_times=[0.0,0.1,0.1,0.2]
+    repeated_expv=solve_dynamics(
+        prepared,rho0,(0.0,0.2);saveat=repeated_times,
+        algorithm=expv_algorithm)
+    @test repeated_expv[2].data==repeated_expv[3].data
+    @test repeated_expv[end].data≈expv_sol[end].data atol=2e-9
+    @test solve_dynamics(
+        prepared,rho0,(0.0,0.2);saveat=sol.times).algorithm===:rk4
+    driven=PIModel(b,[LocalJump(sm;rate=(t,p)->0.4+t)])
+    @test_throws ArgumentError solve_dynamics(
+        driven,rho0,(0.0,0.2);algorithm=:expv)
+    @test_throws ArgumentError solve_dynamics(
+        prepared,rho0,(0.0,0.2);algorithm=:expv,
+        parameters=(unused=true,))
+    @test_throws ArgumentError ExpvAlgorithm(atol=-1)
+    @test_throws ArgumentError ExpvAlgorithm(safety=1)
+    @test_throws ArgumentError ExpvAlgorithm(
+        minimum_step=0.2,maximum_step=0.1)
+
     dense=liouvillian_spectrum(model;target=:largest_real,nev=3,
                                algorithm=:dense)
     reference=pi_liouvillian_spectrum(model)[1:3]
@@ -259,6 +291,26 @@
         observable_type=Complex{BigFloat},time_type=BigFloat,
         bigfloat_precision=precision(BigFloat),memory_budget=Inf)
     @test wide_dynamics.output_bytes>narrow_dynamics.output_bytes
+    expv_dimension=min(length(b),8)
+    expected_expv_bytes=sizeof(ComplexF64)*(
+        length(b)*(expv_dimension+4)+
+        (expv_dimension+1)*expv_dimension+
+        (expv_dimension+1)^2)
+    @test estimate_solver_bytes(
+        model;algorithm=:expv,krylovdim=8)==expected_expv_bytes
+    expv_recommendation=recommend_solver(
+        prepared;task=:dynamics,algorithm=:expv,krylovdim=8,
+        samples=5,saved_states=5,memory_budget=Inf)
+    @test expv_recommendation.algorithm===:expv
+    @test expv_recommendation.expv_workspace_bytes==
+          expected_expv_bytes
+    @test expv_recommendation.selected_solver_bytes==
+          expected_expv_bytes+expv_recommendation.state_bytes+
+          expv_recommendation.operator_action_per_worker_upper_bytes
+    @test_throws ArgumentError solve_dynamics(
+        prepared,rho0,(0.0,0.2);saveat=sol.times,
+        algorithm=ExpvAlgorithm(krylovdim=8),
+        memory_budget=expv_recommendation.known_peak_bytes-1)
     wide_observable=Complex{BigFloat}[1 0;0 -1]
     wide_times=BigFloat[0,0.05,0.1,0.15,0.2]
     @test_throws ArgumentError solve_dynamics(
@@ -279,7 +331,7 @@
           dynamics_streaming_estimate.output_bytes
     @test dynamics_streaming_estimate.selected_solver_bytes==
         dynamics_streaming_estimate.dynamics_workspace_bytes+
-        16*dynamics_streaming_estimate.state_bytes
+        17*dynamics_streaming_estimate.state_bytes
     @test_throws ArgumentError PermutationalInvariantDynamics._saved_times(
         (0.0,1.0),1.0e-12;memory_budget=1024)
     @test_throws ArgumentError solve_dynamics(prepared,rho0,(0.0,0.2);

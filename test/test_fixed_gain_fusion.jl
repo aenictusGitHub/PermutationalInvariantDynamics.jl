@@ -162,6 +162,38 @@ end
     @test all(k->!(k isa PIDFixedGain.FusedStaticPIKernel),
               trajectory_plan.liouvillian.kernels)
 
+    # A model made entirely from fixed one-body terms never materializes dense
+    # zero Schur blocks while combining Hamiltonians and losses. The fused
+    # sparse values retain kernel addition order and exact support.
+    sparse_model=PIModel(b,(
+        LocalHamiltonian(sx;rate=0.31),
+        CollectiveHamiltonian(sz;rate=-0.07),
+        CollectiveJump(lowering;rate=0.11),
+        LocalJump(sz;rate=0.13)))
+    sparse_raw=PIDFixedGain._static_kernels_unfused(sparse_model)
+    @test all(kernel->all(issparse,kernel.blocks),
+              PIDFixedGain._select_kernel_type(
+                  sparse_raw,PIDFixedGain.HamiltonianPIKernel))
+    SparseLossKernel=Union{PIDFixedGain.DissipatorPIKernel,
+                           PIDFixedGain.FactorizedLocalJumpPIKernel}
+    @test all(kernel->all(issparse,kernel.qblocks),
+              PIDFixedGain._select_kernel_type(
+                  sparse_raw,SparseLossKernel))
+    sparse_fused=@inferred LiouvillianPlan(sparse_model)
+    sparse_kernel=only(sparse_fused.kernels)
+    @test sparse_kernel isa PIDFixedGain.FusedStaticPIKernel
+    @test all(issparse,sparse_kernel.hamiltonian_blocks)
+    @test all(issparse,sparse_kernel.loss_blocks)
+    sparse_reference=LiouvillianPlan(sparse_model;fuse_static=false)
+    @test PIDFixedGain._matrix_from_plan(sparse_fused)≈
+          PIDFixedGain._matrix_from_plan(sparse_reference) rtol=4e-13 atol=4e-13
+
+    cancelling_model=PIModel(b,(
+        LocalHamiltonian(sx;rate=0.31),
+        LocalHamiltonian(sx;rate=-0.31)))
+    cancelling_kernel=only(LiouvillianPlan(cancelling_model).kernels)
+    @test all(iszero∘nnz,cancelling_kernel.hamiltonian_blocks)
+
     diagonal_model=PIModel(b,(
         LocalHamiltonian(sz;rate=0.09),LocalJump(sz;rate=0.14)))
     diagonal_fused=LiouvillianPlan(diagonal_model)

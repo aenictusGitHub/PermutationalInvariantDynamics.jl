@@ -9,8 +9,16 @@ const REMOTE = Documenter.Remotes.GitHub(
 const SOURCE_REVISION = get(ENV, "GITHUB_SHA", "main")
 const PACKAGE_ROOT = normpath(pkgdir(PermutationalInvariantDynamics))
 
-const undocumented = Base.Docs.undocumented_names(
-    PermutationalInvariantDynamics; private=false)
+function undocumented_exports(mod::Module)
+    if isdefined(Base.Docs, :undocumented_names)
+        return getfield(Base.Docs, :undocumented_names)(mod; private=false)
+    end
+    filter(names(mod; all=false, imported=false)) do name
+        Base.Docs.doc(Base.Docs.Binding(mod, name)) === nothing
+    end
+end
+
+const undocumented = undocumented_exports(PermutationalInvariantDynamics)
 isempty(undocumented) || error(
     "Every exported binding must have a docstring; missing: " *
     join(sort!(string.(undocumented)), ", "))
@@ -38,7 +46,10 @@ makedocs(sitename="PermutationalInvariantDynamics.jl", modules=[PermutationalInv
                     "Quantum regression and spectra"=>"correlations.md",
                     "Higher-order cumulant bridge"=>"cumulant_bridge.md",
                     "Composite systems"=>"composite_systems.md",
+                    "Global pseudomodes and shared cavities"=>"global_pseudomodes.md",
+                    "Local pseudomodes and PI supersites"=>"pseudomodes.md",
                     "PI--HEOM non-Markovian dynamics"=>"heom.md",
+                    "PI--HOPS stochastic non-Markovian dynamics"=>"hops.md",
                 ],
                 "Large-scale numerical methods"=>[
                     "Matrix-free Krylov solvers"=>"matrix_free_krylov.md",

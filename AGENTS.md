@@ -181,12 +181,18 @@ Related workflows are:
   `factors -> CompositePIBasis -> CompositeSuperoperator -> workspace`.
 - Composite stochastic dynamics:
   `background + monitored channels -> CompositeTrajectoryPlan -> workspace`.
+- One shared/global pseudomode:
+  `PI system + finite mode -> GlobalPseudomodeModel -> generator/workspace`.
 - Parameter scans:
   `parameter grid + builder -> ParameterScanPlan -> workspace -> scan/resume`.
 - Scalar-rate families:
   `PIModel -> compile_family -> CompiledPIModelFamily -> specialize`.
+- Identical local pseudomodes:
+  `system + finite modes -> PISupersite -> pseudomode_model -> compile`.
 - Bosonic PI--HEOM:
   `PI system + HEOMBaths -> HEOMPlan -> HEOMWorkspace -> solve`.
+- Bosonic PI--HOPS:
+  `PI Hamiltonian + HOPSBaths -> HOPSPlan -> HOPSWorkspace -> trajectories`.
 
 Prefer `compile`, `solve_dynamics`, `stationary_state`,
 `liouvillian_spectrum`, `diagnostics`, and `recommend_solver` in research
@@ -202,6 +208,13 @@ parallel hot loops need explicit task-owned workspaces.
 The first composite factor is the fastest coordinate. A factorized vector is
 `kron(x_last,...,x_first)`, and the factorized map has reversed Kronecker
 order. Never materialize the global Kronecker matrix in production.
+`CompositeSuperoperatorBatchWorkspace` batches equal tensor fibers from
+several right-hand sides and has immutable capacity; oversized input must
+raise rather than grow hidden buffers. Forward and adjoint batch routes must
+match repeated vector application. Prepared consumers of
+`composite_matrixfree(S)` must recover a fresh composite workspace from the
+wrapper's retained immutable plan; do not route those batches through its
+synchronized columnwise compatibility callback.
 
 Custom `AbstractPITerm` implementations extend the qualified hooks in
 `src/terms.jl`. `compile_term` must delegate to an equivalent built-in term;
@@ -217,11 +230,11 @@ pattern.
 - Model terms and lowering: `terms.jl`, `correlated_jumps.jl`, `spin.jl`,
   `vectorization.jl`, `liouvillian.jl`, `threaded_apply.jl`, and
   `compiled_families.jl`. `source_protocol.jl` centralizes private basis,
-  trace-vector, task-workspace, and adjoint-capability discovery for prepared
-  linear-operator wrappers; extend those traits instead of adding consumer-
-  local `isa` cascades. `solver_algorithms.jl` owns canonical solver symbols
-  and compatibility aliases. `result_protocol.jl` owns explicit physical-time
-  result lookup.
+  trace-vector, task-workspace, adjoint-capability, and matrix-free-only
+  discovery for prepared linear-operator wrappers; extend those traits instead
+  of adding consumer-local `isa` cascades. `solver_algorithms.jl` owns
+  canonical solver symbols and compatibility aliases. `result_protocol.jl`
+  owns explicit physical-time result lookup.
 - Krylov, spectra, and symmetries: `krylov.jl`, `krylov_extensions.jl`,
   `spectra.jl`, `evans.jl`, `symmetries.jl`, and
   `restricted_symmetries.jl`.
@@ -233,8 +246,10 @@ pattern.
 - Deterministic dynamics and studies: `sciml.jl`, `evolution.jl`,
   `meanfield.jl`, `floquet.jl`, `response.jl`, `correlations.jl`,
   `highlevel.jl`, `scans.jl`, and `convergence.jl`.
-- Non-Markovian and stochastic systems: `composite.jl`, `heom.jl`,
-  `trajectories.jl`, `composite_trajectories.jl`,
+- Non-Markovian and stochastic systems: `pseudomodes.jl`,
+  `global_pseudomodes.jl`, `composite.jl`, `heom.jl`, `hops.jl`,
+  `trajectories.jl`,
+  `composite_trajectories.jl`,
   `weak_pi_trajectories.jl`, `diffusive.jl`, `adaptive_ensembles.jl`, and
   `distributed_api.jl`.
 - Research utilities and optional bridges: `cumulants.jl`, `channels.jl`,
@@ -252,11 +267,15 @@ pattern.
   `X_ab*sqrt(n_b*(n_a+1))`. The read-only geometry owns preconverted diagonal
   factors and packed transitions, so an `InPlaceTimeOperator` fill remains
   allocation-free for ordinary IEEE precision. Keep the `_needs_wide_collective`
-  gate: mixed sectors, local gains, custom terms, and cancellation-risk sizes
-  retain the general `OneBodyGeometry` route.
-- Fixed collective one-body Schur blocks retain exact sparse support in every
-  sector; driven blocks remain dense because their support may change at an
-  evaluation. This representation choice must remain term-type-stable so
+  gate: cancellation-risk sizes retain the guarded general route. Mixed-sector
+  collective-only models retain a private diagonal-only `OneBodyGeometry`
+  containing `(sector,sector)` contractions. Local gains and conservative
+  custom terms retain the complete sector-changing geometry.
+- Fixed collective one-body Schur blocks are assembled directly on exact CSC
+  support in every sector; do not allocate a dense block and sparsify it
+  afterwards. Fixed collective `K'K` blocks use sparse Gram products and remove
+  exact zeros only. Driven blocks remain dense because their support may change
+  at an evaluation. This representation choice must remain term-type-stable so
   `LiouvillianPlan` inference does not depend on the runtime sector list.
 - Sparse materialization must form sparse Kronecker pieces from exact block
   support and reuse prepared `K'K` blocks. Never construct a dense
@@ -265,13 +284,24 @@ pattern.
   rectangular Schur contractions. Do not restore quartic PI-coordinate gain
   maps to matrix-free plans. Cancellation-risk p-body cases retain the guarded
   triplet fallback; explicit sparse materialization may expand the factors.
+- `PBodyGeometry` retains every Appendix-D path isometry on exact CSC support
+  over the combined `(centre pattern, local word)` coordinate. Its
+  three-dimensional indexing interface is a compatibility view, not
+  authorization to retain dense path tensors. Dynamic and static contractions
+  must iterate the packed support directly. Cancellation-risk driven kernels
+  use preallocated real certification scratch and accumulate both the value
+  and absolute contribution bound on that same support; never restore a
+  logical dense-index scan.
 - Fixed one-body contractions may retain exact structural-zero supports when a
   setup-time arithmetic gate predicts a gain. Never use a numerical dropping
   tolerance. Dense fixed and driven contractions keep the dense rectangular
   path.
 - Compatible fixed numeric kernels may fuse Hamiltonian blocks and
-  anticommutator loss while keeping channel-resolved gains. Preserve concrete
-  tuple recursion and the Julia-1.10-stable default fusion dispatch.
+  anticommutator loss while keeping channel-resolved gains. When every input
+  block is sparse, fusion must accumulate one CSC column at a time, visit
+  terms in model order, and remove exact cancellations only; do not restore
+  dense zero blocks. Preserve concrete tuple recursion and the
+  Julia-1.10-stable default fusion dispatch.
 - Trajectory, population, channel, and other channel-resolved consumers must
   use term-resolved lowering; never infer physical channels from a fused
   deterministic kernel.
@@ -318,6 +348,11 @@ BLAS threading. The workspace is guarded against concurrent reuse.
   Dynamic, custom, or unknown kernels keep the dense-coordinate fallback.
   Include packed symmetric-occupation geometry in setup accounting and keep
   `compile`, compiled families, and `recommend_solver` estimates synchronized.
+- Raw-model preparation estimates sum every distinct Appendix-D body order
+  with any required one-body geometry. P-body bounds use the exact removal
+  graph, GT-content selection rules, checked product dimensions, and
+  coefficient-free structural support; terms of the same order share one
+  geometry estimate.
 - Mode-specific workspaces omit dominant unused arrays and must reject an
   incompatible operation instead of allocating the missing storage lazily.
 
@@ -388,21 +423,38 @@ the Kossakowski matrix.
 
 - Expectations, entropies, distances, QFI/QFIM, symmetry-resolved information,
   phase space, and reductions should contract multiplicity-weighted blocks.
-- Prepare `CollectiveObservablePlan` once per observable and `ReductionPlan`
-  once per `(basis,k)`. Plans are tied to the exact basis; workspaces are
+- Prepare `CollectiveObservablePlan` once per observable, `ReductionPlan`
+  once per `(basis,k)`, and `CompositeReductionPlan` once per retained
+  composite factor. Plans are tied to the exact basis; workspaces are
   task-owned.
+- Repeated geometry-based one-body marginals use `OneBodyRDMWorkspace` and
+  `one_body_rdm!`. The workspace owns one largest-sector
+  multiplicity-weighted block and exact prepared scales; it is tied to one
+  `OneBodyGeometry`, scalar type, and BigFloat context.
 - `LocalFactorTracePlan` traces the same internal tensor factor from every
   supersite while retaining all particles. It owns normalized matrix-unit
-  occupation transforms from the exact source basis to a complete
-  kept-factor `PIBasis`; `LocalFactorTraceWorkspace` owns the short occupation
-  vector. This is distinct from particle reduction through `ReductionPlan`.
-  Enforce its rectangular-transform setup budget and never replace it with
+  occupation transforms from the exact source basis to a complete kept-factor
+  `PIBasis`. Retain only exact nonzero CSC support, selected with `iszero`;
+  never introduce a numerical dropping tolerance. `LocalFactorTraceWorkspace`
+  owns the short occupation vector. This is distinct from particle reduction
+  through `ReductionPlan`. Construct CSC columns in exactly sized chunks so
+  no unbudgeted growth capacity is hidden. Validate `Q'Q` through streamed
+  sparse columns and linear scratch; never retain a quadratic Gram matrix.
+  Enforce its sparse-transform setup budget and never replace it with
   local-string or full-Hilbert reconstruction.
 - `ReductionWorkspace` modes (`:reduction`, `:negativity`, `:both`) omit
   incompatible buffers. A mode mismatch must raise rather than allocate.
-- A reduction workspace owns scalar-compatible recoupling matrices. Convert
-  compact real qubit recouplers once per workspace and share already matching
-  qudit LR matrices read-only. Do not restore mixed real/complex `mul!` calls
+- Reduced-state and purity paths contract
+  `tr_B(U*C*U') = sum_q U_q*C*U_q'` one discarded-factor slice at a time.
+  Do not restore the complete product block to `mode=:reduction`; negativity
+  still requires it for partial transposition. Checked public calls validate
+  by default. An explicit `check=false` is only for an enclosing workflow that
+  already validated the state.
+- A reduction workspace owns scalar-compatible recoupling data. Convert compact
+  real qubit recouplers once per workspace. Prepared qudit plans retain LR
+  intertwiners as exact-support CSC blocks split by the discarded-factor
+  weight; a matching workspace shares them read-only and a wider workspace
+  copies only their nonzeros. Do not restore mixed real/complex `mul!` calls
   that allocate packing scratch on Julia 1.10.
 - General negativity has three exact routes: occupation branching for fully
   symmetric states, SU(2) recoupling for general qubits, and LR intertwiners for
@@ -435,9 +487,13 @@ the Kossakowski matrix.
   `f^alpha * f^beta`. Qudit LR multiplicities are counted exactly; forbidden
   weights are removed before sparse generator constraints and SPQR nullspace
   recovery.
-- Qudit LR setup and retained dense intertwiners can be large. Benchmark a
-  plan before caching many bipartitions, but never replace it with full-Hilbert
-  reconstruction.
+- Qudit LR setup can still require dense SPQR nullspace scratch, and the public
+  `subduction_intertwiners` compatibility API returns detached dense matrices.
+  A `ReductionPlan` must drop exact structural zeros before retention and keep
+  discarded-factor blocks packed. Check every product-irrep dimension before
+  allocation or reshape and retain that validated dimension in the packed
+  map. Benchmark setup before caching many bipartitions, but never replace it
+  with full-Hilbert reconstruction.
 - Keep numerical-rank cutoffs sector-relative. Validate PSD before a rank
   decision. Roundoff handling inside a square root, logarithm, or support
   projector must not modify the input or returned spectrum.
@@ -547,6 +603,11 @@ extension and remains a selected-order approximation.
 - `KrylovWorkspace` stores real Givens rotations in the real component type
   of its Krylov scalar, never unconditionally in `Float64`; preserve this for
   both lower-precision speed and wider-precision reliability.
+- Prepared Schur-sector preconditioners lower diagonal blocks directly from
+  static plan kernels; only operator-scale probes apply the full Liouvillian.
+  A `SpecializedPIModel` must evaluate those kernels with its bound family
+  rates. Plan-less callbacks retain coordinate probing because their physical
+  parameters cannot be inferred.
 - Schur-sector preconditioners omit off-sector couplings only inside the
   preconditioner. Validate the final state with the raw Liouvillian residual.
 
@@ -610,7 +671,7 @@ Krylov dimension, and finite-size scaling are separate claims.
   not evidence for or against uniqueness. Weak covariance is not the same as
   strong term-by-term commutation.
 
-## PI--HEOM and local pseudomodes
+## PI--HEOM and pseudomodes
 
 `HEOMBath` stores a fixed Hermitian PI coupling and finite exponential left and
 right bosonic correlations. Every pole must have finite positive real decay.
@@ -641,8 +702,12 @@ disables completion; an inconsistent explicit pair is never repaired.
   `nADO`-by-`K` neighbor tables. Forward and adjoint routes reuse bath-grouped
   contractions and bounded system batches.
 - `HEOMWorkspace` pre-grows matrix-free PI system batch scratch to
-  `min(nADO,16)` columns so the first hierarchy application does not allocate.
-  Keep resource estimates synchronized with this retained capacity.
+  `min(nADO*batch_columns,16)` columns, with overflow-safe setup arithmetic.
+  A default workspace uses `batch_columns=1`. Matrix right-hand sides flatten
+  ADO and RHS columns, cap chunks at the retained capacity, and prepare driven
+  system schedules once for the complete application; they must never grow
+  batch storage while applying. Keep resource estimates synchronized with the
+  retained capacity.
 - `HEOMBlockPreconditioner` uses guarded Schur shifts for supported standard
   complex precision and LU fallbacks otherwise. Only the Schur backend has
   lock-protected shared scratch and serializes concurrent application; LU-only
@@ -651,12 +716,152 @@ disables completion; an inconsistent explicit pair is never repaired.
   hierarchy convergence. Thermal relaxation/stationary preparation is not an
   imaginary-time HEOM certificate of interacting equilibrium.
 
+### Hierarchy of pure states
+
+`HOPSBath` stores a fixed PI coupling and one finite exponential correlation.
+Unlike `HEOMBath`, its coupling may be non-Hermitian and it has no independent
+right-correlation or white-residue field. `HOPSPlan` implements the linear
+HOPS equation for shared Gaussian baths in the direct sum of retained Schur
+irreps.
+
+- Exact PI HOPS requires a common bath noise multiplying a PI coupling.
+  Independent identical local colored noises break permutation symmetry on
+  each realization and are not weak-PI pseudo-ket paths; use PI--HEOM or local
+  pseudomode supersites.
+- Each hierarchy node has `weak_pi_dimension(basis)` amplitudes, not
+  `length(basis)` density coordinates. Plans reuse the packed HEOM hierarchy
+  topology and exact scaled/unscaled similarity factors. Workspaces own all
+  hierarchy, RK4, coupling, and noise scratch and are task-local.
+- Apply each Schur block to all hierarchy nodes as one matrix--matrix kernel
+  and retain bath-grouped edge lists. Reuse one hierarchy-sized action buffer:
+  self-adjoint couplings combine both edge directions in one pass;
+  non-Hermitian couplings apply `L`, accumulate downward edges, overwrite the
+  buffer with `L'`, and then accumulate upward edges.
+- Linear-HOPS roots are unnormalized. The physical estimator averages
+  `|psi_0><psi_0|` before any normalization. Never normalize individual roots
+  or average amplitudes when reconstructing a density operator.
+- The built-in stationary complex Ornstein--Uhlenbeck path is valid only when
+  every retained exponential coefficient is real and nonnegative. A general
+  complex/signed decomposition requires an explicit deterministic noise
+  provider for the total covariance. Never take independent complex square
+  roots of arbitrary residues.
+- Combine exact duplicate poles only within the same bath, preserve
+  first-occurrence order, and remove exact cancellations before constructing
+  the hierarchy. Never combine equal poles belonging to independent baths.
+- A positive importance cutoff may retain a hierarchy whose exact unpruned
+  count exceeds `Int`. Bound both retained nodes and each pruning frontier
+  from the memory budget before allocation; the retained order ideal remains
+  deterministic and downward-closed.
+- Fixed-step RK4 samples each prepared noise at the start, midpoint, and end
+  of a step. Random draws occur in path preparation/advancement, never inside
+  `hops_rhs!`; repeated conditioned RHS calls must be deterministic.
+- BigFloat plans retain their required precision and rounding context.
+  Workspace construction, conditioned application, OU advancement, root
+  extraction, and ensemble reduction must re-enter that context rather than
+  allocate at the caller's ambient precision.
+- The hard hierarchy boundary and optional downward-closed importance cutoff
+  are approximations. Converge time step, depth/cutoff, pole decomposition,
+  and independent trajectory count separately.
+
+### Finite local pseudomode supersites
+
+`PISupersite` groups the physical system and all of its identical local
+auxiliaries into one PI particle. Its internal factor order follows
+`kron(factor1,factor2,...)`, with the last factor fastest. A pseudomode
+supersite always labels the system first and the finite modes after it. This is
+not `CompositePIBasis`: the latter tensors complete global operator spaces and
+does not encode the pairing of system `i` with mode `i`.
+
+- With system dimension `dS` and mode levels `r_mu`, the PI local dimension is
+  `D=dS*prod(r_mu)` and the complete coordinate count is
+  `binomial(N+D^2-1,N)`. Enforce construction and local-lift memory budgets;
+  never form `D^N` or `D^(2N)`.
+- `lift_system_pbody_operator` must interleave the auxiliary identity inside
+  every particle, preserve exact sparse support, and use the ordering
+  `(system1,modes1) tensor ... tensor (systemp,modesp)`. The grouped matrix
+  `kron(Hsystem,Iaux^tensorp)` has the wrong ordering.
+- `BosonicPseudomode` is a finite-cutoff specification. Frequency may be
+  signed in a rotating frame; damping and thermal occupation are finite and
+  nonnegative. Its rates use the package's standard dissipator, so mode
+  amplitude decays at half the `damping` value.
+- `PseudomodeCoupling` represents
+  `g*L*a' + conj(g)*L'*a` plus the optional counter-rotating
+  `h*L*a + conj(h)*L'*a'`. Complex strengths lower into Hermitian
+  quadratures with real scalar rates. Do not combine them into a complex
+  Hamiltonian rate or hide them inside a preweighted scan-dependent matrix.
+- `pseudomode_model` keeps mode frequencies, couplings, damping, and lifted
+  system terms separate so ordinary compilation can fuse compatible kernels
+  and scalar-rate families can reuse geometry. Direct PI terms and operator
+  schedules cannot be inferred as bare-system matrices by
+  `lift_system_term`. Its prepared-site method must preserve exact basis
+  identity and may override frequency, damping, and thermal-occupation values
+  without rebuilding the cutoff layout. Fixed zero components are omitted by
+  default; `retain_zero_terms=true` is the explicit prototype route when a
+  later `compile_family` specialization must vary them.
+- Independent mode loss/gain is a `LocalJump` and generally couples Schur
+  sectors. The complete supersite basis is the normal route; any explicit
+  sector restriction must pass the ordinary `PIModel` reachability checks.
+- Product-state helpers tensor only one supersite and then call `iid_state` or
+  `iid_pure_state`; `supersite_iid_state` also accepts an already correlated
+  local system--auxiliary ket or density matrix. `pseudomode_trace_plan`
+  groups all trailing modes and uses `LocalFactorTracePlan` to return a
+  complete system-only PI basis. Reuse the read-only plan and one task-owned
+  workspace for each exact cutoff/basis.
+- A small top-level population is a useful cutoff warning, not a convergence
+  certificate. Compare common system observables or mode-traced states across
+  cutoffs; raw supersite coefficient vectors belong to different bases.
+
 The global-ADO backend is limited to bosonic Gaussian HEOM with fixed
 Hermitian global PI couplings. Fermionic sign hierarchies and non-Hermitian
 coupling pairs are unsupported. Independent local baths are not represented by
 one collective coupling because that would introduce cross-correlations.
-`independent_local_pseudomode_model` is the safe finite-cutoff PI-supersite
-route for one damped bosonic mode per site; converge `nmax` separately.
+Finite local pseudomodes are the safe PI-supersite route when a positive
+damped-mode realization exists; they support several modes per system, but
+every oscillator cutoff must be converged separately.
+
+### One shared/global pseudomode
+
+A mode shared by the complete ensemble is a finite global factor in
+`CompositePIBasis(system_basis, mode_basis)`. It must not be placed inside a
+`PISupersite`, because that would replicate the mode once per particle and
+change the reservoir correlations. Conversely, a local mode paired with every
+system must not be replaced by one global factor merely because the latter has
+fewer coordinates.
+
+- `GlobalPseudomodeModel` keeps the PI system as the first and fastest factor
+  and one `FiniteOperatorBasis` mode as the second. Its coordinate dimension is
+  `length(system_basis) * (nmax+1)^2`.
+- `PseudomodeCoupling` still receives a one-particle matrix. The global builder
+  lifts it to the collective sum and inserts no Kac, square-root-`N`, or other
+  particle-number scaling.
+- `background` excludes the explicit `damping_channels`; `generator` includes
+  both. Pass the former plus the latter to composite trajectories so damping is
+  counted exactly once.
+- `global_pseudomode_workspace` is mutable task-owned scratch.
+  `global_pseudomode_matrixfree` owns or reuses one synchronized workspace;
+  parallel hot loops require one explicit workspace per task.
+- Stationary solving is GMRES-only (including `AutoAlgorithm`); direct, dense,
+  and shift-invert routes must reject rather than probe/materialize the full
+  composite map. Workspace preflight includes every nested PI workspace and
+  predictable fallback action transient. The matrix-free wrapper also charges
+  its retained trace-vector copy. BigFloat stationary and spectral solvers
+  must execute entirely in the model's retained precision context, not only
+  wrap individual operator applications.
+- High-level selected spectra insert the factorized matrix-free wrapper before
+  Arnoldi-family solving. Dense complete spectra of the global composite map
+  remain unsupported.
+- Product states and model-aware reductions preserve the prepared scalar and
+  BigFloat context. Wider state inputs require rebuilding the model; never
+  return composite coordinates which its prepared workspace cannot apply.
+- `GlobalPseudomodeModel` retains one immutable `CompositeReductionPlan` for
+  the system and one for the mode. Reuse those packed diagonal contractions;
+  do not rebuild sector groups or a composite trace vector on every reduction.
+- `trace_pseudomodes(rho,model)` contracts the global mode factor and returns
+  the system `PIState`; `global_pseudomode_state` contracts the system factor.
+  Do not use the local-supersite trace plan for this topology.
+- The top-projector population belongs to the one shared mode and is not
+  divided by `N`. Converge the cutoff using common observables or reduced
+  states in addition to this boundary diagnostic.
 
 ## Deterministic and stochastic dynamics
 
@@ -670,13 +875,25 @@ results, and `dynamics_problem` for adaptive/stiff SciML integration.
 state and returns observable series. Reject a state-free call with no requested
 observable.
 
+`ExpvAlgorithm` is an explicit autonomous-only high-level route. It reuses one
+`KrylovExpvWorkspace` and one task-owned source-action workspace across output
+intervals. A rejected slice must reuse its Arnoldi factorization and reevaluate
+only the projected exponential; an accepted slice changes the state and
+invalidates that factorization. Keep `:auto` on RK4 until a benchmarked
+crossover policy is introduced. Reject driven generators and parameter-bearing
+expv calls rather than freezing them implicitly.
+
 ### Density-valued quantum jumps
 
 - `TrajectoryPlan` owns fixed operator/channel lowering. Workspaces and RNGs
   are task-owned; batch streams are indexed by global trajectory number.
 - Fixed RK4 and adaptive/event-driven DOPRI use channel-resolved gain maps and
-  preallocated hazard data. Evaluate scalar rates once per stage and require
-  finite nonnegative stochastic rates.
+  preallocated hazard data. A task-owned effective-loss node cache evaluates
+  scalar jump rates once per distinct physical node, reuses the same values for
+  channel selection, and publishes validity only after successful preparation.
+  Autonomous jump losses may remain cached; driven caches must be invalidated
+  at every public path boundary so changed parameters cannot become stale.
+  Require finite nonnegative stochastic rates.
 - Local particle labels are unresolved. A density-valued local-jump path can be
   mixed even though its ensemble reproduces the PI master equation.
 - State-free ensembles use prepared observable tuples and online Welford
@@ -956,8 +1173,9 @@ Use `--project=examples` when validating CairoMakie rendering. Refer to
 
 ## Known bounded limitations
 
-- Sparse-SPQR LR nullspaces and retained dense intertwiners can exhaust memory
-  for very large qudit irreps.
+- Sparse-SPQR LR nullspace setup and the public dense
+  `subduction_intertwiners` output can exhaust memory for very large qudit
+  irreps, even though prepared `ReductionPlan` intertwiners are packed.
 - One extremely large Schur block still needs dense factorization for several
   PSD and spectral operations.
 - Default uncached CG queries preserve the established real Float64 phase
@@ -969,8 +1187,10 @@ Use `--project=examples` when validating CairoMakie rendering. Refer to
 - Qudit normalized-Haar Husimi-Q is implemented; generalized qudit Wigner and
   a dependency-free qudit-manifold renderer are not.
 - Global PI--HEOM does not support fermionic sign hierarchies, non-Hermitian
-  coupling pairs, or independent local baths. Finite local pseudomodes use the
-  PI-supersite route.
+  coupling pairs, or independent local baths. Linear PI--HOPS supports
+  non-Hermitian shared-bath couplings but not independent local colored-noise
+  realizations or a normalized nonlinear/Girsanov hierarchy. Finite local
+  pseudomodes use the PI-supersite route.
 - Composite stochastic evolution is density-valued fixed-step only; composite
   weak-PI pseudo-kets and diffusive/event-driven composite paths are absent.
 - Evans certificates return `missing` for unsupported microscopic
