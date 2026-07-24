@@ -4,6 +4,7 @@
 
   const PRESETS = {
     driven: {
+      architecture: "pi",
       N: 8,
       d: 2,
       target: "expectation",
@@ -18,6 +19,7 @@
 \gamma_{\uparrow} = 0.02`,
     },
     collective: {
+      architecture: "pi",
       N: 20,
       d: 2,
       target: "expectation",
@@ -33,6 +35,7 @@
 \gamma = 0.01`,
     },
     lmg: {
+      architecture: "pi",
       N: 40,
       d: 2,
       target: "expectation",
@@ -48,6 +51,7 @@
 \gamma = 0.01`,
     },
     qutrit: {
+      architecture: "pi",
       N: 6,
       d: 3,
       target: "expectation",
@@ -60,6 +64,64 @@
 \Delta = 0.2
 \gamma = 0.1`,
     },
+    localPseudomode: {
+      architecture: "local-pseudomode",
+      N: 3,
+      d: 2,
+      target: "expectation",
+      hamiltonian: String.raw`\Omega J_x`,
+      jumps: [],
+      observable: "J_z/N",
+      parameters: String.raw`\Omega = 0.4
+\omega_c = 1.0
+\kappa = 0.2
+g = 0.15`,
+      pseudomode: {
+        nmax: 2,
+        frequency: String.raw`\omega_c`,
+        damping: String.raw`\kappa`,
+        thermalOccupation: "0",
+        couplingOperator: String.raw`\sigma_z`,
+        couplingStrength: "g",
+        counterrotatingStrength: "0",
+      },
+    },
+    globalPseudomode: {
+      architecture: "global-pseudomode",
+      N: 12,
+      d: 2,
+      target: "expectation",
+      hamiltonian: String.raw`\Delta J_z + \Omega J_x`,
+      jumps: [
+        { kind: "local", operator: String.raw`\sigma_-`, rate: String.raw`\gamma` },
+      ],
+      observable: "J_z/N",
+      parameters: String.raw`\Delta = 0.2
+\Omega = 0.5
+\gamma = 0.01
+\omega_c = 1.0
+\kappa = 0.15
+g = 0.1`,
+      pseudomode: {
+        nmax: 4,
+        frequency: String.raw`\omega_c`,
+        damping: String.raw`\kappa`,
+        thermalOccupation: "0",
+        couplingOperator: String.raw`\sigma_-`,
+        couplingStrength: "g",
+        counterrotatingStrength: "0",
+      },
+    },
+  };
+
+  const DEFAULT_PSEUDOMODE = {
+    nmax: 2,
+    frequency: String.raw`\omega_c`,
+    damping: String.raw`\kappa`,
+    thermalOccupation: "0",
+    couplingOperator: String.raw`\sigma_-`,
+    couplingStrength: "g",
+    counterrotatingStrength: "0",
   };
 
   function element(tag, options) {
@@ -147,14 +209,28 @@
 
     function loadPreset(name) {
       const preset = PRESETS[name] || PRESETS.driven;
+      root.querySelector("#pid-architecture").value = preset.architecture || "pi";
       root.querySelector("#pid-particle-count").value = preset.N;
       root.querySelector("#pid-local-dimension").value = preset.d;
       root.querySelector("#pid-target").value = preset.target;
       root.querySelector("#pid-hamiltonian").value = preset.hamiltonian;
       root.querySelector("#pid-parameters").value = preset.parameters;
       root.querySelector("#pid-observable").value = preset.observable;
+      const pseudomode = preset.pseudomode || DEFAULT_PSEUDOMODE;
+      root.querySelector("#pid-pseudomode-cutoff").value = pseudomode.nmax;
+      root.querySelector("#pid-pseudomode-frequency").value = pseudomode.frequency;
+      root.querySelector("#pid-pseudomode-damping").value = pseudomode.damping;
+      root.querySelector("#pid-pseudomode-thermal-occupation").value =
+        pseudomode.thermalOccupation;
+      root.querySelector("#pid-pseudomode-coupling-operator").value =
+        pseudomode.couplingOperator;
+      root.querySelector("#pid-pseudomode-coupling-strength").value =
+        pseudomode.couplingStrength;
+      root.querySelector("#pid-pseudomode-counterrotating-strength").value =
+        pseudomode.counterrotatingStrength;
       jumpContainer.replaceChildren();
       preset.jumps.forEach(addJump);
+      updateArchitectureVisibility();
       updateObservableVisibility();
       generate();
     }
@@ -169,6 +245,7 @@
 
     function readConfiguration() {
       return {
+        architecture: root.querySelector("#pid-architecture").value,
         N: Number(root.querySelector("#pid-particle-count").value),
         d: Number(root.querySelector("#pid-local-dimension").value),
         target: root.querySelector("#pid-target").value,
@@ -176,6 +253,19 @@
         jumps: readJumps(),
         observable: root.querySelector("#pid-observable").value,
         parameters: root.querySelector("#pid-parameters").value,
+        pseudomode: {
+          nmax: Number(root.querySelector("#pid-pseudomode-cutoff").value),
+          frequency: root.querySelector("#pid-pseudomode-frequency").value,
+          damping: root.querySelector("#pid-pseudomode-damping").value,
+          thermalOccupation:
+            root.querySelector("#pid-pseudomode-thermal-occupation").value,
+          couplingOperator:
+            root.querySelector("#pid-pseudomode-coupling-operator").value,
+          couplingStrength:
+            root.querySelector("#pid-pseudomode-coupling-strength").value,
+          counterrotatingStrength:
+            root.querySelector("#pid-pseudomode-counterrotating-strength").value,
+        },
       };
     }
 
@@ -189,11 +279,20 @@
 
     function markField(field) {
       const mapping = {
+        architecture: "#pid-architecture",
         N: "#pid-particle-count",
         d: "#pid-local-dimension",
         hamiltonian: "#pid-hamiltonian",
         observable: "#pid-observable",
         parameters: "#pid-parameters",
+        "pseudomode cutoff": "#pid-pseudomode-cutoff",
+        "pseudomode frequency": "#pid-pseudomode-frequency",
+        "pseudomode damping": "#pid-pseudomode-damping",
+        "pseudomode thermal occupation": "#pid-pseudomode-thermal-occupation",
+        "pseudomode coupling operator": "#pid-pseudomode-coupling-operator",
+        "pseudomode coupling strength": "#pid-pseudomode-coupling-strength",
+        "pseudomode counter-rotating strength":
+          "#pid-pseudomode-counterrotating-strength",
       };
       const selector = mapping[field];
       let node = selector ? root.querySelector(selector) : null;
@@ -210,11 +309,18 @@
     }
 
     function renderSummary(result) {
+      const termDescription = result.summary.architecture === "pi"
+        ? `${result.summary.terms} compiled term${result.summary.terms === 1 ? "" : "s"}`
+        : `${result.summary.terms} bare-system term source${result.summary.terms === 1 ? "" : "s"}`;
       const items = [
-        `${result.summary.terms} compiled term${result.summary.terms === 1 ? "" : "s"}`,
+        result.summary.topology,
+        termDescription,
         `${result.summary.jumps} jump channel${result.summary.jumps === 1 ? "" : "s"}`,
+        result.summary.cutoff === null || result.summary.cutoff === undefined
+          ? null
+          : `pseudomode cutoff nmax=${result.summary.cutoff}`,
         result.summary.route,
-      ];
+      ].filter(Boolean);
       for (const text of items) {
         summary.append(element("span", { className: "pid-summary-chip", text }));
       }
@@ -260,6 +366,20 @@
       root.querySelector("#pid-observable").required = visible;
     }
 
+    function updateArchitectureVisibility() {
+      const architecture = root.querySelector("#pid-architecture").value;
+      const isPseudomode = architecture !== "pi";
+      const panel = root.querySelector("#pid-pseudomode-section");
+      panel.hidden = !isPseudomode;
+      root.querySelector("#pid-local-pseudomode-description").hidden =
+        architecture !== "local-pseudomode";
+      root.querySelector("#pid-global-pseudomode-description").hidden =
+        architecture !== "global-pseudomode";
+      panel.querySelectorAll("input").forEach((input) => {
+        input.required = isPseudomode;
+      });
+    }
+
     async function copyCode() {
       if (!generatedCode) return;
       try {
@@ -288,7 +408,10 @@
       const url = URL.createObjectURL(blob);
       const link = element("a");
       link.href = url;
-      link.download = "generated_pi_steady_state.jl";
+      const architecture = root.querySelector("#pid-architecture").value;
+      link.download = architecture === "pi"
+        ? "generated_pi_steady_state.jl"
+        : `generated_${architecture.replace(/-/g, "_")}_steady_state.jl`;
       document.body.append(link);
       link.click();
       link.remove();
@@ -309,6 +432,10 @@
       loadPreset(event.target.value);
     });
     root.querySelector("#pid-target").addEventListener("change", updateObservableVisibility);
+    root.querySelector("#pid-architecture").addEventListener(
+      "change",
+      updateArchitectureVisibility,
+    );
     copyButton.addEventListener("click", copyCode);
     downloadButton.addEventListener("click", downloadCode);
 
