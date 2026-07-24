@@ -2,6 +2,8 @@ using LinearAlgebra
 using PermutationalInvariantDynamics
 include("paper_models.jl")
 using .PaperModels
+include(joinpath(@__DIR__, "utils", "makie_support.jl"))
+using .ExampleMakie
 
 # Local pumping and emission have an exact tensor-power thermal stationary
 # state. This makes a useful comparison of every steady-state algorithm.
@@ -26,11 +28,19 @@ function main()
     ]
 
     reference = nothing
+    solver_labels = String[]
+    residuals = Float64[]
+    exact_errors = Float64[]
+    iterations = Int[]
     for (label, algorithm, options) in settings
         elapsed = @elapsed result = stationary_state(prepared;
             algorithm=algorithm, return_info=true, options...)
         info = result.info
         error = norm(result.state.data - exact.data)
+        push!(solver_labels, label)
+        push!(residuals, info.residual)
+        push!(exact_errors, error)
+        push!(iterations, info.iterations)
         reference === nothing && (reference = result.state)
         println(rpad(label, 13),
                 " residual=", info.residual,
@@ -72,7 +82,55 @@ function main()
     @assert cost.block_construction === :prepared_kernels
     @assert cost.setup_block_applications == 0
     @assert matrixfree.info.converged
-    @assert norm(matrixfree.state.data - exact.data) < 2e-8
+    matrixfree_error = norm(matrixfree.state.data - exact.data)
+    @assert matrixfree_error < 2e-8
+
+    push!(solver_labels, "precond. GMRES")
+    push!(residuals, matrixfree.info.residual)
+    push!(exact_errors, matrixfree_error)
+    push!(iterations, matrixfree.info.iterations)
+
+    if makie_available()
+        M = makie_module()
+        positions = collect(eachindex(solver_labels))
+        figure = M.Figure(size=(1220, 470), fontsize=17)
+        accuracy_axis = M.Axis(
+            figure[1, 1];
+            xlabel="stationary-state algorithm",
+            ylabel="error",
+            yscale=log10,
+            xticks=(positions, solver_labels),
+            xticklabelrotation=pi / 6,
+            title="Raw residual and exact-state distance",
+        )
+        iteration_axis = M.Axis(
+            figure[1, 2];
+            xlabel="stationary-state algorithm",
+            ylabel="reported iterations",
+            xticks=(positions, solver_labels),
+            xticklabelrotation=pi / 6,
+            title="Iterative work reported by each solver",
+        )
+        floor_value = eps(Float64)
+        M.lines!(
+            accuracy_axis, positions, max.(residuals, floor_value);
+            color=:firebrick, linewidth=2.2)
+        M.scatter!(
+            accuracy_axis, positions, max.(residuals, floor_value);
+            color=:firebrick, markersize=10, label="Liouvillian residual")
+        M.lines!(
+            accuracy_axis, positions, max.(exact_errors, floor_value);
+            color=:royalblue, linewidth=2.2, linestyle=:dash)
+        M.scatter!(
+            accuracy_axis, positions, max.(exact_errors, floor_value);
+            color=:royalblue, marker=:diamond, markersize=10,
+            label="distance to exact state")
+        M.axislegend(accuracy_axis; position=:lb, labelsize=12)
+        M.barplot!(
+            iteration_axis, positions, iterations;
+            color=:slateblue, width=0.65)
+        save_example_figure(figure, "steady_state_methods")
+    end
 end
 
 main()

@@ -46,3 +46,10 @@ julia --project=examples examples/iemini2018_boundary_time_crystal.jl
 
 The ordered finite-size results show gap closing in the oscillatory regime;
 repeat with increasing `N` before drawing a thermodynamic conclusion.
+
+## Expected output
+
+![Expected finite-size Liouvillian gaps and slow oscillatory modes](../docs/src/assets/example_figures/iemini2018_boundary_time_crystal.png)
+
+The displayed sizes are the script defaults. A thermodynamic conclusion
+requires an independently converged finite-size scaling study.

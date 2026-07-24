@@ -754,3 +754,15 @@ julia --project=examples examples/debecker2026_all_to_all_ising_pseudomodes.jl
 
 The numerical assertions also run under the root project; without the
 examples-only CairoMakie dependency, only figure generation is skipped.
+
+## Expected output
+
+![Expected Debecker all-to-all pseudomode dynamics, stationary correlation, and spin negativity](../docs/src/assets/example_figures/debecker2026_all_to_all_ising_pseudomodes.png)
+
+![Expected pseudomode-cutoff convergence](../docs/src/assets/example_figures/debecker2026_all_to_all_ising_pseudomodes_cutoff.png)
+
+![Expected spin-x GHZ witness map and fitted boundary](../docs/src/assets/example_figures/debecker2026_all_to_all_ising_pseudomodes_ghz.png)
+
+These snapshots use the checked compact `N=3` controls. The coarse maps are
+illustrative; refine the parameter grid, pseudomode cutoff, stationary
+residual, and trajectory sampling before using a boundary quantitatively.

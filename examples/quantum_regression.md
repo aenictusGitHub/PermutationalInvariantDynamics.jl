@@ -104,6 +104,21 @@ weights and zero padding. It represents a finite observation window, not the
 infinite-time resolvent, and subtracts the analytically known stationary
 offset rather than estimating it from the last sample.
 
+## Expected output
+
+![Quantum regression, antibunching, and spectrum](../docs/src/assets/example_figures/quantum_regression.png)
+
+The left panel compares the real and imaginary parts of the sampled
+first-order correlation with the analytical damped oscillation. The middle
+panel shows the normalized antibunching curve, including ``g^{(2)}(0)=0``.
+The right panel compares both components of the complex one-sided
+matrix-free resolvent spectrum with the analytical expression; it is not
+silently converted to a two-sided real spectrum. The preview uses the default
+rates, delay and frequency grids, RK4 resolution, and GMRES tolerances.
+Converge the time propagation and every shifted solve independently for a new
+model, and separately check the finite-window FFT if that approximation is
+used.
+
 ## Run
 
 ```sh
@@ -113,3 +128,6 @@ julia --project=. examples/quantum_regression.jl
 The script checks the time correlation, antibunching curve, and resolvent
 spectrum against the analytical formulas above.
 
+Use the examples environment described in [`README.md`](README.md) to write
+the optional PDF and PNG. The root package environment runs all numerical
+assertions and skips only CairoMakie rendering.

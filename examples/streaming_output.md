@@ -75,3 +75,10 @@ julia --project=. examples/streaming_output.jl
 Use `save_states=true` when conditional states themselves are needed. In that
 case the result still includes online observable statistics, while
 `ensemble.trajectories` holds the ordinary trajectory histories.
+
+## Expected output
+
+![Expected observable-only deterministic and trajectory streams](../docs/src/assets/example_figures/streaming_output.png)
+
+The trajectory points use the documented seed and the band shows one measured
+standard error. Neither plotted route retains a history of PI states.

@@ -56,11 +56,27 @@ typed `PIState` to evaluate its physical trace functional.
 The assertions require the pair-sum identity, backend action, and trace
 derivative errors all to be below `1e-10`.
 
+## Expected output
+
+![Packed Appendix-D geometry and backend checks](../docs/src/assets/example_figures/pbody_pair_processes.png)
+
+The left panel compares the exact-support sparse path entries retained by
+`PBodyGeometry` with the zero-heavy dense-reference entry count. It is a
+structural storage count, not a measured memory or timing benchmark. The right
+panel shows the pair-operator identity error, sparse/matrix-free action
+difference, and trace-derivative error. Exact zeros are displayed at machine
+epsilon on the logarithmic axis without changing the values used by the
+assertions.
+
 ## Run
 
 ```sh
 julia --project=. examples/pbody_pair_processes.jl
 ```
+
+Use the examples environment from [`README.md`](README.md) to generate the
+optional PDF and PNG figure. Running under the root environment executes all
+backend checks and skips only plotting.
 
 Agreement of the two actions tests the optimized Appendix-D kernel without
 relying on a particular time integrator. Production dynamics normally pass

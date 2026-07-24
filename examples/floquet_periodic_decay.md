@@ -98,6 +98,17 @@ sample periods zero through four.  The example checks the analytical map,
 selected Ritz values, the decay rate `0.2`, both periodic-state solves, and
 density-operator diagnostics.
 
+## Expected output
+
+![Expected matrix-free Floquet figure](../docs/src/assets/example_figures/floquet_periodic_decay.png)
+
+The three panels show RK4 period-map convergence, the dense small-system and
+selected matrix-free multipliers, and stroboscopic excitation decay. The unit
+circle is a stability reference. The four Arnoldi multipliers remain a
+partial spectral result, as the panel title states; the picture does not turn
+the reported gap into a global certificate. Plotting reuses the maps,
+multipliers, and trajectory already evaluated by the assertions.
+
 ## Run
 
 ```sh

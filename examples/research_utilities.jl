@@ -1,6 +1,8 @@
 using LinearAlgebra
 using Random
 using PermutationalInvariantDynamics
+include(joinpath(@__DIR__, "utils", "makie_support.jl"))
+using .ExampleMakie
 
 # Spectral functionals and population-coordinate metadata stay compressed.
 basis=PIBasis(3,2)
@@ -51,3 +53,35 @@ println("directed population transitions = ",length(transitions))
 println("channel CP/TP = ",check_pi_channel(channel))
 println("tomography probabilities = ",estimate.probabilities)
 println("joint symmetry rank = ",joint.range_dimension)
+
+if makie_available()
+    M = makie_module()
+    exact_probabilities = [
+        real(expectation(output, E0)),
+        real(expectation(output, E1)),
+    ]
+    sampled_probabilities = sample.counts ./ sum(sample.counts)
+    figure = M.Figure(size=(820, 450), fontsize=17)
+    axis = M.Axis(
+        figure[1, 1];
+        xlabel="POVM outcome",
+        ylabel="probability",
+        xticks=([1, 2], ["E₀", "E₁"]),
+        title="PI channel and constrained tomography",
+    )
+    offsets = (-0.22, 0.0, 0.22)
+    width = 0.19
+    series = (
+        ("channel output", exact_probabilities, :black),
+        ("2,000 samples", sampled_probabilities, :darkorange),
+        ("MLE estimate", estimate.probabilities, :royalblue),
+    )
+    for (offset, (label, values, color)) in zip(offsets, series)
+        M.barplot!(
+            axis, [1, 2] .+ offset, values;
+            width, color, label)
+    end
+    M.ylims!(axis, 0, 1)
+    M.axislegend(axis; position=:ct, orientation=:horizontal, labelsize=12)
+    save_example_figure(figure, "research_utilities")
+end

@@ -117,3 +117,14 @@ path explicitly; saving never recomputes its spectral data.
 ```sh
 julia --project=. examples/spectral_visualization.jl
 ```
+
+## Expected output
+
+![Expected complete driven-decaying Liouvillian spectrum](../docs/src/assets/example_figures/spectral_visualization_liouvillian.svg)
+
+![Expected converged Floquet multipliers](../docs/src/assets/example_figures/spectral_visualization_floquet_multipliers.svg)
+
+![Expected principal-branch Floquet exponents](../docs/src/assets/example_figures/spectral_visualization_floquet_exponents.svg)
+
+The first spectrum is complete for the default small PI basis. The Floquet
+figures use the step-doubled period map checked by the script.

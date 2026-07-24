@@ -1,5 +1,8 @@
 using PermutationalInvariantDynamics
 
+include(joinpath(@__DIR__, "utils", "makie_support.jl"))
+using .ExampleMakie
+
 # A finite-temperature local reservoir. Only scalar rates vary, so one
 # CompiledPIModelFamily shares all fixed Schur geometry across the scan.
 basis=PIBasis(12,2)
@@ -82,3 +85,39 @@ sensitivity.f(
 @assert all(isfinite,sensitivity_rhs)
 @assert sensitivity_rhs[:,1]≈dynamic_model*rho_dynamic.data
 @assert sensitivity_rhs[:,2]≈pump_derivative*rho_dynamic.data
+
+if makie_available()
+    M = makie_module()
+    streamed_pumps = [row.pump for row in streamed]
+    streamed_fractions = [row.excited_fraction for row in streamed]
+    streamed_residuals = [row.residual for row in streamed]
+    exact_fractions = streamed_pumps ./ (1 .+ streamed_pumps)
+    residual_floor = max(
+        maximum(streamed_residuals) * 1e-6, eps(Float64)^2)
+    displayed_residuals = max.(streamed_residuals, residual_floor)
+
+    figure = M.Figure(size=(1080, 420), fontsize=17)
+    fraction_axis = M.Axis(
+        figure[1, 1];
+        xlabel="pump rate r", ylabel="stationary excited fraction",
+        title="Prepared continuation scan")
+    residual_axis = M.Axis(
+        figure[1, 2];
+        xlabel="pump rate r", ylabel="stationary residual",
+        yscale=log10, title="Matrix-free recycled-GMRES check")
+
+    M.lines!(
+        fraction_axis, streamed_pumps, exact_fractions;
+        color=:black, linewidth=2.7, label="exact r / (1 + r)")
+    M.scatter!(
+        fraction_axis, streamed_pumps, streamed_fractions;
+        color=:dodgerblue3, markersize=10, label="PI scan")
+    M.lines!(
+        residual_axis, streamed_pumps, displayed_residuals;
+        color=:darkorange2, linewidth=2.2)
+    M.scatter!(
+        residual_axis, streamed_pumps, displayed_residuals;
+        color=:darkorange2, markersize=8)
+    M.axislegend(fraction_axis; position=:lt)
+    save_example_figure(figure, "parameter_scan")
+end

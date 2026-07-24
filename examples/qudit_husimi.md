@@ -29,3 +29,10 @@ julia --project=. examples/qudit_husimi.jl
 ```
 
 or use `--project=examples` to save the optional Makie PDF and PNG.
+
+## Expected output
+
+![Expected aggregate and sector-resolved qutrit Husimi data](../docs/src/assets/example_figures/qudit_husimi.png)
+
+The curves use the default generator orbit; the qubit normalization check is
+performed numerically before rendering.

@@ -73,7 +73,9 @@ To start from formulas instead, the browser-only
 [PI model code generator](model_code_generator.md) translates a documented
 LaTeX subset into a commented, memory-guarded stationary-state program. It
 keeps formulas in the browser and refuses ambiguous local-versus-collective
-jump semantics.
+jump semantics. Its architecture selector also covers identical local
+pseudomodes and one shared global pseudomode without exposing free-form tensor
+code.
 
 ## Five-minute preview
 
@@ -120,7 +122,8 @@ and convergence metadata. Adaptive or stiff integration is available through
   tutorial and troubleshooting guide.
 - [PI model code generator](model_code_generator.md) creates a minimal
   stationary-state or stationary-observable script from supported LaTeX
-  ingredients.
+  ingredients, including the two supported finite-cutoff pseudomode
+  embeddings.
 - [Framework introduction](framework.md) derives the PI Schur-block
   representation, scaling, model terms, and validity conditions.
 - [Architecture and efficient workflows](architecture.md) explains sparse and

@@ -78,11 +78,26 @@ physical plan is shared. A separate single-worker workspace is reused for the
 serial reproducibility check. Workspaces are task-owned and must not be used
 concurrently.
 
+## Expected output
+
+![Composite trajectories compared with the master equation](../docs/src/assets/example_figures/composite_quantum_trajectories.png)
+
+Both panels compare the deterministic composite master equation with the
+1,024-path density-state average and the independent 512-path state-free
+online estimate. The shaded region is the online estimator's 95% normal
+Monte Carlo interval for the displayed observable. It quantifies finite-path
+sampling only: it does not include fixed-step integration error, jump-step
+bias, model error, or auxiliary-truncation error.
+
 Run it from the repository root:
 
 ```sh
 julia --project=. examples/composite_quantum_trajectories.jl
 ```
+
+Use the examples environment from [`README.md`](README.md) to save the
+optional Makie figure. The root package environment still runs every
+trajectory and assertion and skips only rendering.
 
 ## Interpretation and limits
 

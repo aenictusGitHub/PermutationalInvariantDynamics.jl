@@ -20,6 +20,8 @@ script. Then choose the closest workflow below.
 | Couple the ensemble to one shared cavity | [`global_pseudomode_cavity.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/global_pseudomode_cavity.jl) | Collective Tavis--Cummings dynamics, factor reductions, and a mode-cutoff diagnostic |
 | Add a finite-memory bath | [`pi_heom.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/pi_heom.jl) | Exactly scaled ADOs, depth convergence, fixed-capacity matrix-RHS actions, SciML construction, and a block-preconditioned steady solve |
 | Unravel one shared structured bath | [`pi_hops.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/pi_hops.jl) | Direct-sum Schur pure-state hierarchy, stationary colored noise, and an HEOM/analytic comparison |
+| Use a non-Hermitian HOPS coupling | [`pi_hops_collective_emission.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/pi_hops_collective_emission.jl) | Exact one-excitation collective emission, hard-depth comparison, prescribed noise, and conditioned hierarchy application |
+| Start HOPS from a mixed state | [`pi_hops_mixed_multibath.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/pi_hops_mixed_multibath.jl) | Multiple shared baths, Schur spectral sampling, reusable batch workspaces, Monte Carlo errors, and pruning metadata |
 | Embed one truncated pseudomode per spin | [`debecker2026_all_to_all_ising_pseudomodes.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/debecker2026_all_to_all_ising_pseudomodes.jl) | Uniform-all-pair PI supersites, trajectory estimates, spin-only negativity, a strong-parity-reduced x-GHZ steady solve, and cutoff checks |
 
 Each script has a same-basename guide in the repository's `examples/`
@@ -210,7 +212,18 @@ realization. Independent local colored noises are not replaced by a common
 noise and remain an HEOM or local-pseudomode problem. See
 [PI--HOPS](hops.md).
 
-Both hierarchy examples still use a finite exponential decomposition and a
+Two additional scripts expose the specialized HOPS interfaces.
+`examples/pi_hops_collective_emission.jl` uses the non-Hermitian coupling
+``L=J_-`` and a symmetric one-excitation state, for which depth one closes
+exactly and the Lorentzian survival amplitude is analytical. It also
+demonstrates a prescribed conditioned noise and deterministic `hops_rhs!`
+application. `examples/pi_hops_mixed_multibath.jl` prepares a general mixed
+PI state as a Schur spectral ensemble, combines two independent shared
+dephasing baths, reuses `HOPSBatchWorkspace`, reports state-level Monte Carlo
+errors, and inspects a setup-only importance-pruned hierarchy. Its pruning
+score is explicitly not treated as an accuracy certificate.
+
+These hierarchy examples still use a finite exponential decomposition and a
 hard hierarchy boundary. Bath-decomposition error, depth error, integration
 error, and (for HOPS) sampling error are separate refinements. The HOPS
 backend supports fixed shared PI bath couplings, including non-Hermitian

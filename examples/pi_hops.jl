@@ -2,6 +2,9 @@ using PermutationalInvariantDynamics
 using LinearAlgebra
 using Random
 
+include(joinpath(@__DIR__, "utils", "makie_support.jl"))
+using .ExampleMakie
+
 # A small collective-dephasing benchmark. HOPS propagates pure Schur-irrep
 # amplitudes, while HEOM below propagates PI density operators. Neither route
 # constructs a 2^N state.
@@ -78,3 +81,38 @@ println("maximum HOPS mean trace error = ", trace_error)
 @assert heom_analytic_error < 1e-8
 @assert hops_heom_error < 0.10
 @assert trace_error < 0.10
+
+if makie_available()
+    M = makie_module()
+    figure = M.Figure(size=(1120, 440), fontsize=17)
+    signal_axis = M.Axis(
+        figure[1, 1];
+        xlabel="time", ylabel="2⟨Jx⟩ / N",
+        title="PI--HOPS collective dephasing (N=$N)")
+    error_axis = M.Axis(
+        figure[1, 2];
+        xlabel="time", ylabel="absolute error",
+        yscale=log10, title="Stochastic and hierarchy errors")
+
+    M.lines!(
+        signal_axis, times, analytic_signal;
+        color=:black, linewidth=3, label="analytic")
+    M.lines!(
+        signal_axis, times, heom_signal;
+        color=:darkorange2, linewidth=2.2, label="PI--HEOM")
+    M.scatterlines!(
+        signal_axis, times, hops_signal;
+        color=:dodgerblue3, markersize=5, linewidth=1.4,
+        label="$trajectories PI--HOPS paths")
+    M.lines!(
+        error_axis, times,
+        max.(abs.(hops_signal .- analytic_signal), eps(Float64));
+        color=:dodgerblue3, linewidth=2, label="HOPS")
+    M.lines!(
+        error_axis, times,
+        max.(abs.(heom_signal .- analytic_signal), eps(Float64));
+        color=:darkorange2, linewidth=2, label="HEOM")
+    M.axislegend(signal_axis; position=:lb)
+    M.axislegend(error_axis; position=:lt)
+    save_example_figure(figure, "pi_hops")
+end

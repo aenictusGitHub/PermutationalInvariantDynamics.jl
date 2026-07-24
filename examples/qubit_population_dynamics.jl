@@ -1,6 +1,9 @@
 using LinearAlgebra
 using PermutationalInvariantDynamics
 
+include(joinpath(@__DIR__, "utils", "makie_support.jl"))
+using .ExampleMakie
+
 function main()
     N = 6
     spin = spin_matrices(2)
@@ -38,11 +41,12 @@ function main()
     full_solution = solve_dynamics(prepared, rho0, (0.0, 2.0);
         saveat=times, steps_per_interval=64)
 
-    evolution_error = maximum(
+    evolution_errors = [
         norm(population_solution[index] -
              diagonal_populations(full_solution[index]))
         for index in eachindex(times)
-    )
+    ]
+    evolution_error = maximum(evolution_errors)
     normalization_error = maximum(
         abs(sum(populations) - 1) for populations in population_solution)
     println("maximum population/full-PI discrepancy: ", evolution_error)
@@ -73,6 +77,50 @@ function main()
     @assert stationary_error < 2e-8
     @assert full_stationary.info.converged
     @assert diagnostics(rho_stationary).valid
+
+    if makie_available()
+        M = makie_module()
+        excitation_plan = CollectiveObservablePlan(
+            basis, ComplexF64[0 0; 0 1])
+        excited_fraction = [
+            real(collective_expectation(state, excitation_plan)) / N
+            for state in full_solution
+        ]
+        stationary_excited_fraction =
+            real(collective_expectation(rho_stationary, excitation_plan)) / N
+        error_floor = max(
+            maximum(evolution_errors) * 1e-3, eps(Float64)^2)
+        displayed_errors = max.(evolution_errors, error_floor)
+
+        figure = M.Figure(size=(1080, 420), fontsize=17)
+        population_axis = M.Axis(
+            figure[1, 1];
+            xlabel="time", ylabel="excited fraction",
+            title="Certified population dynamics")
+        error_axis = M.Axis(
+            figure[1, 2];
+            xlabel="time", ylabel="‖ppop − pPI‖₂",
+            yscale=log10, title="Reduced/full-PI agreement")
+
+        M.lines!(
+            population_axis, collect(times), excited_fraction;
+            color=:dodgerblue3, linewidth=2.7, label="full PI evolution")
+        M.scatter!(
+            population_axis, collect(times), excited_fraction;
+            color=:dodgerblue3, markersize=7)
+        M.hlines!(
+            population_axis, [stationary_excited_fraction];
+            color=:darkorange2, linewidth=2.2, linestyle=:dash,
+            label="stationary population solution")
+        M.lines!(
+            error_axis, collect(times), displayed_errors;
+            color=:firebrick3, linewidth=2.3)
+        M.scatter!(
+            error_axis, collect(times), displayed_errors;
+            color=:firebrick3, markersize=7)
+        M.axislegend(population_axis; position=:rt)
+        save_example_figure(figure, "qubit_population_dynamics")
+    end
 end
 
 main()

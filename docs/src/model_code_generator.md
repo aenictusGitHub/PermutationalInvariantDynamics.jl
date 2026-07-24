@@ -2,9 +2,11 @@
 
 This browser-only assistant turns a small, explicit subset of LaTeX model
 notation into a commented Julia program for a stationary PI calculation. It
-uses physical package terms, the complete PI basis, prepared observable
-geometry, the automatic sparse/matrix-free backend, and the high-level
-memory-guarded stationary solver.
+supports an ordinary PI ensemble and two finite-cutoff Markovian embeddings:
+one identical pseudomode per constituent or one pseudomode shared by the
+whole ensemble. It uses physical package terms, complete PI bases, prepared
+observable geometry, factorized composite operators, and memory-guarded
+stationary solvers.
 
 The assistant deliberately does **not** send formulas to a server or a
 language model. Translation is deterministic and restricted: unsupported or
@@ -33,9 +35,29 @@ ambiguous notation produces an error instead of guessed physics.
             <option value="collective">Local and collective decay</option>
             <option value="lmg">Collective LMG polynomial</option>
             <option value="qutrit">Spin-1 qutrit ensemble</option>
+            <option value="localPseudomode">Identical local pseudomodes</option>
+            <option value="globalPseudomode">One shared pseudomode</option>
           </select>
         </label>
       </div>
+
+      <label class="pid-field pid-architecture-field">
+        <span class="pid-label">System architecture</span>
+        <select id="pid-architecture">
+          <option value="pi">Ordinary PI ensemble</option>
+          <option value="local-pseudomode">
+            Identical local pseudomode per constituent
+          </option>
+          <option value="global-pseudomode">
+            One pseudomode shared by the ensemble
+          </option>
+        </select>
+        <span class="pid-hint">
+          This choice fixes the tensor topology. Local modes become part of
+          each permuted supersite; a shared mode remains a separate composite
+          factor.
+        </span>
+      </label>
 
       <div class="pid-grid-two">
         <label class="pid-field">
@@ -59,7 +81,7 @@ ambiguous notation produces an error instead of guessed physics.
       </label>
 
       <label class="pid-field">
-        <span class="pid-label">Hamiltonian H in LaTeX</span>
+        <span class="pid-label">Bare-system Hamiltonian H in LaTeX</span>
         <textarea id="pid-hamiltonian"
           class="pid-latex-input"
           spellcheck="false"
@@ -67,9 +89,84 @@ ambiguous notation produces an error instead of guessed physics.
         <span class="pid-hint">
           Use collective spin symbols J<sub>x,y,z,+,-</sub>, or an explicit
           sum such as \sum_i \sigma_x^{(i)}. Leave empty for a purely
-          dissipative model.
+          dissipative model. For a pseudomode architecture, do not add the
+          oscillator frequency or system--mode coupling here; the structured
+          controls below add them exactly once.
         </span>
       </label>
+
+      <fieldset id="pid-pseudomode-section"
+                class="pid-subpanel pid-pseudomode-panel" hidden>
+        <legend>Finite-cutoff pseudomode</legend>
+        <p id="pid-local-pseudomode-description"
+           class="pid-architecture-note" hidden>
+          Every constituent has its own identical mode. Permutations act on
+          complete system+mode supersites, so the embedding remains one PI
+          problem.
+        </p>
+        <p id="pid-global-pseudomode-description"
+           class="pid-architecture-note" hidden>
+          One mode is shared by all constituents. The generated solver keeps
+          the PI system and oscillator as factorized composite coordinates.
+        </p>
+
+        <div class="pid-pseudomode-grid">
+          <label class="pid-field">
+            <span class="pid-label">Fock cutoff, nmax</span>
+            <input id="pid-pseudomode-cutoff" type="number" min="0" step="1"
+                   value="2">
+            <span class="pid-hint">
+              Retained levels are 0,…,nmax. Converge this approximation.
+            </span>
+          </label>
+          <label class="pid-field">
+            <span class="pid-label">Mode frequency</span>
+            <input id="pid-pseudomode-frequency"
+                   class="pid-latex-input" type="text" spellcheck="false"
+                   value="\omega_c" placeholder="\omega_c">
+          </label>
+          <label class="pid-field">
+            <span class="pid-label">Mode damping</span>
+            <input id="pid-pseudomode-damping"
+                   class="pid-latex-input" type="text" spellcheck="false"
+                   value="\kappa" placeholder="\kappa">
+          </label>
+          <label class="pid-field">
+            <span class="pid-label">Thermal occupation</span>
+            <input id="pid-pseudomode-thermal-occupation"
+                   class="pid-latex-input" type="text" spellcheck="false"
+                   value="0" placeholder="nbar">
+          </label>
+          <label class="pid-field pid-span-two">
+            <span class="pid-label">System coupling seed</span>
+            <input id="pid-pseudomode-coupling-operator"
+                   class="pid-latex-input" type="text" spellcheck="false"
+                   value="\sigma_-" placeholder="\sigma_- or j_z">
+            <span class="pid-hint">
+              Enter one linear local spin operator. The selected architecture
+              performs the corresponding local-supersite or collective lift.
+            </span>
+          </label>
+          <label class="pid-field">
+            <span class="pid-label">Rotating coupling strength</span>
+            <input id="pid-pseudomode-coupling-strength"
+                   class="pid-latex-input" type="text" spellcheck="false"
+                   value="g" placeholder="g">
+          </label>
+          <label class="pid-field">
+            <span class="pid-label">Counter-rotating strength</span>
+            <input id="pid-pseudomode-counterrotating-strength"
+                   class="pid-latex-input" type="text" spellcheck="false"
+                   value="0" placeholder="0">
+          </label>
+        </div>
+        <span class="pid-hint">
+          With this package's dissipator convention, damping
+          <code>kappa</code> makes the free-mode amplitude decay at
+          <code>kappa/2</code>. The generated program reports the highest
+          retained Fock-level population as a cutoff diagnostic.
+        </span>
+      </fieldset>
 
       <div class="pid-field">
         <span class="pid-label">Dissipative channels</span>
@@ -81,9 +178,10 @@ ambiguous notation produces an error instead of guessed physics.
                   class="pid-button pid-button-quiet">+ Collective channel</button>
         </div>
         <span class="pid-hint">
-          Enter only the jump seed. The selector distinguishes
+          Enter only the bare-system jump seed. The selector distinguishes
           \sum_i D[l_i] from D[\sum_i l_i]; the assistant never guesses this
-          physically important choice.
+          physically important choice. In a pseudomode embedding, mode damping
+          is set separately above.
         </span>
       </div>
 
@@ -159,6 +257,14 @@ auditable:
 | `\frac{a}{b}`, `\sqrt{a}` | Scalar fraction and square root |
 | named Greek or ASCII scalars | Parameters defined in the numerical-value box |
 
+The pseudomode frequency, damping, thermal occupation, and two coupling
+strengths use the same real-scalar grammar. The system--mode coupling seed
+must be one linear local operator \(j_a\) or \(\sigma_a\). The generated
+interaction is the package `PseudomodeCoupling`: the rotating part is
+\(g L a^\dagger + g^* L^\dagger a\), with an optional counter-rotating
+strength. The assistant does not infer a coupling normalization or Kac
+scaling.
+
 For Hamiltonians, linear collective expressions lower to
 `LocalHamiltonian`, while collective polynomials such as \(J_z^2\) use a
 compressed `PIOperator` and `DirectPIHamiltonian`. A local channel lowers to
@@ -176,15 +282,46 @@ one-site expectation
 \(\langle j_z^{(1)}\rangle=N^{-1}\langle J_z\rangle\). For clarity in papers,
 prefer writing the normalization explicitly as \(J_z/N\).
 
+## Composite and pseudomode routes
+
+The architecture selector changes both the physical topology and the
+generated numerical route:
+
+| Architecture | Generated representation | Stationary route |
+|:--|:--|:--|
+| Ordinary PI ensemble | Complete `PIBasis(N, d)` | Automatic sparse/direct or matrix-free backend |
+| Identical local pseudomodes | Complete PI basis of `PISupersite` objects | `pseudomode_model`, compiled once with the automatic memory guard |
+| One shared pseudomode | PI system factor times one finite mode factor | `GlobalPseudomodeModel` with factorized, matrix-free GMRES |
+
+For a local mode, the supersite dimension is
+\(D=d(n_{\max}+1)\), and the complete PI coordinate count grows as
+\(\binom{N+D^2-1}{N}\). Increasing the oscillator cutoff can therefore be
+expensive even at modest \(N\). For one shared mode, the composite coordinate
+count is `pi_dimension(system_basis) * (nmax + 1)^2`; the generated code never
+forms its global Kronecker superoperator.
+
+Both routes print the population of the highest retained oscillator level.
+This is a useful warning signal, not a convergence proof: repeat the
+calculation at larger `nmax` and compare the observables or reduced states of
+interest. The global route evaluates a requested spin observable on
+`trace_pseudomodes(rho_ss, embedding)`. The local route lifts the spin
+observable into each system+mode supersite without reconstructing a
+\(D^N\)-dimensional state.
+
 ## Boundaries of the assistant
 
 The generator rejects site-dependent couplings, nearest-neighbour chains,
-arbitrary coupling graphs, time-dependent coefficients, tensor expressions,
-and general LaTeX. Those cases require a deliberate translation using the
-[framework guide](framework.md), [symmetric \(p\)-body terms](api/representation.md),
-or [composite-system workflow](composite_systems.md).
+arbitrary coupling graphs, time-dependent coefficients, multiple pseudomodes
+per constituent, and general LaTeX. The architecture selector covers the two
+specific one-mode Markovian embeddings above; it does not parse arbitrary
+generic composite tensor expressions such as `A \otimes B`. Those cases
+require a deliberate translation using the [framework guide](framework.md),
+[symmetric \(p\)-body terms](api/representation.md),
+[local-pseudomode workflow](pseudomodes.md),
+[shared-pseudomode workflow](global_pseudomodes.md), or the
+[composite-system workflow](composite_systems.md).
 
-This first version emits `Float64` model data. Wider or lower precision needs
+The generator emits `Float64` model data. Wider or lower precision needs
 explicitly typed matrices, geometry, tolerances, and a compatible
 matrix-free solver; follow the [matrix-free Krylov guide](matrix_free_krylov.md)
 rather than changing only one literal type.

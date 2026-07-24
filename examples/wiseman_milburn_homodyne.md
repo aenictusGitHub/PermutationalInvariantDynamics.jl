@@ -29,3 +29,10 @@ Run with:
 ```sh
 julia --project=examples examples/wiseman_milburn_homodyne.jl
 ```
+
+## Expected output
+
+![Expected conditional homodyne record and unconditional PI limit](../docs/src/assets/example_figures/wiseman_milburn_homodyne.png)
+
+The ensemble curve and sampling band use the script's fixed seed and default
+trajectory count; reduce the time step before interpreting a changed setup.

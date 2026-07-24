@@ -72,6 +72,17 @@ reality, and nonnegativity. It reconstructs a validated `PIState` with
 `state_from_populations` and compares it with a direct stationary solve in the
 full PI coordinate space.
 
+## Expected output
+
+![Expected certified population-dynamics figure](../docs/src/assets/example_figures/qubit_population_dynamics.png)
+
+The left panel shows the excitation fraction from the already computed full
+PI trajectory together with the reduced stationary prediction. The right
+panel plots the saved-time discrepancy between certified population evolution
+and the full PI evolution. Zero or extremely small values are displayed with
+a small plotting floor to keep them visible on a logarithmic axis; the
+asserted unmodified errors remain the regression.
+
 ## Run
 
 ```sh

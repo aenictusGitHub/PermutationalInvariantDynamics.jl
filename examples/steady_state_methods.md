@@ -61,3 +61,11 @@ For this compatible compiled PI model, `block_construction` is
 blocks are lowered directly from the immutable physical term plan; only the
 small operator-scale probes remain. A plan-less callback cannot expose that
 structure and retains the coordinate-probing fallback.
+
+## Expected output
+
+![Expected steady-state solver residuals, exact-state errors, and iterations](../docs/src/assets/example_figures/steady_state_methods.png)
+
+The accuracy panel is portable across machines. Reported iteration counts
+depend on the chosen tolerances and implementation; elapsed wall times remain
+console diagnostics and are deliberately not used in the snapshot.

@@ -112,3 +112,10 @@ tolerance before increasing the trajectory count. Statistical errors then
 decrease only as the inverse square root of that count. Pass `threaded=true`
 when independent task-owned workspaces are appropriate; scheduling may vary,
 but a fixed seed still gives the same ordered paths.
+
+## Expected output
+
+![Expected Mølmer trajectory benchmark against independent-emitter laws](../docs/src/assets/example_figures/quantum_trajectories_molmer.png)
+
+The snapshot uses the documented seed and trajectory count. Its uncertainty
+bands are sampling errors, not integration-error estimates.

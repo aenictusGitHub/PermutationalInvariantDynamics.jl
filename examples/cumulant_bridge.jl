@@ -1,6 +1,9 @@
 using PermutationalInvariantDynamics
 using LinearAlgebra
 
+include(joinpath(@__DIR__, "utils", "makie_support.jl"))
+using .ExampleMakie
+
 # Exact PI reference data for an order-three cumulant closure.  The local
 # alphabet is deliberately small: permutation symmetry stores only one moment
 # per multiset of labels.
@@ -55,6 +58,59 @@ println(correlation_error)
 println("bridge schema: ",bridge.schema_version)
 println("neutral terms: ",length(bridge.model.terms))
 println("canonical exact moments: ",length(bridge.moments))
+
+if makie_available()
+    M=makie_module()
+    orders=collect(1:3)
+    product_errors=[
+        maximum(
+            (row.absolute_error for row in product_check.rows
+             if length(row.labels)==order);
+            init=0.0)
+        for order in orders
+    ]
+    correlated_errors=[
+        maximum(
+            (row.absolute_error for row in correlation_error.rows
+             if length(row.labels)==order);
+            init=0.0)
+        for order in orders
+    ]
+    canonical_counts=[
+        count(row->length(row.labels)==order,correlation_error.rows)
+        for order in orders
+    ]
+    ordered_counts=length(local_operators) .^ orders
+
+    figure=M.Figure(size=(1080,430),fontsize=17)
+    error_axis=M.Axis(
+        figure[1,1];xlabel="moment order",
+        ylabel="maximum absolute closure error",yscale=log10,
+        xticks=orders,title="Product closure (display floor ε)")
+    count_axis=M.Axis(
+        figure[1,2];xlabel="moment order",ylabel="stored values",
+        xticks=orders,title="Permutation-symmetric moment table")
+
+    M.scatterlines!(
+        error_axis,orders,max.(product_errors,eps(Float64));
+        color=:seagreen4,linewidth=2.2,markersize=10,
+        label="product input")
+    M.scatterlines!(
+        error_axis,orders,max.(correlated_errors,eps(Float64));
+        color=:firebrick3,linewidth=2.2,markersize=10,
+        label="GHZ input")
+    M.scatterlines!(
+        count_axis,orders,canonical_counts;
+        color=:dodgerblue3,linewidth=2.2,markersize=10,
+        label="canonical multisets")
+    M.scatterlines!(
+        count_axis,orders,ordered_counts;
+        color=:gray35,linewidth=2,markersize=9,linestyle=:dash,
+        label="all ordered words")
+    M.axislegend(error_axis;position=:lt)
+    M.axislegend(count_axis;position=:lt)
+    save_example_figure(figure,"cumulant_bridge")
+end
 
 # Optional QuantumCumulants.jl 0.5 integration is loaded only when requested:
 #

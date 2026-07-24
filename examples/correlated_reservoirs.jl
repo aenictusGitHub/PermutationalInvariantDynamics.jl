@@ -1,6 +1,9 @@
 using PermutationalInvariantDynamics
 using LinearAlgebra
 
+include(joinpath(@__DIR__, "utils", "makie_support.jl"))
+using .ExampleMakie
+
 const N = 8
 const BASIS = PIBasis(N, 2)
 const SIGMA_MINUS = ComplexF64[0 1; 0 0]
@@ -64,3 +67,30 @@ println("Correlated local reservoir final excitation fraction: ",
         population[end])
 println("PI dimension: ", length(BASIS),
         "; full Hilbert dimension avoided: ", big(2)^N)
+
+if makie_available()
+    M = makie_module()
+    figure = M.Figure(size=(1040, 420), fontsize=17)
+    population_axis = M.Axis(
+        figure[1, 1];
+        xlabel="time", ylabel="excited fraction",
+        title="Correlated local-reservoir dynamics")
+    kossakowski_axis = M.Axis(
+        figure[1, 2];
+        xlabel="input channel", ylabel="output channel",
+        xticks=(1:2, ["σ₋", "σz"]),
+        yticks=(1:2, ["σ₋", "σz"]),
+        title="|Γab| (positive-semidefinite bath)")
+
+    M.lines!(
+        population_axis, collect(times), population;
+        color=:dodgerblue3, linewidth=2.7)
+    M.scatter!(
+        population_axis, collect(times), population;
+        color=:dodgerblue3, markersize=6)
+    gamma_plot = M.heatmap!(
+        kossakowski_axis, 1:2, 1:2, abs.(GAMMA);
+        colormap=:viridis, colorrange=(0, maximum(abs, GAMMA)))
+    M.Colorbar(figure[1, 3], gamma_plot; label="magnitude")
+    save_example_figure(figure, "correlated_reservoirs")
+end

@@ -1,6 +1,9 @@
 using LinearAlgebra
 using PermutationalInvariantDynamics
 
+include(joinpath(@__DIR__, "utils", "makie_support.jl"))
+using .ExampleMakie
+
 N = 4
 period = 2.0
 basis = PIBasis(N, 2)
@@ -16,11 +19,13 @@ constant_prepared = compile(constant_model; backend=:sparse)
 Laverage = Matrix(liouvillian(constant_prepared))
 exact = exp(period * Laverage) # the cosine modulation integrates to zero
 
-for steps in (40, 80, 160)
+step_counts = (40, 80, 160)
+period_errors = [begin
     approximation = floquet_propagator(prepared, period; steps)
-    println("RK4 steps=$steps: one-period error = ",
-            norm(approximation - exact))
-end
+    error = norm(approximation - exact)
+    println("RK4 steps=$steps: one-period error = ", error)
+    error
+end for steps in step_counts]
 
 # Production calculations use this reusable linear operator.  Applying it to
 # a vector integrates one period and never constructs an n_PI-by-n_PI map.
@@ -111,3 +116,53 @@ ground = iid_pure_state(basis, ComplexF64[1, 0])
 @assert restricted_steady.state.data ≈ rhoF.data atol=2e-9
 @assert restricted_steady.full_residual < 2e-9
 @assert report.valid
+
+if makie_available()
+    M = makie_module()
+    figure = M.Figure(size=(1320, 400), fontsize=16)
+    convergence_axis = M.Axis(
+        figure[1, 1];
+        xlabel="RK4 steps per period", ylabel="‖Fsteps − Fexact‖",
+        xscale=log2, yscale=log10,
+        xticks=(collect(step_counts), string.(collect(step_counts))),
+        title="Period-map convergence")
+    spectrum_axis = M.Axis(
+        figure[1, 2];
+        xlabel="Re μ", ylabel="Im μ",
+        title="Floquet multipliers (selected set is partial)")
+    dynamics_axis = M.Axis(
+        figure[1, 3];
+        xlabel="period index", ylabel="excited fraction",
+        title="Matrix-free stroboscopic decay")
+
+    M.lines!(
+        convergence_axis, collect(step_counts),
+        max.(period_errors, eps(Float64));
+        color=:firebrick3, linewidth=2.3)
+    M.scatter!(
+        convergence_axis, collect(step_counts),
+        max.(period_errors, eps(Float64));
+        color=:firebrick3, markersize=9)
+
+    angles = range(0.0, 2pi; length=361)
+    M.lines!(
+        spectrum_axis, cos.(angles), sin.(angles);
+        color=:gray55, linewidth=1.5, linestyle=:dash,
+        label="unit circle")
+    M.scatter!(
+        spectrum_axis, real.(dense_values), imag.(dense_values);
+        color=(:gray45, 0.45), markersize=6, label="dense small-N oracle")
+    M.scatter!(
+        spectrum_axis, real.(selected.values), imag.(selected.values);
+        color=:dodgerblue3, markersize=11, label="matrix-free Arnoldi")
+    M.axislegend(spectrum_axis; position=:lb, labelsize=10)
+
+    period_indices = collect(0:(length(populations) - 1))
+    M.lines!(
+        dynamics_axis, period_indices, populations;
+        color=:darkorange2, linewidth=2.5)
+    M.scatter!(
+        dynamics_axis, period_indices, populations;
+        color=:darkorange2, markersize=9)
+    save_example_figure(figure, "floquet_periodic_decay")
+end

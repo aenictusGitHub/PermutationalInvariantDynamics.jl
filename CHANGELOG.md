@@ -35,6 +35,9 @@ Initial public release candidate.
   composite, with collective rotating/counter-rotating coupling, thermal
   damping, deterministic and trajectory generators, matrix-free
   GMRES/Arnoldi workflows, and direct reduced states.
+- The browser-only typed model-code generator now emits ordinary PI,
+  identical-local-pseudomode, and shared-global-pseudomode stationary
+  workflows, including memory guards and oscillator-cutoff diagnostics.
 - Density-valued composite quantum-jump systems with explicit cross-factor
   channels, factorized gain/loss application, reproducible threaded batches,
   and online trajectory statistics.
@@ -48,7 +51,8 @@ Initial public release candidate.
 - Generalized qudit Husimi-Q data and optional Tables, Makie,
   QuantumCumulants, Distributed, JLD2, and HDF5 integrations.
 - Literature validation examples, same-basename guides, package documentation,
-  release automation, and a Pluto research-workflow notebook.
+  curated expected-output figures for every example guide, release automation,
+  and a Pluto research-workflow notebook.
 
 ### Changed
 

@@ -142,3 +142,11 @@ julia --project=examples examples/meanfield_time_crystal.jl
 
 The root environment remains sufficient for the numerical checks; without
 CairoMakie, the script simply omits the optional figure.
+
+## Expected output
+
+![Expected finite PI, finite-product, and thermodynamic mean-field predictions](../docs/src/assets/example_figures/meanfield_time_crystal.png)
+
+The error panel is evaluated from the same arrays as the assertions. The
+undamped curve is a thermodynamic closure, while the two finite-`N` curves
+decay.

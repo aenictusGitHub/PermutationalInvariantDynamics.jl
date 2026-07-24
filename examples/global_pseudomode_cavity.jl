@@ -1,6 +1,9 @@
 using LinearAlgebra
 using PermutationalInvariantDynamics
 
+include(joinpath(@__DIR__, "utils", "makie_support.jl"))
+using .ExampleMakie
+
 # Resonant Tavis--Cummings dynamics in a rotating frame. The oscillator is one
 # cavity shared by the whole ensemble, not one replicated mode per emitter.
 N = 3
@@ -83,3 +86,33 @@ println("Peak radiated flux kappa*<n>: ", maximum(radiated_flux))
 println("Maximum top-level population: ", maximum(abs, top_population))
 println("Final reduced traces (system, cavity): ",
         real(trace(rho_system)), ", ", real(LinearAlgebra.tr(rho_cavity)))
+
+# Plot the already sampled composite observables. No additional evolution,
+# reduction, or matrix-free probe is triggered by rendering.
+if makie_available()
+    M = makie_module()
+    figure = M.Figure(size=(1380, 430), fontsize=17)
+    population_axis = M.Axis(
+        figure[1, 1]; xlabel="time",
+        ylabel="excitation / photon number",
+        title="Shared-cavity exchange and decay")
+    flux_axis = M.Axis(
+        figure[1, 2]; xlabel="time",
+        ylabel="κ ⟨a†a⟩", title="Radiated cavity flux")
+    cutoff_axis = M.Axis(
+        figure[1, 3]; xlabel="time",
+        ylabel="highest-level population",
+        yscale=log10, title="Pseudomode-cutoff diagnostic")
+
+    M.lines!(population_axis, times, atom_population;
+             color=:firebrick, linewidth=2.7, label="atomic excitation")
+    M.lines!(population_axis, times, cavity_population;
+             color=:royalblue, linewidth=2.7, label="cavity photons")
+    M.axislegend(population_axis; position=:rt, labelsize=11)
+    M.lines!(flux_axis, times, radiated_flux;
+             color=:darkorange, linewidth=2.7)
+    M.lines!(cutoff_axis, times, max.(abs.(top_population), eps(Float64));
+             color=:black, linewidth=2.4)
+    M.ylims!(cutoff_axis, eps(Float64) / 10, 1.0)
+    save_example_figure(figure, "global_pseudomode_cavity")
+end

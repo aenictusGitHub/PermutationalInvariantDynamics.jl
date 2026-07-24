@@ -1,4 +1,6 @@
 using PermutationalInvariantDynamics
+include(joinpath(@__DIR__, "utils", "makie_support.jl"))
+using .ExampleMakie
 
 # Independent spontaneous emission has an exact excitation-count law and is a
 # compact benchmark for memory-light output. Nothing below constructs a full
@@ -68,3 +70,31 @@ println("state histories retained: ", ensemble.trajectories !== nothing)
 println("PI-coordinate bytes avoided for sampled trajectory states: ",
         history_bytes)
 
+if makie_available()
+    M = makie_module()
+    figure = M.Figure(size=(880, 460), fontsize=17)
+    axis = M.Axis(
+        figure[1, 1];
+        xlabel="time",
+        ylabel="mean excitation count",
+        title="Memory-light deterministic and trajectory output",
+    )
+    M.band!(
+        axis, times,
+        sample.mean .- sample.standard_error,
+        sample.mean .+ sample.standard_error;
+        color=(:darkorange, 0.22))
+    M.lines!(
+        axis, times, exact_excitations;
+        color=:black, linewidth=2.7, label="analytic")
+    M.scatter!(
+        axis, times, deterministic_excitations;
+        color=:royalblue, markersize=9,
+        label="deterministic stream")
+    M.scatter!(
+        axis, times, sample.mean;
+        color=:darkorange, marker=:diamond, markersize=9,
+        label="trajectory stream ±1 SE")
+    M.axislegend(axis; position=:rt, labelsize=12)
+    save_example_figure(figure, "streaming_output")
+end

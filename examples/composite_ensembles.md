@@ -89,13 +89,26 @@ buffers. Equal tensor fibres from all columns pass together through each
 factor map, and `apply_adjoint!` reuses the same layout. Neither path forms a
 global Kronecker matrix.
 
+## Expected output
+
+![Composite endpoint observable and prepared-kernel checks](../docs/src/assets/example_figures/composite_ensembles.png)
+
+The left panel compares the initial and final expectation of
+``\sum_i\sigma_z^{(i)}`` in ensemble A after the preallocated evolution. These
+are endpoint values, not a sampled trajectory. The right panel reports trace
+preservation, batched forward/adjoint agreement, and final-trace errors. Exact
+zeros are shown at machine epsilon only to make them visible on the logarithmic
+axis; that display floor does not alter the checks or numerical results.
+
 Run it from the repository root:
 
 ```sh
 julia --project=. examples/composite_ensembles.jl
 ```
 
-No plotting package is required.
+No plotting package is required for the calculation. Use the examples
+environment described in [`README.md`](README.md) to write the optional PDF
+and PNG figure; a root-project run skips only the rendering block.
 
 ## Scope
 

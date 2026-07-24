@@ -2,6 +2,9 @@ using LinearAlgebra
 using Random
 using PermutationalInvariantDynamics
 
+include(joinpath(@__DIR__, "utils", "makie_support.jl"))
+using .ExampleMakie
+
 # One compressed ensemble coupled to an explicitly truncated auxiliary qubit.
 atoms=PIBasis(4,2)
 auxiliary=FiniteOperatorBasis(2;label=:ancilla)
@@ -79,3 +82,51 @@ println("Full density-matrix coordinate formula: ",
 println("Final stochastic/master coefficient error: ",final_error)
 println("Mean jumps per trajectory: ",summary.jumps.mean_count)
 println("Final <Jz>: ",summary.observables.observables[:atom_z].mean[end])
+
+if makie_available()
+    M=makie_module()
+    atom_statistics=summary.observables.observables[:atom_z]
+    auxiliary_statistics=
+        summary.observables.observables[:auxiliary_excitation]
+    stochastic_atom=[
+        real(expectation(state,atom_signal)) for state in stochastic]
+    deterministic_atom=[
+        real(expectation(state,atom_signal)) for state in deterministic]
+    stochastic_auxiliary=[
+        real(expectation(state,auxiliary_excitation)) for state in stochastic]
+    deterministic_auxiliary=[
+        real(expectation(state,auxiliary_excitation)) for state in deterministic]
+
+    figure=M.Figure(size=(1120,440),fontsize=17)
+    atom_axis=M.Axis(
+        figure[1,1];xlabel="time",ylabel="⟨Jz⟩",
+        title="Compressed ensemble")
+    auxiliary_axis=M.Axis(
+        figure[1,2];xlabel="time",ylabel="ancilla excitation",
+        title="Finite auxiliary factor")
+
+    for (axis,deterministic_values,stochastic_values,statistics) in (
+        (atom_axis,deterministic_atom,stochastic_atom,atom_statistics),
+        (auxiliary_axis,deterministic_auxiliary,stochastic_auxiliary,
+         auxiliary_statistics),
+    )
+        M.band!(
+            axis,times,statistics.lower,statistics.upper;
+            color=(:dodgerblue3,0.20),
+            label="512-path 95% normal interval")
+        M.lines!(
+            axis,times,deterministic_values;
+            color=:black,linewidth=2.8,label="master equation")
+        M.scatterlines!(
+            axis,times,stochastic_values;
+            color=:darkorange2,linewidth=1.5,markersize=6,
+            label="1,024-path state average")
+        M.lines!(
+            axis,times,statistics.mean;
+            color=:dodgerblue3,linewidth=2,linestyle=:dash,
+            label="512-path online mean")
+    end
+    M.axislegend(atom_axis;position=:rb,labelsize=11)
+    M.axislegend(auxiliary_axis;position=:rt,labelsize=11)
+    save_example_figure(figure,"composite_quantum_trajectories")
+end

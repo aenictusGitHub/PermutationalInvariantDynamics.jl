@@ -56,6 +56,16 @@ environment without CairoMakie; only the figure-generation step is skipped.
 The loader deliberately requires CairoMakie to be declared by the active
 project and does not borrow a potentially incompatible global installation.
 
+Each paired guide embeds a curated expected-output snapshot from
+`docs/src/assets/example_figures/`. Those reviewed PNG/SVG files are copied
+from a successful default run; documentation builds never launch the
+underlying solve. Re-run the example for changed parameters, and treat
+trajectory bands, hierarchy cutoffs, time steps, finite-size grids, and solver
+tolerances as convergence controls rather than properties certified by the
+snapshot.
+
+![Representative expected output from the getting-started workflow](../docs/src/assets/example_figures/getting_started.png)
+
 | Example | Guide | Topic |
 |---|---|---|
 | `getting_started.jl` | [Getting started](getting_started.md) | First PI model from local matrices through dynamics, stationary state, diagnostics, and convergence |
@@ -80,6 +90,8 @@ project and does not borrow a potentially incompatible global installation.
 | `parameter_scan.jl` | [Prepared parameter scans](parameter_scan.md) | Compiled scalar-rate families, recycled GMRES continuation, restart, streaming diagnostics, and batched sensitivities |
 | `pi_heom.jl` | [PI--HEOM](pi_heom.md) | Exactly scaled hierarchy, analytic dephasing, depth comparisons, fixed-capacity matrix-RHS actions, SciML construction, and block-preconditioned GMRES |
 | `pi_hops.jl` | [PI--HOPS collective dephasing](pi_hops.md) | Direct-sum Schur pure-state hierarchy, stationary colored-noise ensemble, analytic coherence, and deterministic PI--HEOM comparison |
+| `pi_hops_collective_emission.jl` | [PI--HOPS collective emission](pi_hops_collective_emission.md) | Non-Hermitian shared-bath coupling, exact one-excitation hierarchy closure, prescribed-noise paths, and conditioned `hops_rhs!` |
+| `pi_hops_mixed_multibath.jl` | [Mixed-state, multi-bath PI--HOPS](pi_hops_mixed_multibath.md) | Schur spectral initialization, reusable batch workspaces, Monte Carlo diagnostics, hierarchy metadata, and importance pruning |
 | `piccitto2021_interacting_time_crystal.jl` | [Interacting boundary time crystal](piccitto2021_interacting_time_crystal.md) | Nonlinear collective-spin slow modes |
 | `pra110_062208_lmg.jl` | [Dissipative LMG model](pra110_062208_lmg.md) | Exact finite PI versus finite-product and thermodynamic mean-field predictions |
 | `pra94_033838_superradiance.jl` | [Correlated superradiance](pra94_033838_superradiance.md) | Two-atom analytic benchmark, `N=30` radiated pulse, and peak-state Schur blocks |
@@ -108,7 +120,7 @@ julia --project=. examples/<name>.jl
 Use `--project=examples` for the Makie-enabled literature scripts: the
 year-named examples in the table, both `pra*.jl` validations,
 `quantum_trajectories.jl`, `meanfield_time_crystal.jl`, `pi_heom.jl`,
-`pi_hops.jl`, and
+the three `pi_hops*.jl` scripts, and
 `qudit_husimi.jl`. The Debecker example is the permutation-invariant
 uniform-all-pair specialization of the manuscript's nearest-neighbour model,
 not a reproduction of its spatial chain. Each paired guide describes its

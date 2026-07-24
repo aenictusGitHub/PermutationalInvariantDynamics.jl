@@ -77,6 +77,17 @@ may be shared, but a workspace may be used by only one task at a time. Every
 evaluated matrix is checked again for finite entries, Hermiticity, and
 positive semidefiniteness before it acts on a state.
 
+## Expected output
+
+![Expected correlated-reservoir excitation and Kossakowski-matrix figure](../docs/src/assets/example_figures/correlated_reservoirs.png)
+
+The left panel shows the excited fraction obtained from the state-free
+observable stream. The right panel displays the magnitudes of the two-channel
+Kossakowski matrix, including its nonzero cross correlations. This committed
+image uses the default parameters; the sparse-factorization equality and
+driven-kernel assertion in the script, rather than the pixels, are the
+numerical regression.
+
 Run the complete regression and evolution example with
 
 ```sh

@@ -154,3 +154,10 @@ julia --project=examples examples/pra94_033838_superradiance.jl
 
 The example uses the package in the active checkout and does not modify the
 project environment or install a second copy from GitHub.
+
+## Expected output
+
+![Expected altered-superradiance validation, pulse, and peak Schur-sector populations](../docs/src/assets/example_figures/pra94_033838_superradiance.png)
+
+The plotted `N=30` population solve and its step-doubling check are the same
+data used by the assertions.

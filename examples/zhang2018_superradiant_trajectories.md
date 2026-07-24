@@ -59,6 +59,11 @@ grid as needed, and converge the adaptive tolerances. This library stores PI
 density operators at every requested time, so that run uses substantially
 more memory than the paper's single-pseudo-state representation.
 
+The compact strong-local-loss panel stops at
+``\Gamma_c t=0.4``. Beyond that point the surviving records are rare enough
+that 256 paths do not support a reliable pointwise normal-standard-error
+check; increase the trajectory count before extending that tail.
+
 ## Unravelling boundary
 
 The deterministic master equation and all ensemble-linear observables are the
@@ -104,3 +109,10 @@ julia --project=examples examples/zhang2018_superradiant_trajectories.jl
 The script prints the pulse maxima, their times, channel-resolved mean jump
 counts, and the largest trajectory/master-equation discrepancy in standard-
 error units for each rate ratio.
+
+## Expected output
+
+![Expected Zhang--Mølmer superradiant trajectory pulses](../docs/src/assets/example_figures/zhang2018_superradiant_trajectories.png)
+
+The plotted ensemble is intentionally smaller than the paper's production
+calculation. Confidence bands reflect sampling error only.

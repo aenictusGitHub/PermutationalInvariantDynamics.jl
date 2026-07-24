@@ -253,3 +253,11 @@ julia --project=. examples/pi_heom.jl
 For production calculations, repeat the run with at least one smaller time
 step and one larger hierarchy depth. The two limits control different errors
 and should not be conflated.
+
+## Expected output
+
+![Expected PI--HEOM collective-dephasing convergence](../docs/src/assets/example_figures/pi_heom.png)
+
+The snapshot compares the default hierarchy depths with the analytical
+coherence. It illustrates, but does not replace, time-step and depth
+convergence.

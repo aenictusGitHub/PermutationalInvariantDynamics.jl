@@ -1,6 +1,9 @@
 using LinearAlgebra
 using PermutationalInvariantDynamics
 
+include(joinpath(@__DIR__, "utils", "makie_support.jl"))
+using .ExampleMakie
+
 N = 6
 basis = PIBasis(N, 2)
 sm = ComplexF64[0 1; 0 0]
@@ -50,3 +53,32 @@ println("initial trace derivative: ", trace_derivative)
 @assert identity_error < 1e-10
 @assert action_error < 1e-10
 @assert trace_derivative < 1e-10
+
+if makie_available()
+    M=makie_module()
+    figure=M.Figure(size=(1050,430),fontsize=17)
+    storage_axis=M.Axis(
+        figure[1,1];xlabel="Appendix-D representation",
+        ylabel="stored path entries",
+        xticks=([1,2],["exact-support CSC","dense reference"]),
+        title="Prepared p-body geometry")
+    validation_axis=M.Axis(
+        figure[1,2];xlabel="validation quantity",ylabel="absolute error",
+        yscale=log10,
+        xticks=(
+            1:3,
+            ["operator","action","trace"],
+        ),
+        title="Backend agreement (display floor ε)")
+
+    M.barplot!(
+        storage_axis,[1,2],
+        Float64[packing.retained_entries,packing.dense_entries];
+        color=[:dodgerblue3,:gray55],
+        strokecolor=:black,strokewidth=0.6)
+    M.scatterlines!(
+        validation_axis,1:3,
+        max.([identity_error,action_error,trace_derivative],eps(Float64));
+        color=:firebrick3,linewidth=2,markersize=10)
+    save_example_figure(figure,"pbody_pair_processes")
+end

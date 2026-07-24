@@ -8,7 +8,7 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
   "use strict";
 
-  const VERSION = "1.0.0";
+  const VERSION = "1.1.0";
   const MAX_FORMULA_LENGTH = 2000;
   const JULIA_RESERVED = new Set([
     "baremodule", "begin", "break", "catch", "const", "continue", "do",
@@ -21,6 +21,12 @@
     "N", "d", "basis", "spin", "terms", "model", "prepared", "steady",
     "rho_ss", "observable", "observable_plan", "observable_value",
     "one_body_geometry", "H_collective", "pi", "im", "Inf", "NaN",
+    "architecture", "MEMORY_BUDGET", "STEADY_ATOL", "STEADY_RTOL",
+    "STATE_VALIDATION_TOL", "system_basis", "system_terms",
+    "system_model", "H_system", "site", "embedding", "mode", "coupling",
+    "supersite_terms", "rho_system", "rho_mode", "mode_operators",
+    "mode_top_plan", "mode_top_population", "observable_one_body_geometry",
+    "top_projector", "top_population", "nmax",
   ]);
   const GREEK = new Set([
     "alpha", "beta", "gamma", "Gamma", "delta", "Delta", "epsilon",
@@ -503,6 +509,9 @@
         "Float64(N)" : node.name;
       if (context === "local") return atom.local;
       if (context === "collective" && atom.pi) return atom.pi;
+      if (context === "observable-collective" && atom.pi) {
+        return atom.pi.replace(/\bJ([xyzpm])\b/g, "observable_J$1");
+      }
       throw new Error(`Internal code-generation context mismatch for ${node.name}.`);
     }
     if (node.type === "unary") {
@@ -676,6 +685,23 @@
     if (!Number.isSafeInteger(localDimension) || localDimension < 2) {
       fail("d", "The local dimension d must be an integer of at least two.");
     }
+    const architectureAliases = new Map([
+      ["pi", "pi"],
+      ["local-pseudomode", "local-pseudomode"],
+      ["local_pseudomode", "local-pseudomode"],
+      ["global-pseudomode", "global-pseudomode"],
+      ["global_pseudomode", "global-pseudomode"],
+    ]);
+    const requestedArchitecture = config.architecture === undefined
+      ? "pi"
+      : String(config.architecture);
+    const architecture = architectureAliases.get(requestedArchitecture);
+    if (!architecture) {
+      fail(
+        "architecture",
+        "Choose an ordinary PI ensemble, identical local pseudomodes, or one shared global pseudomode.",
+      );
+    }
     const target = config.target === "steady" ? "steady" : "expectation";
     const parameters = new Set();
     const hamiltonianComponents = new Set();
@@ -683,6 +709,92 @@
     const warnings = [
       "The generated code checks convergence and state validity, but it does not certify uniqueness of the stationary state.",
     ];
+
+    let pseudomode = null;
+    if (architecture !== "pi") {
+      const input = config.pseudomode && typeof config.pseudomode === "object"
+        ? config.pseudomode
+        : {};
+      const cutoff = Number(input.nmax === undefined ? 1 : input.nmax);
+      if (!Number.isSafeInteger(cutoff) || cutoff < 0) {
+        fail("pseudomode cutoff", "The pseudomode cutoff nmax must be a nonnegative integer.");
+      }
+      function scalarField(value, fallback, field) {
+        const parsed = parseFormula(
+          String(value === undefined || String(value).trim() === "" ? fallback : value),
+          field,
+        );
+        if (analyze(parsed.ast, field).kind !== "scalar") {
+          fail(field, "This pseudomode setting must be a real scalar expression.");
+        }
+        collectParameters(parsed.ast, parameters);
+        return parsed;
+      }
+      const frequency = scalarField(input.frequency, "1", "pseudomode frequency");
+      const damping = scalarField(input.damping, "0.1", "pseudomode damping");
+      const thermalOccupation = scalarField(
+        input.thermalOccupation, "0", "pseudomode thermal occupation",
+      );
+      const strength = scalarField(
+        input.couplingStrength, "0.1", "pseudomode coupling strength",
+      );
+      const counterrotatingStrength = scalarField(
+        input.counterrotatingStrength, "0",
+        "pseudomode counter-rotating strength",
+      );
+      const couplingOperator = parseFormula(
+        String(input.couplingOperator || String.raw`\sigma_-`),
+        "pseudomode coupling operator",
+      );
+      const couplingInfo = analyze(
+        couplingOperator.ast, "pseudomode coupling operator",
+      );
+      if (couplingInfo.kind !== "operator" || !couplingInfo.linear) {
+        fail(
+          "pseudomode coupling operator",
+          "The coupling seed must be one linear one-site spin operator.",
+        );
+      }
+      requireFamilies(
+        couplingInfo, isLocalFamily, "pseudomode coupling operator",
+        "Use a one-site j_a or sigma_a coupling seed. The embedding performs the collective or supersite lift.",
+      );
+      if (localDimension !== 2 &&
+          [...couplingInfo.families].some((family) => family.includes("pauli"))) {
+        fail(
+          "pseudomode coupling operator",
+          "Pauli sigma symbols require d = 2. Use a local spin-j symbol for qudits.",
+        );
+      }
+      collectParameters(couplingOperator.ast, parameters);
+      pseudomode = {
+        nmax: cutoff,
+        frequency,
+        damping,
+        thermalOccupation,
+        couplingOperator,
+        strength,
+        counterrotatingStrength,
+      };
+      if (cutoff === 0) {
+        warnings.push("nmax = 0 removes every pseudomode excitation; increase the cutoff for a nontrivial embedding.");
+      }
+      if (architecture === "local-pseudomode") {
+        warnings.push(
+          `Each system has its own mode. The supersite dimension is d*(nmax+1) = ${localDimension * (cutoff + 1)}, so converge the cutoff and inspect the memory preflight.`,
+        );
+      } else {
+        warnings.push(
+          "The generated mode is one oscillator shared by the ensemble. This is physically different from one independent mode per system.",
+        );
+      }
+      warnings.push(
+        "The pseudomode cutoff is an approximation. Converge it and monitor the generated top-level population.",
+      );
+      warnings.push(
+        "With the package dissipator convention, pseudomode damping kappa makes the free mode amplitude decay at kappa/2.",
+      );
+    }
 
     let hamiltonian = null;
     const hamiltonianText = String(config.hamiltonian || "").trim();
@@ -747,12 +859,21 @@
       jumps.push({ kind, operator, rate, field, operatorParameters });
     }
 
-    if (!hamiltonian && !jumps.length) {
+    if (architecture === "pi" && !hamiltonian && !jumps.length) {
       fail("model", "Add a Hamiltonian or at least one dissipative channel.");
     }
-    if (!jumps.length) {
+    if (!jumps.length && architecture === "pi") {
       warnings.push("A Hamiltonian-only generator normally has many stationary states; add dissipation or analyse the stationary subspace.");
-    } else if (jumps.every((jump) => jump.kind === "collective")) {
+    } else if (
+      architecture === "global-pseudomode" &&
+      !jumps.some((jump) => jump.kind === "local")
+    ) {
+      warnings.push("No independent local system channel was selected. Shared-mode damping and collective coupling preserve system Schur-sector populations, so the stationary state is generally nonunique across sectors.");
+    } else if (
+      architecture === "pi" &&
+      jumps.length > 0 &&
+      jumps.every((jump) => jump.kind === "collective")
+    ) {
       warnings.push("Only collective channels were selected. With the complete PI basis, Schur-sector populations are conserved and the stationary state is generally nonunique.");
     }
 
@@ -815,6 +936,42 @@
         warnings.push(`${jump.field} contains a scalar parameter inside the jump operator and also has a nonunit rate. Confirm that the dissipator should square the internal coefficient.`);
       }
     }
+    if (pseudomode) {
+      const scalarFields = [
+        ["pseudomode frequency", pseudomode.frequency, false],
+        ["pseudomode damping", pseudomode.damping, true],
+        ["pseudomode thermal occupation", pseudomode.thermalOccupation, true],
+        ["pseudomode coupling strength", pseudomode.strength, false],
+        [
+          "pseudomode counter-rotating strength",
+          pseudomode.counterrotatingStrength,
+          false,
+        ],
+      ];
+      for (const [field, parsedScalar, nonnegative] of scalarFields) {
+        validateScalarSubexpressions(
+          parsedScalar.ast, values.values, particleCount, field,
+        );
+        const value = evaluateScalar(
+          parsedScalar.ast, values.values, particleCount,
+        );
+        if (value === null || !Number.isFinite(value) ||
+            (nonnegative && value < 0)) {
+          fail(
+            field,
+            nonnegative
+              ? "This setting must evaluate to a finite nonnegative real value."
+              : "This setting must evaluate to a finite real value.",
+          );
+        }
+      }
+      validateScalarSubexpressions(
+        pseudomode.couplingOperator.ast,
+        values.values,
+        particleCount,
+        "pseudomode coupling operator",
+      );
+    }
     if (observable) {
       validateScalarSubexpressions(
         observable.ast, values.values, particleCount, "observable");
@@ -825,6 +982,7 @@
     return {
       particleCount,
       localDimension,
+      architecture,
       target,
       hamiltonian,
       jumps,
@@ -834,6 +992,7 @@
       parameterValues: values,
       hamiltonianComponents,
       observableComponents,
+      pseudomode,
       warnings,
     };
   }
@@ -849,18 +1008,63 @@
     return names[component];
   }
 
+  function componentLocalExpression(component) {
+    const names = {
+      x: "spin.jx",
+      y: "spin.jy",
+      z: "spin.jz",
+      plus: "spin.jp",
+      minus: "spin.jm",
+    };
+    return names[component];
+  }
+
+  function observableComponentName(component) {
+    const [name] = componentDefinition(component);
+    return `observable_${name}`;
+  }
+
   function generate(config) {
     const parsed = parseModel(config);
     const lines = [];
+    const isPseudomode = parsed.architecture !== "pi";
+    const isLocalPseudomode = parsed.architecture === "local-pseudomode";
+    const isGlobalPseudomode = parsed.architecture === "global-pseudomode";
+    const hamiltonianEntries = [];
+    const linearHamiltonian = [];
+    const nonlinearHamiltonianEntries = [];
+    if (parsed.hamiltonian) {
+      flattenAdditive(parsed.hamiltonian.ast, 1, hamiltonianEntries);
+      for (const entry of hamiltonianEntries) {
+        const info = analyze(entry.node, "hamiltonian");
+        (info.linear ? linearHamiltonian : nonlinearHamiltonianEntries).push(entry);
+      }
+    }
+
     lines.push("# Generated by the PermutationalInvariantDynamics.jl model assistant.");
     lines.push("# Review the PI assumption: every constituent must be physically equivalent");
     lines.push("# and every local term/channel must act identically on all constituents.");
     lines.push("# Local sum_i D[l_i] and collective D[sum_i l_i] channels are different.");
+    if (isLocalPseudomode) {
+      lines.push("# Topology: every system has its own identical finite-cutoff pseudomode.");
+      lines.push("# Permutations act on complete system+pseudomode supersites.");
+    } else if (isGlobalPseudomode) {
+      lines.push("# Topology: one finite-cutoff pseudomode is shared by the PI ensemble.");
+      lines.push("# The coupling is collective and no Kac scaling is inserted automatically.");
+    }
+    if (isGlobalPseudomode) lines.push("using LinearAlgebra");
     lines.push("using PermutationalInvariantDynamics");
     lines.push("");
+    if (isPseudomode) {
+      lines.push("# One budget guards model preparation, reductions, and the stationary solve.");
+      lines.push("const MEMORY_BUDGET = 512 * 1024^2");
+      lines.push("const STEADY_ATOL = 1e-11");
+      lines.push("const STEADY_RTOL = 1e-9");
+      lines.push("const STATE_VALIDATION_TOL = 1e-8");
+      lines.push("");
+    }
     lines.push(`N = ${parsed.particleCount}`);
     lines.push(`d = ${parsed.localDimension}`);
-    lines.push("basis = PIBasis(N, d)  # complete PI basis; local noise may mix Schur sectors");
     lines.push("spin = spin_matrices(d)");
 
     if (parsed.parameters.size) {
@@ -873,41 +1077,43 @@
       }
     }
 
-    if (parsed.hamiltonianComponents.size) {
+    if (!isLocalPseudomode) {
+      lines.push("");
+      if (isGlobalPseudomode) {
+        lines.push("system_basis = PIBasis(N, d)  # complete system PI basis");
+      } else {
+        lines.push("basis = PIBasis(N, d)  # complete PI basis; local noise may mix Schur sectors");
+      }
+    }
+
+    const systemBasisName = isGlobalPseudomode ? "system_basis" : "basis";
+    if (parsed.hamiltonianComponents.size && !isLocalPseudomode) {
       lines.push("");
       lines.push("# Shared one-body geometry avoids rebuilding nonlinear Hamiltonian maps.");
-      lines.push("one_body_geometry = OneBodyGeometry(basis)");
+      lines.push(`one_body_geometry = OneBodyGeometry(${systemBasisName})`);
       for (const component of parsed.hamiltonianComponents) {
         const [name, symbol] = componentDefinition(component);
-        lines.push(`${name} = collective_spin(basis, ${symbol}; cache=one_body_geometry)`);
+        lines.push(`${name} = collective_spin(${systemBasisName}, ${symbol}; cache=one_body_geometry)`);
       }
     }
 
     const termLines = [];
-    if (parsed.hamiltonian) {
-      const entries = [];
-      flattenAdditive(parsed.hamiltonian.ast, 1, entries);
-      const linear = [];
-      const nonlinear = [];
-      for (const entry of entries) {
-        const info = analyze(entry.node, "hamiltonian");
-        (info.linear ? linear : nonlinear).push(entry);
-      }
-      if (linear.length) {
-        const localExpression = signedExpression(linear, "local");
+    if (!isLocalPseudomode) {
+      if (linearHamiltonian.length) {
+        const localExpression = signedExpression(linearHamiltonian, "local");
         termLines.push(`LocalHamiltonian(${localExpression}),`);
       }
-      if (nonlinear.length) {
+      if (nonlinearHamiltonianEntries.length) {
         lines.push("");
         lines.push("# Nonlinear collective Hamiltonian stays entirely in compressed PI coordinates.");
-        lines.push(`H_collective = ${signedExpression(nonlinear, "collective")}`);
+        lines.push(`H_collective = ${signedExpression(nonlinearHamiltonianEntries, "collective")}`);
         termLines.push("DirectPIHamiltonian(H_collective),");
       }
     }
 
     if (parsed.jumps.length) {
       lines.push("");
-      lines.push("# Jump seeds are d-by-d matrices; the term constructor performs the PI lift.");
+      lines.push("# These are bare-system d-by-d jump seeds.");
       parsed.jumps.forEach((jump, index) => {
         const name = `jump_${index + 1}`;
         lines.push(`${name} = ${emit(jump.operator.ast, "local")}`);
@@ -916,76 +1122,272 @@
       });
     }
 
-    lines.push("");
-    lines.push("# A tuple keeps the compiled kernel types concrete.");
-    lines.push("terms = (");
-    for (const termLine of termLines) lines.push(`    ${termLine}`);
-    lines.push(")");
-    lines.push("model = PIModel(basis, terms)");
-    lines.push("");
-    lines.push("# :auto selects the sparse/direct or matrix-free route from the compiled problem.");
-    lines.push("# For a large run, inspect recommend_solver(model; task=:steady_state) first.");
-    lines.push("prepared = compile(model; backend=:auto)");
-    lines.push("steady = stationary_state(prepared; return_info=true)");
+    if (!isPseudomode) {
+      lines.push("");
+      lines.push("# A tuple keeps the compiled kernel types concrete.");
+      lines.push("terms = (");
+      for (const termLine of termLines) lines.push(`    ${termLine}`);
+      lines.push(")");
+      lines.push("model = PIModel(basis, terms)");
+      lines.push("");
+      lines.push("# :auto selects the sparse/direct or matrix-free route from the compiled problem.");
+      lines.push("# For a large run, inspect recommend_solver(model; task=:steady_state) first.");
+      lines.push("prepared = compile(model; backend=:auto)");
+      lines.push("steady = stationary_state(prepared; return_info=true)");
+    } else {
+      const pseudomode = parsed.pseudomode;
+      lines.push("");
+      lines.push("# The mode data are separate from the bare-system Hamiltonian and jumps.");
+      lines.push("mode = BosonicPseudomode(");
+      lines.push(`    ${pseudomode.nmax};`);
+      lines.push("    label=:pseudomode,");
+      lines.push(`    frequency=${emit(pseudomode.frequency.ast, "scalar")},`);
+      lines.push(`    damping=${emit(pseudomode.damping.ast, "scalar")},`);
+      lines.push(`    thermal_occupation=${emit(pseudomode.thermalOccupation.ast, "scalar")},`);
+      lines.push("    memory_budget=MEMORY_BUDGET,");
+      lines.push(")");
+      lines.push("coupling = PseudomodeCoupling(");
+      lines.push(`    ${emit(pseudomode.couplingOperator.ast, "local")};`);
+      lines.push("    mode=:pseudomode,");
+      lines.push(`    strength=${emit(pseudomode.strength.ast, "scalar")},`);
+      lines.push(`    counterrotating_strength=${emit(pseudomode.counterrotatingStrength.ast, "scalar")},`);
+      lines.push("    memory_budget=MEMORY_BUDGET,");
+      lines.push(")");
+
+      if (isLocalPseudomode) {
+        lines.push("");
+        lines.push("# One exact PI supersite contains system_i and its own local mode_i.");
+        lines.push("site = pseudomode_supersite(");
+        lines.push("    N, d, mode; memory_budget=MEMORY_BUDGET)");
+        lines.push("basis = site.basis  # complete supersite PI basis");
+        if (parsed.hamiltonianComponents.size) {
+          lines.push("# Reuse this geometry for nonlinear system operators and diagnostics.");
+          lines.push("one_body_geometry = OneBodyGeometry(basis)");
+        }
+        if (linearHamiltonian.length) {
+          lines.push(`H_system = ${signedExpression(linearHamiltonian, "local")}`);
+        } else {
+          lines.push("H_system = zeros(ComplexF64, d, d)");
+        }
+        if (nonlinearHamiltonianEntries.length) {
+          lines.push("");
+          lines.push("# Lift bare-system generators before forming a supersite PI polynomial.");
+          for (const component of parsed.hamiltonianComponents) {
+            const [name] = componentDefinition(component);
+            lines.push(`${name} = collective_operator(`);
+            lines.push("    basis,");
+            lines.push(
+              `    lift_system_operator(site, ${componentLocalExpression(component)}; ` +
+              "memory_budget=MEMORY_BUDGET);",
+            );
+            lines.push("    cache=one_body_geometry,");
+            lines.push(")");
+          }
+          lines.push(`H_collective = ${signedExpression(nonlinearHamiltonianEntries, "collective")}`);
+          lines.push("supersite_terms = (DirectPIHamiltonian(H_collective),)");
+        } else {
+          lines.push("supersite_terms = ()");
+        }
+        lines.push("system_terms = (");
+        for (const termLine of termLines) lines.push(`    ${termLine}`);
+        lines.push(")");
+        lines.push("embedding = pseudomode_model(");
+        lines.push("    site, H_system;");
+        lines.push("    couplings=(coupling,),");
+        lines.push("    system_terms=system_terms,");
+        lines.push("    supersite_terms=supersite_terms,");
+        lines.push("    memory_budget=MEMORY_BUDGET,");
+        lines.push(")");
+        lines.push("model = embedding.model");
+        lines.push("");
+        lines.push("# :auto remains memory guarded and selects the cheapest exact prepared route.");
+        lines.push("prepared = compile(");
+        lines.push("    model; backend=:auto, memory_budget=MEMORY_BUDGET)");
+        lines.push("steady = stationary_state(");
+        lines.push("    prepared;");
+        lines.push("    atol=STEADY_ATOL, rtol=STEADY_RTOL,");
+        lines.push("    return_info=true, memory_budget=MEMORY_BUDGET,");
+        lines.push(")");
+      } else {
+        lines.push("");
+        lines.push("# Build the ordinary PI system first, then attach one shared mode.");
+        lines.push("system_terms = (");
+        for (const termLine of termLines) lines.push(`    ${termLine}`);
+        lines.push(")");
+        lines.push("system_model = PIModel(system_basis, system_terms)");
+        lines.push("embedding = global_pseudomode_model(");
+        lines.push("    system_model, mode;");
+        lines.push("    couplings=(coupling,),");
+        lines.push("    memory_budget=MEMORY_BUDGET,");
+        lines.push(")");
+        lines.push("");
+        lines.push("# The shared-mode model is already factorized; its automatic route is matrix-free GMRES.");
+        lines.push("# Do not compile or materialize its global Kronecker superoperator.");
+        lines.push("steady = stationary_state(");
+        lines.push("    embedding;");
+        lines.push("    algorithm=GMRESAlgorithm(krylovdim=40, maxiter=1000),");
+        lines.push("    atol=STEADY_ATOL, rtol=STEADY_RTOL,");
+        lines.push("    return_info=true,");
+        lines.push("    memory_budget=MEMORY_BUDGET,");
+        lines.push(")");
+      }
+    }
+
     lines.push("steady.info.converged || error(\"stationary solver did not converge\")");
     lines.push("rho_ss = steady.state");
-    lines.push("validate_state(rho_ss)  # checks trace, Hermiticity, and positivity");
+    if (isGlobalPseudomode) {
+      lines.push("# Packed model-owned reductions avoid any full-system reconstruction.");
+      lines.push("LinearAlgebra.ishermitian(");
+      lines.push("    rho_ss; atol=STATE_VALIDATION_TOL, rtol=STATE_VALIDATION_TOL) ||");
+      lines.push("    error(\"stationary composite state is not Hermitian\")");
+      lines.push("rho_system = trace_pseudomodes(rho_ss, embedding)");
+      lines.push("rho_mode = global_pseudomode_state(rho_ss, embedding)");
+      lines.push("validate_state(");
+      lines.push("    rho_system; atol=STATE_VALIDATION_TOL, rtol=STATE_VALIDATION_TOL)");
+      lines.push("mode_top_population = real(rho_mode[end, end])");
+    } else {
+      if (isLocalPseudomode) {
+        lines.push("validate_state(");
+        lines.push("    rho_ss; atol=STATE_VALIDATION_TOL, rtol=STATE_VALIDATION_TOL)");
+      } else {
+        lines.push("validate_state(rho_ss)  # checks trace, Hermiticity, and positivity");
+      }
+      if (isLocalPseudomode) {
+        if (!parsed.hamiltonianComponents.size) {
+          lines.push("# Prepare analysis geometry only after the stationary solve.");
+          lines.push("one_body_geometry = OneBodyGeometry(basis)");
+        }
+        lines.push("mode_operators = only(embedding.mode_operators)");
+        lines.push("mode_top_plan = CollectiveObservablePlan(");
+        lines.push("    basis, mode_operators.top_projector; cache=one_body_geometry)");
+        lines.push("mode_top_population =");
+        lines.push("    real(collective_expectation(rho_ss, mode_top_plan)) / N");
+      }
+    }
     lines.push("");
-    lines.push("println(\"PI coordinates = \", pi_dimension(basis))");
+    if (isGlobalPseudomode) {
+      lines.push("println(\"PI system coordinates = \", pi_dimension(system_basis))");
+      lines.push("println(\"composite coordinates = \", length(embedding.basis))");
+      lines.push("println(\"composite trace = \", trace(rho_ss))");
+    } else {
+      lines.push("println(\"PI coordinates = \", pi_dimension(basis))");
+    }
     lines.push("println(\"stationary residual = \", steady.info.residual)");
     lines.push("println(\"stationary trace error = \", steady.info.trace_error)");
+    if (isPseudomode) {
+      lines.push("println(\"pseudomode top-level population = \", mode_top_population)");
+    }
 
     if (parsed.target === "expectation") {
       lines.push("");
+      const observableBasis = isGlobalPseudomode ? "system_basis" : "basis";
+      const observableState = isGlobalPseudomode ? "rho_system" : "rho_ss";
       const needsObservableGeometry =
         parsed.observableMode === "collective-plan" ||
         parsed.observableMode === "single-site-plan" ||
         parsed.observableComponents.size > 0;
-      if (needsObservableGeometry && !parsed.hamiltonianComponents.size) {
+      const canReuseHamiltonianGeometry =
+        parsed.hamiltonianComponents.size > 0 && !isLocalPseudomode;
+      let observableGeometry = "one_body_geometry";
+      if (isLocalPseudomode) {
+        observableGeometry = "one_body_geometry";
+      } else if (needsObservableGeometry && !canReuseHamiltonianGeometry) {
         lines.push("# Observable geometry is prepared only after the stationary solve.");
-        lines.push("one_body_geometry = OneBodyGeometry(basis)");
+        lines.push(`observable_one_body_geometry = OneBodyGeometry(${observableBasis})`);
+        observableGeometry = "observable_one_body_geometry";
       }
       for (const component of parsed.observableComponents) {
-        if (parsed.hamiltonianComponents.has(component)) continue;
-        const [name, symbol] = componentDefinition(component);
-        lines.push(`${name} = collective_spin(basis, ${symbol}; cache=one_body_geometry)`);
+        const [hamiltonianName, symbol] = componentDefinition(component);
+        const observableName = observableComponentName(component);
+        if (parsed.hamiltonianComponents.has(component)) {
+          lines.push(`${observableName} = ${hamiltonianName}`);
+        } else if (isLocalPseudomode) {
+          lines.push(`${observableName} = collective_operator(`);
+          lines.push("    basis,");
+          lines.push(
+            `    lift_system_operator(site, ${componentLocalExpression(component)}; ` +
+            "memory_budget=MEMORY_BUDGET);",
+          );
+          lines.push(`    cache=${observableGeometry},`);
+          lines.push(")");
+        } else {
+          lines.push(
+            `${observableName} = ` +
+            `collective_spin(${observableBasis}, ${symbol}; cache=${observableGeometry})`,
+          );
+        }
       }
       if (parsed.observableMode === "collective-plan") {
         lines.push("# The prepared plan is reusable for the same observable on further states.");
-        lines.push(`observable_plan = CollectiveObservablePlan(basis, ${emit(parsed.observable.ast, "local")}; cache=one_body_geometry)`);
-        lines.push("observable_value = collective_expectation(rho_ss, observable_plan)");
+        const localObservable = emit(parsed.observable.ast, "local");
+        const preparedLocalObservable = isLocalPseudomode
+          ? `lift_system_operator(site, ${localObservable}; memory_budget=MEMORY_BUDGET)`
+          : localObservable;
+        lines.push("observable_plan = CollectiveObservablePlan(");
+        lines.push(`    ${observableBasis}, ${preparedLocalObservable};`);
+        lines.push(`    cache=${observableGeometry},`);
+        lines.push(")");
+        lines.push(`observable_value = collective_expectation(${observableState}, observable_plan)`);
       } else if (parsed.observableMode === "single-site-plan") {
         lines.push("# PI symmetry makes every one-site marginal expectation identical.");
-        lines.push(`observable_plan = CollectiveObservablePlan(basis, ${emit(parsed.observable.ast, "local")}; cache=one_body_geometry)`);
-        lines.push("observable_value = collective_expectation(rho_ss, observable_plan) / N");
+        const localObservable = emit(parsed.observable.ast, "local");
+        const preparedLocalObservable = isLocalPseudomode
+          ? `lift_system_operator(site, ${localObservable}; memory_budget=MEMORY_BUDGET)`
+          : localObservable;
+        lines.push("observable_plan = CollectiveObservablePlan(");
+        lines.push(`    ${observableBasis}, ${preparedLocalObservable};`);
+        lines.push(`    cache=${observableGeometry},`);
+        lines.push(")");
+        lines.push(`observable_value = collective_expectation(${observableState}, observable_plan) / N`);
       } else {
         lines.push("# Polynomial collective observable, constructed only in PI coordinates.");
-        lines.push(`observable = ${emit(parsed.observable.ast, "collective")}`);
+        lines.push(`observable = ${emit(parsed.observable.ast, "observable-collective")}`);
         lines.push("# expectation uses a Hilbert--Schmidt convention, hence the explicit adjoint");
-        lines.push("# computes tr(observable * rho_ss), also for non-Hermitian expressions.");
-        lines.push("observable_value = expectation(rho_ss, adjoint(observable))");
+        lines.push("# computes tr(observable * rho), also for non-Hermitian expressions.");
+        lines.push(`observable_value = expectation(${observableState}, adjoint(observable))`);
       }
       lines.push("println(\"steady-state observable = \", observable_value)");
     }
     lines.push("");
     lines.push("# Convergence does not by itself prove that the stationary state is unique.");
 
-    const nonlinearHamiltonian = parsed.hamiltonian &&
-      !analyze(parsed.hamiltonian.ast, "hamiltonian").linear;
+    const nonlinearHamiltonian =
+      nonlinearHamiltonianEntries.length > 0;
+    const userTermCount =
+      (linearHamiltonian.length ? 1 : 0) +
+      (nonlinearHamiltonianEntries.length ? 1 : 0) +
+      parsed.jumps.length;
+    const architectureLabels = {
+      pi: "ordinary PI ensemble",
+      "local-pseudomode": "identical local pseudomodes",
+      "global-pseudomode": "one shared global pseudomode",
+    };
+    let route = nonlinearHamiltonian
+      ? "automatic backend with compressed collective PI operators"
+      : "automatic backend with prepared one-body kernels";
+    if (isLocalPseudomode) {
+      route = "PI supersite with a memory-guarded automatic backend";
+    } else if (isGlobalPseudomode) {
+      route = "factorized composite model with matrix-free GMRES";
+    }
     return {
       code: `${lines.join("\n")}\n`,
       warnings: parsed.warnings,
       summary: {
-        terms: termLines.length,
+        terms: userTermCount,
         jumps: parsed.jumps.length,
         target: parsed.target,
-        route: nonlinearHamiltonian
-          ? "automatic backend with compressed collective PI operators"
-          : "automatic backend with prepared one-body kernels",
+        architecture: parsed.architecture,
+        topology: architectureLabels[parsed.architecture],
+        cutoff: parsed.pseudomode ? parsed.pseudomode.nmax : null,
+        route,
       },
       normalized: {
         hamiltonian: parsed.hamiltonian ? parsed.hamiltonian.normalized : "",
         observable: parsed.observable ? parsed.observable.normalized : "",
+        pseudomodeCoupling: parsed.pseudomode
+          ? parsed.pseudomode.couplingOperator.normalized
+          : "",
       },
     };
   }

@@ -46,3 +46,10 @@ julia --project=examples examples/meiser2009_steady_superradiance.jl
 
 Finite `N` shifts and rounds the optimum, so compare trends rather than
 expecting the asymptotic maximum exactly.
+
+## Expected output
+
+![Expected steady superradiant intensity and enhancement versus pumping](../docs/src/assets/example_figures/meiser2009_steady_superradiance.png)
+
+The points use the default finite ensemble; the asymptotic prediction is
+included only as a reference.

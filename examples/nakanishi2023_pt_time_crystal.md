@@ -108,3 +108,10 @@ julia --project=examples examples/nakanishi2023_pt_time_crystal.jl
 
 Running under the root package environment still performs the numerical
 validation; without CairoMakie, it logs that the optional figure was skipped.
+
+## Expected output
+
+![Expected balanced Liouvillian spectrum and collective oscillation](../docs/src/assets/example_figures/nakanishi2023_pt_time_crystal.png)
+
+The spectrum is the complete default finite-`N` PI spectrum; the dynamics
+panel uses the separately checked matrix-free evolution.

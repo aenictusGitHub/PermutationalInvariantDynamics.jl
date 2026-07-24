@@ -54,3 +54,10 @@ analytic exponential. This is also a useful convention check for factors of
 two in a dephasing dissipator. Increase `steps_per_interval` until the reported
 error is converged when changing the time grid or rates. Without CairoMakie,
 all numerical checks still run and only figure rendering is skipped.
+
+## Expected output
+
+![Expected Ramsey coherence under independent dephasing](../docs/src/assets/example_figures/huelga1997_ramsey_dephasing.png)
+
+The markers are the PI evolution for the default controls and the line is the
+analytical exponential used by the numerical assertion.

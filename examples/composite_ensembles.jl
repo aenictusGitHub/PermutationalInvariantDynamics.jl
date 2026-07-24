@@ -1,6 +1,9 @@
 using LinearAlgebra
 using PermutationalInvariantDynamics
 
+include(joinpath(@__DIR__, "utils", "makie_support.jl"))
+using .ExampleMakie
+
 # Two independently PI ensembles and one finite two-level auxiliary system.
 # Ensemble A already spans the full N=2 PI space, including its j=1 and j=0
 # Schur sectors, while the complete example remains intentionally small.
@@ -110,3 +113,40 @@ println("Final   <Jz_a>: ", final_signal)
 println("Final trace: ", real(trace(rho_final)))
 println("Batched forward/adjoint errors: ",
         batch_forward_error, " / ", batch_adjoint_error)
+
+if makie_available()
+    M = makie_module()
+    figure = M.Figure(size=(1050, 430), fontsize=17)
+    signal_axis = M.Axis(
+        figure[1, 1];
+        xlabel="state", ylabel="⟨Σᵢ σz⁽ᴬ⁾⟩",
+        xticks=([1, 2], ["initial", "final"]),
+        title="Composite evolution")
+    validation_axis = M.Axis(
+        figure[1, 2];
+        xlabel="validation quantity", ylabel="absolute error",
+        yscale=log10,
+        xticks=(
+            1:4,
+            ["tr(ℒρ₀)", "batch", "adjoint", "tr(ρf)−1"],
+        ),
+        title="Prepared-kernel checks (display floor ε)")
+
+    M.barplot!(
+        signal_axis, [1, 2], [initial_signal, final_signal];
+        color=[:gray50, :dodgerblue3],
+        strokecolor=:black, strokewidth=0.6)
+    M.hlines!(signal_axis, [0.0]; color=:gray65, linestyle=:dash)
+
+    validation_errors = [
+        abs(dot(trace_vector, derivative)),
+        batch_forward_error,
+        batch_adjoint_error,
+        abs(trace(rho_final) - 1),
+    ]
+    M.scatterlines!(
+        validation_axis, 1:4,
+        max.(validation_errors, eps(Float64));
+        color=:firebrick3, linewidth=2, markersize=10)
+    save_example_figure(figure, "composite_ensembles")
+end

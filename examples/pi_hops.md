@@ -100,6 +100,14 @@ be converged toward the same reduced dynamics. The script checks that HEOM
 agrees tightly with the analytic signal and that the finite HOPS mean falls
 within a deliberately loose Monte Carlo validation bound.
 
+## Figure
+
+With CairoMakie available, the script writes `pi_hops.{pdf,png}`. The first
+panel overlays the analytical coherence, deterministic PI--HEOM result, and
+PI--HOPS ensemble mean. The second panel shows the pointwise HOPS and HEOM
+errors relative to the analytical curve. Plotting reuses the arrays that pass
+the numerical assertions and does not trigger another solve.
+
 ## What to converge
 
 For a publishable result, repeat the calculation while changing one control
@@ -138,3 +146,10 @@ D. Süß, A. Eisfeld, and W. T. Strunz,
 Practical convergence and
 colored-noise generation are discussed by R. Hartmann and W. T. Strunz,
 [*J. Chem. Theory Comput.* **13**, 5834 (2017)](https://doi.org/10.1021/acs.jctc.7b00751).
+
+## Expected output
+
+![Expected PI--HOPS ensemble, PI--HEOM reference, and analytical coherence](../docs/src/assets/example_figures/pi_hops.png)
+
+The stochastic curve uses the script's fixed seed and default path count.
+Monte Carlo, time-step, and hierarchy errors must be converged separately.

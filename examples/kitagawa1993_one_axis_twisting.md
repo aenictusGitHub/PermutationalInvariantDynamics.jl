@@ -70,3 +70,10 @@ Increase `steps_per_interval` to check fixed-step convergence after changing
 the Hamiltonian strength or sampling grid. Without CairoMakie, the numerical
 benchmark and reduced-state calculation still run and only plotting is
 skipped.
+
+## Expected output
+
+![Expected one-axis-twisting collective signal and reduced-state purity](../docs/src/assets/example_figures/kitagawa1993_one_axis_twisting.png)
+
+The numerical markers use the default fixed-step controls and are compared
+with the analytical collective-spin curve.

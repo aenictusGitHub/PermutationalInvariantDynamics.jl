@@ -112,3 +112,17 @@ basis automatically. A complete basis has
 `binomial(N + d^2 - 1, N)` PI coordinates with
 `d=2(nmax+1)`, so the pseudomode cutoff must be convergence-tested and its
 rapid coordinate growth estimated before large scans.
+
+## Expected output
+
+`paper_models.jl` is a constructor module and intentionally performs no solve
+when included. Its constructors feed the checked workflows illustrated below:
+
+![Expected Damanet correlated-superradiance output](../docs/src/assets/example_figures/pra94_033838_superradiance.png)
+
+![Expected Pausch dissipative-LMG output](../docs/src/assets/example_figures/pra110_062208_lmg_meanfield.png)
+
+![Expected Debecker all-to-all pseudomode output](../docs/src/assets/example_figures/debecker2026_all_to_all_ising_pseudomodes.png)
+
+Run the linked model-specific scripts to reproduce a figure; including this
+helper alone only defines the constructors.

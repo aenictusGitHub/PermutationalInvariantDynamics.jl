@@ -85,3 +85,14 @@ All generated SVGs are written inside a temporary directory that is removed
 when the script exits. The complete conventions and performance scaling are
 documented in the package's
 [spin phase-space guide](../docs/src/spin_phase_space.md).
+
+## Expected output
+
+![Expected multi-sector Husimi-Q marginal](../docs/src/assets/example_figures/spin_phase_space_husimi_q.svg)
+
+![Expected multi-sector spin-Wigner marginal](../docs/src/assets/example_figures/spin_phase_space_wigner_marginal.svg)
+
+![Expected fully symmetric-sector spin-Wigner function](../docs/src/assets/example_figures/spin_phase_space_wigner_symmetric_sector.svg)
+
+The Wigner snapshots retain the negative values checked by the script. Each
+image reuses the resolved numerical transform and does not recompute it.

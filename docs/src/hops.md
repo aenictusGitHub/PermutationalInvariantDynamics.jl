@@ -301,9 +301,27 @@ Agreement between two hierarchy depths is not a sampling-error estimate.
 Initial system--bath correlations are outside the factorized Gaussian-bath
 derivation and are not inferred by the backend.
 
-The executable [`examples/pi_hops.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/pi_hops.jl)
-performs these checks for a small collective-dephasing model and compares the
-HOPS mean with deterministic PI--HEOM and the analytic coherence.
+## Runnable examples
+
+The HOPS examples separate three complementary workflows:
+
+- [`examples/pi_hops.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/pi_hops.jl)
+  introduces a pure-state, one-bath collective-dephasing calculation and
+  compares the HOPS mean with deterministic PI--HEOM and the analytical
+  coherence.
+- [`examples/pi_hops_collective_emission.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/pi_hops_collective_emission.jl)
+  uses the non-Hermitian coupling ``L=J_-`` in a one-excitation manifold. It
+  validates the exact depth-one closure, prescribed conditioned noise,
+  `hops_density`, hierarchy inspection, and deterministic `hops_rhs!`.
+- [`examples/pi_hops_mixed_multibath.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/pi_hops_mixed_multibath.jl)
+  starts from a genuinely mixed, multi-sector PI state and two independent
+  shared baths. It demonstrates `hops_initial_ensemble`,
+  `HOPSBatchWorkspace`, `return_info=true`, Monte Carlo error contraction,
+  and setup-only importance pruning.
+
+All three scripts retain numerical assertions when CairoMakie is unavailable.
+With the examples environment they also render the already validated arrays;
+plotting never triggers another HOPS solve.
 
 ## API
 

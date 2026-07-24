@@ -66,7 +66,7 @@
   });
   assertIncludes(nonlinear.code, "DirectPIHamiltonian(H_collective)", "nonlinear PI Hamiltonian");
   assertIncludes(nonlinear.code, "Jx * Jx", "PIOperator powers use multiplication");
-  assertIncludes(nonlinear.code, "(1.0 / (Float64(N) ^ 2)) * (Jx * Jx)", "PIOperator division becomes scalar multiplication");
+  assertIncludes(nonlinear.code, "(1.0 / (Float64(N) ^ 2)) * (observable_Jx * observable_Jx)", "PIOperator division becomes scalar multiplication");
   assertIncludes(nonlinear.code, "expectation(rho_ss, adjoint(observable))", "polynomial observable");
   assertIncludes(nonlinear.code, "OneBodyGeometry(basis)", "shared collective geometry");
 
@@ -102,6 +102,109 @@
   });
   assertIncludes(qudit.code, "spin_matrices(d)", "qudit spin matrices");
   assertIncludes(qudit.code, "jump_1 = spin.jm", "qudit local lowering operator");
+
+  const localPseudomode = api.generate({
+    architecture: "local-pseudomode",
+    N: 2,
+    d: 2,
+    target: "expectation",
+    hamiltonian: String.raw`\Omega J_z + \chi J_x^2`,
+    jumps: [
+      { kind: "local", operator: String.raw`\sigma_-`, rate: String.raw`\gamma` },
+      { kind: "collective", operator: "J_-", rate: String.raw`\Gamma` },
+    ],
+    observable: "J_x^2/N^2",
+    pseudomode: {
+      nmax: 1,
+      frequency: String.raw`\omega_c`,
+      damping: String.raw`\kappa`,
+      thermalOccupation: "nbar",
+      couplingOperator: String.raw`\sigma_-`,
+      couplingStrength: "g",
+      counterrotatingStrength: "g_cr",
+    },
+    parameters: String.raw`\Omega=0.5
+\chi=0.02
+\gamma=0.1
+\Gamma=0.01
+\omega_c=1
+\kappa=0.2
+nbar=0
+g=0.15
+g_cr=0`,
+  });
+  assertIncludes(localPseudomode.code, "BosonicPseudomode(", "local mode specification");
+  assertIncludes(localPseudomode.code, "pseudomode_supersite(", "local supersite construction");
+  assertIncludes(localPseudomode.code, "embedding = pseudomode_model(", "local embedding builder");
+  assertIncludes(localPseudomode.code, "lift_system_operator(site, spin.jx", "nonlinear bare-system lift");
+  assertIncludes(localPseudomode.code, "supersite_terms = (DirectPIHamiltonian(H_collective),)", "nonlinear supersite PI term");
+  assertIncludes(localPseudomode.code, "system_terms=system_terms", "system channels are lifted by the builder");
+  assertIncludes(localPseudomode.code, "backend=:auto", "local embedding keeps guarded automatic compilation");
+  assertIncludes(localPseudomode.code, "mode_top_population", "local cutoff diagnostic");
+  assertIncludes(localPseudomode.code, "observable_Jx = Jx", "system-only supersite observable reuses prepared polynomial component");
+  assert(!localPseudomode.code.includes("collective_spin(basis"), "supersite must not be treated as a spin-(D-1)/2 object");
+  assert(!localPseudomode.code.includes("kron("), "generator never emits a full tensor construction");
+  assert(localPseudomode.summary.architecture === "local-pseudomode", "local topology summary");
+  assert(localPseudomode.summary.cutoff === 1, "local cutoff summary");
+
+  const globalPseudomode = api.generate({
+    architecture: "global-pseudomode",
+    N: 3,
+    d: 2,
+    target: "expectation",
+    hamiltonian: String.raw`\Omega J_x + \chi J_z^2`,
+    jumps: [{ kind: "local", operator: String.raw`\sigma_-`, rate: String.raw`\gamma` }],
+    observable: "J_z/N",
+    pseudomode: {
+      nmax: 2,
+      frequency: String.raw`\omega_c`,
+      damping: String.raw`\kappa`,
+      thermalOccupation: "0",
+      couplingOperator: String.raw`\sigma_-`,
+      couplingStrength: "g",
+      counterrotatingStrength: "0",
+    },
+    parameters: String.raw`\Omega=0.5
+\chi=0.02
+\gamma=0.1
+\omega_c=1
+\kappa=0.2
+g=0.15`,
+  });
+  assertIncludes(globalPseudomode.code, "system_model = PIModel(system_basis, system_terms)", "shared mode starts from an ordinary PI model");
+  assertIncludes(globalPseudomode.code, "global_pseudomode_model(", "shared embedding builder");
+  assertIncludes(globalPseudomode.code, "stationary_state(\n    embedding;", "specialized shared-mode stationary route");
+  assertIncludes(globalPseudomode.code, "GMRESAlgorithm(krylovdim=40, maxiter=1000)", "bounded shared-mode GMRES settings");
+  assertIncludes(globalPseudomode.code, "rho_system = trace_pseudomodes(rho_ss, embedding)", "packed system reduction");
+  assertIncludes(globalPseudomode.code, "rho_mode = global_pseudomode_state", "packed mode reduction");
+  assertIncludes(globalPseudomode.code, "LinearAlgebra.ishermitian(", "composite Hermiticity check");
+  assertIncludes(globalPseudomode.code, "mode_top_population", "global cutoff diagnostic");
+  assert(!globalPseudomode.code.includes("compile(\n    embedding"), "shared model must not be compiled as an ordinary PI model");
+  assert(!globalPseudomode.code.includes("kron("), "shared model stays factorized");
+  assert(globalPseudomode.summary.route.includes("matrix-free GMRES"), "global route summary");
+
+  const pseudomodeCollision = api.generate({
+    architecture: "global-pseudomode",
+    N: 2,
+    d: 2,
+    target: "steady",
+    hamiltonian: "",
+    jumps: [],
+    pseudomode: {
+      nmax: 1,
+      frequency: "mode",
+      damping: "0.2",
+      thermalOccupation: "0",
+      couplingOperator: "j_-",
+      couplingStrength: "coupling",
+      counterrotatingStrength: "0",
+    },
+    parameters: "mode=1\ncoupling=0.1",
+  });
+  assertIncludes(pseudomodeCollision.code, "parameter_mode = 1.0", "mode name collision is renamed");
+  assertIncludes(pseudomodeCollision.code, "parameter_coupling = 0.1", "coupling name collision is renamed");
+  assertIncludes(pseudomodeCollision.code, "frequency=parameter_mode", "renamed mode parameter is used");
+  assertIncludes(pseudomodeCollision.code, "strength=parameter_coupling", "renamed coupling parameter is used");
 
   const missing = api.generate({
     N: 3,
@@ -245,6 +348,83 @@
     }),
     "observable",
     "zero operator power",
+  );
+  assertRejects(
+    () => api.generate({
+      architecture: "tensor-network",
+      N: 2, d: 2, target: "steady", hamiltonian: "J_z", jumps: [],
+    }),
+    "architecture",
+    "unknown composite architecture",
+  );
+  assertRejects(
+    () => api.generate({
+      architecture: "local-pseudomode",
+      N: 2, d: 2, target: "steady", hamiltonian: "", jumps: [],
+      pseudomode: { nmax: -1, couplingOperator: "j_-", couplingStrength: "1" },
+    }),
+    "pseudomode cutoff",
+    "negative pseudomode cutoff",
+  );
+  assertRejects(
+    () => api.generate({
+      architecture: "global-pseudomode",
+      N: 2, d: 2, target: "steady", hamiltonian: "", jumps: [],
+      pseudomode: {
+        nmax: 1, frequency: "1", damping: "-0.1", thermalOccupation: "0",
+        couplingOperator: "j_-", couplingStrength: "0.1",
+      },
+    }),
+    "pseudomode damping",
+    "negative pseudomode damping",
+  );
+  assertRejects(
+    () => api.generate({
+      architecture: "global-pseudomode",
+      N: 2, d: 2, target: "steady", hamiltonian: "", jumps: [],
+      pseudomode: {
+        nmax: 1, frequency: "1", damping: "0.1", thermalOccupation: "-0.2",
+        couplingOperator: "j_-", couplingStrength: "0.1",
+      },
+    }),
+    "pseudomode thermal occupation",
+    "negative thermal occupation",
+  );
+  assertRejects(
+    () => api.generate({
+      architecture: "global-pseudomode",
+      N: 2, d: 2, target: "steady", hamiltonian: "", jumps: [],
+      pseudomode: {
+        nmax: 1, frequency: "J_z", damping: "0.1", thermalOccupation: "0",
+        couplingOperator: "j_-", couplingStrength: "0.1",
+      },
+    }),
+    "pseudomode frequency",
+    "operator-valued pseudomode scalar",
+  );
+  assertRejects(
+    () => api.generate({
+      architecture: "global-pseudomode",
+      N: 2, d: 2, target: "steady", hamiltonian: "", jumps: [],
+      pseudomode: {
+        nmax: 1, frequency: "1", damping: "0.1", thermalOccupation: "0",
+        couplingOperator: "J_-", couplingStrength: "0.1",
+      },
+    }),
+    "pseudomode coupling operator",
+    "collective pseudomode seed",
+  );
+  assertRejects(
+    () => api.generate({
+      architecture: "local-pseudomode",
+      N: 2, d: 3, target: "steady", hamiltonian: "", jumps: [],
+      pseudomode: {
+        nmax: 1, frequency: "1", damping: "0.1", thermalOccupation: "0",
+        couplingOperator: String.raw`\sigma_-`, couplingStrength: "0.1",
+      },
+    }),
+    "pseudomode coupling operator",
+    "Pauli pseudomode seed on a qudit",
   );
 
   const output = `model code generator tests: ${passed} passed`;

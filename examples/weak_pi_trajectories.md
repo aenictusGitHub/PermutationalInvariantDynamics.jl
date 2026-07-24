@@ -236,3 +236,13 @@ their higher trajectory statistics. The example therefore validates ensemble
 quantities and sector-selection metadata; it does not claim path-by-path
 identity with the article, the density-valued unraveling, or a labeled-emitter
 trajectory.
+
+## Expected output
+
+![Expected weak-PI and density-valued trajectory comparison](../docs/src/assets/example_figures/weak_pi_trajectories_zhang_molmer.png)
+
+![Expected weak-PI representation, runtime, and retained-history comparison](../docs/src/assets/example_figures/weak_pi_trajectories_method_comparison.png)
+
+Both snapshots use the documented seed and modest default ensembles. Timings
+are illustrative measurements of one run, while the physical panels are
+checked against the deterministic population evolution.

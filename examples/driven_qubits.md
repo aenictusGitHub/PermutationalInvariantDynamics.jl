@@ -44,6 +44,17 @@ The script also calls `diagnostics` on the compiled model and the final state.
 It asserts that the initial and final states are valid and that the reduced
 state has unit trace.
 
+## Expected output
+
+![Driven-qubit excitation and one-body state](../docs/src/assets/example_figures/driven_qubits.png)
+
+The left panel shows the collective excitation fraction at the five saved
+times. The right panel displays the absolute values of the final reduced
+one-qubit density-matrix entries obtained by the prepared one-body contraction.
+This preview uses the default `N = 20`, rates, sampling grid, and 32 RK4 steps
+per interval. Increase the temporal resolution and verify the reported state
+diagnostics before treating the curve or matrix entries as converged data.
+
 ## Run
 
 ```sh
@@ -54,3 +65,7 @@ The output reports the PI coordinate dimension, selected backend, excitation
 fraction at all five saved times, final one-body state, trace error, and
 minimum sector eigenvalue. Increase `steps_per_interval` to verify RK4
 convergence before using the result quantitatively.
+
+Use the examples environment described in [`README.md`](README.md) to save
+the optional PDF and PNG. The root package environment performs all numerical
+checks and skips only Makie rendering.

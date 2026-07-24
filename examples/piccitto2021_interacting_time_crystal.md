@@ -96,3 +96,10 @@ CairoMakie is unavailable, only figure generation is skipped.
 Reference: A. Piccitto, M. Wauters, F. Nori, and N. Shammah,
 *Symmetries and conserved quantities of boundary time crystals in generalized
 spin models*, [Phys. Rev. B **104**, 014307 (2021)](https://doi.org/10.1103/PhysRevB.104.014307).
+
+## Expected output
+
+![Expected interacting boundary-time-crystal slow-mode scaling](../docs/src/assets/example_figures/piccitto2021_interacting_time_crystal.png)
+
+The finite sizes and selected modes are the checked defaults; larger-size
+claims require a separately converged spectral calculation.

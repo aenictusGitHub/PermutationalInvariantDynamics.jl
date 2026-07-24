@@ -15,3 +15,11 @@ Run from the repository root:
 ```sh
 julia --project=. examples/research_utilities.jl
 ```
+
+## Expected output
+
+![Expected PI channel, sampling, and tomography probabilities](../docs/src/assets/example_figures/research_utilities.png)
+
+The channel output is compared with the fixed-seed sample frequencies and
+constrained maximum-likelihood estimate. The numerical channel, checkpoint,
+population, and symmetry assertions run before rendering.

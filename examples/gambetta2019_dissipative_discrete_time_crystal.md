@@ -151,3 +151,10 @@ remain active when the optional CairoMakie figure is skipped.
 Increase both segment step counts together when changing parameters. A single
 uniform integration over the full period must resolve \(t_R=0.01\) and is much
 less efficient for this piecewise-constant protocol.
+
+## Expected output
+
+![Expected finite-size Floquet spectrum and decaying subharmonic response](../docs/src/assets/example_figures/gambetta2019_dissipative_discrete_time_crystal.png)
+
+This snapshot uses the default finite-`N` and step-doubled controls. It is a
+finite-size precursor, not evidence by itself for an asymptotic time crystal.

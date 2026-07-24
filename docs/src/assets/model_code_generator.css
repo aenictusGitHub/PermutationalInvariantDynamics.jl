@@ -125,6 +125,57 @@ html.theme--catppuccin-frappe #pid-code-generator {
   margin-bottom: 0.85rem;
 }
 
+#pid-code-generator [hidden] {
+  display: none !important;
+}
+
+#pid-code-generator .pid-architecture-field {
+  background: rgba(53, 89, 199, 0.06);
+  border: 1px solid rgba(53, 89, 199, 0.18);
+  border-radius: 0.65rem;
+  padding: 0.7rem;
+}
+
+#pid-code-generator .pid-subpanel {
+  background: var(--pid-panel-raised);
+  border: 1px solid var(--pid-border);
+  border-radius: 0.7rem;
+  margin: 0 0 0.9rem;
+  min-width: 0;
+  padding: 0.75rem;
+}
+
+#pid-code-generator .pid-subpanel legend {
+  color: inherit;
+  font-size: 0.86rem;
+  font-weight: 800;
+  padding: 0 0.35rem;
+}
+
+#pid-code-generator .pid-architecture-note {
+  background: rgba(53, 89, 199, 0.07);
+  border-left: 0.2rem solid var(--pid-accent);
+  color: var(--pid-muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+  margin: 0 0 0.75rem;
+  padding: 0.55rem 0.65rem;
+}
+
+#pid-code-generator .pid-pseudomode-grid {
+  display: grid;
+  gap: 0 0.7rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+#pid-code-generator .pid-pseudomode-grid .pid-field {
+  min-width: 0;
+}
+
+#pid-code-generator .pid-span-two {
+  grid-column: 1 / -1;
+}
+
 #pid-code-generator .pid-label,
 #pid-code-generator .pid-mini-label {
   color: inherit;
@@ -350,8 +401,13 @@ html.theme--catppuccin-frappe #pid-code-generator {
 
 @media (max-width: 700px) {
   #pid-code-generator .pid-grid-two,
+  #pid-code-generator .pid-pseudomode-grid,
   #pid-code-generator .pid-jump-row {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  #pid-code-generator .pid-span-two {
+    grid-column: auto;
   }
 
   #pid-code-generator .pid-panel-heading {
@@ -373,8 +429,13 @@ html.theme--catppuccin-frappe #pid-code-generator {
 
 @container pid-generator (max-width: 42rem) {
   #pid-code-generator .pid-grid-two,
+  #pid-code-generator .pid-pseudomode-grid,
   #pid-code-generator .pid-jump-row {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  #pid-code-generator .pid-span-two {
+    grid-column: auto;
   }
 
   #pid-code-generator .pid-panel-heading {

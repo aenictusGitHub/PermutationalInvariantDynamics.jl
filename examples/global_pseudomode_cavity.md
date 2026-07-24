@@ -52,6 +52,20 @@ cavity level. `trace_pseudomodes` returns the reduced PI emitter state, while
 `global_pseudomode_state` returns the dense reduced cavity state. The latter is
 checked against the generic `composite_reduced_state(rho, 2)` contraction.
 
+## Expected output
+
+![Shared-cavity pseudomode dynamics](../docs/src/assets/example_figures/global_pseudomode_cavity.png)
+
+The left panel follows the exchange and decay of atomic excitations and shared
+cavity photons. The middle panel shows the emitted cavity flux
+``\kappa\langle a^\dagger a\rangle``. The logarithmic right panel monitors the
+population of the highest retained oscillator level; the plotted floor only
+makes exact numerical zeros visible and does not alter the computed array.
+This preview uses the default `N = 3`, coupling, damping, cutoff, time grid,
+and RK4 resolution. For a different driven, thermal, or counter-rotating
+model, converge the cutoff and time step separately rather than relying on
+this unreachable-level check.
+
 ## Cutoff check
 
 The script chooses `nmax=N+1`. Under the rotating-wave Hamiltonian, the
@@ -63,3 +77,7 @@ between successive cutoffs.
 
 See the [global-pseudomode guide](../docs/src/global_pseudomodes.md) for the
 shared-mode/local-mode/HEOM comparison and matrix-free workspace API.
+
+Use the examples environment described in [`README.md`](README.md) to save
+the optional PDF and PNG figure. Running from the root package environment
+keeps the calculation dependency-free and skips only rendering.

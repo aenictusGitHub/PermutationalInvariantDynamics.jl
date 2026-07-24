@@ -48,7 +48,9 @@ starting with the step-by-step
 The browser-only
 [PI model code generator](https://aenictusgithub.github.io/PermutationalInvariantDynamics.jl/dev/model_code_generator/)
 turns a supported LaTeX subset into a commented stationary-state or
-stationary-observable Julia program without sending formulas to a server.
+stationary-observable Julia program without sending formulas to a server. It
+also generates the structured Markovian embedding for either one identical
+local pseudomode per system or one pseudomode shared by the ensemble.
 Its sources are
 also available in [docs/src](docs/src). Then consult the
 [framework and physical conventions](docs/src/framework.md),

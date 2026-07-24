@@ -42,8 +42,25 @@ This payload is independent of any symbolic closure package. A direct PI term
 is marked `microscopic=false`, because Schur blocks alone do not define a
 unique local Hamiltonian or jump operator and the adapter must not invent one.
 
+## Expected output
+
+![Exact PI moments and product-closure errors](../docs/src/assets/example_figures/cumulant_bridge.png)
+
+The left panel groups the maximum absolute product-closure error by moment
+order. The product input agrees up to roundoff, whereas the closure formed from
+the GHZ one-body marginal misses higher-order correlations. Exact zeros are
+drawn at machine epsilon solely for the logarithmic display. The right panel
+compares the canonical multiset moments actually retained by the exact PI
+table with all ordered words over the same three-operator alphabet. This is a
+storage-count comparison, not a wall-time benchmark; the local tensor
+contraction still grows exponentially with the requested order.
+
 Run the example from the repository root with:
 
 ```sh
 julia --project=. examples/cumulant_bridge.jl
 ```
+
+Use the examples environment from [`README.md`](README.md) for the optional
+Makie output. A root-project run remains independent of Makie and skips only
+the figure.

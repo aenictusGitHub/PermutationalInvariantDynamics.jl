@@ -58,3 +58,10 @@ The trace, positivity, Liouvillian residual, and distance to the exact product
 state provide complementary checks of the numerical solution. Without
 CairoMakie, those checks and the compressed diagnostics still run; only figure
 rendering is skipped.
+
+## Expected output
+
+![Expected thermal excitation and Schur-sector populations under local pumping](../docs/src/assets/example_figures/shammah2018_local_pumping.png)
+
+The numerical points use the default finite ensemble and are compared with the
+exact product-state prediction.

@@ -1,5 +1,8 @@
 using PermutationalInvariantDynamics
 
+include(joinpath(@__DIR__, "utils", "makie_support.jl"))
+using .ExampleMakie
+
 basis = PIBasis(20, 2)
 sx = ComplexF64[0 1; 1 0]
 sm = ComplexF64[0 1; 0 0]
@@ -32,3 +35,28 @@ println("final trace error: ", report.trace_error,
 @assert diagnostics(rho0).valid
 @assert report.valid
 @assert abs(sum(rho1[index, index] for index in axes(rho1, 1)) - 1) < 1e-10
+
+# Rendering consumes only the sampled excitation values and final one-body
+# state already used by the numerical checks.
+if makie_available()
+    M = makie_module()
+    figure = M.Figure(size=(1050, 430), fontsize=17)
+    dynamics_axis = M.Axis(
+        figure[1, 1]; xlabel="time", ylabel="excited fraction",
+        title="Driven qubits with independent decay")
+    density_axis = M.Axis(
+        figure[1, 2]; xlabel="column state", ylabel="row state",
+        xticks=([1, 2], ["|g⟩", "|e⟩"]),
+        yticks=([1, 2], ["|g⟩", "|e⟩"]),
+        title="Final one-qubit |ρ₁|")
+
+    M.lines!(dynamics_axis, solution.times, excited_fractions;
+             color=:royalblue, linewidth=2.7)
+    M.scatter!(dynamics_axis, solution.times, excited_fractions;
+               color=:royalblue, markersize=8)
+    density_plot = M.heatmap!(
+        density_axis, 1:2, 1:2, permutedims(abs.(rho1));
+        colormap=:viridis, colorrange=(0.0, 1.0))
+    M.Colorbar(figure[1, 3], density_plot; label="absolute matrix element")
+    save_example_figure(figure, "driven_qubits")
+end

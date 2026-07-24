@@ -42,3 +42,10 @@ julia --project=examples examples/morrison2008_cooperative_fluorescence.jl
 
 Small residuals and state distance provide stronger validation than matching
 a single observable.
+
+## Expected output
+
+![Expected cooperative-fluorescence steady-state observables](../docs/src/assets/example_figures/morrison2008_cooperative_fluorescence.png)
+
+The plotted observables are evaluated from the numerically solved state and
+the independent analytical state used by the state-level validation.
