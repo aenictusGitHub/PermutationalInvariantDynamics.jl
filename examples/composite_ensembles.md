@@ -67,10 +67,27 @@ The script then:
 - combines the read-only term plans with `+`;
 - applies the generator using an explicit
   `CompositeSuperoperatorWorkspace`;
+- checks fixed-capacity matrix-RHS forward and adjoint applications against
+  scalar-column calls;
 - verifies that the derivative has zero physical trace;
 - evolves with a preallocated `EvolutionWorkspace`;
 - verifies final trace preservation;
 - evaluates a factorized collective observable.
+
+For block Krylov and sensitivity calculations, the script prepares
+
+```julia
+X = hcat(rho0.data, derivative)
+Y = similar(X)
+batch_work = CompositeSuperoperatorBatchWorkspace(
+    generator; capacity=size(X, 2))
+apply!(Y, generator, X, 0.0, nothing, batch_work)
+```
+
+The capacity is immutable: a wider matrix raises instead of growing hidden
+buffers. Equal tensor fibres from all columns pass together through each
+factor map, and `apply_adjoint!` reuses the same layout. Neither path forms a
+global Kronecker matrix.
 
 Run it from the repository root:
 

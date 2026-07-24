@@ -19,10 +19,14 @@ model = PIModel(BASIS, (
 prepared = compile(model; backend=:matrixfree)
 
 times = range(0.0, 4.0; length=41)
-states = time_evolution(prepared, rho0, collect(times); steps_per_interval=8)
 excitation = ComplexF64[0 0; 0 1]
-population = [real(collective_expectation(state, excitation))/N
-              for state in states]
+excitation_operator = collective_operator(BASIS, excitation)
+dynamics = solve_dynamics(
+    prepared, rho0, (first(times), last(times));
+    saveat=collect(times), steps_per_interval=8,
+    observables=(excitation=excitation_operator,), save_states=false)
+population = real.(dynamics.observables[:excitation]) ./ N
+@assert dynamics.states === nothing
 
 # A fixed positive-semidefinite Gamma is factorized once. The resulting
 # effective independent jumps provide a useful exact regression.

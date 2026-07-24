@@ -30,9 +30,23 @@ makedocs(sitename="PermutationalInvariantDynamics.jl", modules=[PermutationalInv
              canonical="https://aenictusgithub.github.io/PermutationalInvariantDynamics.jl/stable/",
              edit_link="main",
              repolink=REPOSITORY,
+             assets=[
+                 Documenter.asset(
+                     "assets/model_code_generator.css";
+                     class=:css,islocal=true),
+                 Documenter.asset(
+                     "assets/model_code_generator_core.js";
+                     class=:js,islocal=true,
+                     attributes=Dict(:defer=>"")),
+                 Documenter.asset(
+                     "assets/model_code_generator_ui.js";
+                     class=:js,islocal=true,
+                     attributes=Dict(:defer=>"")),
+             ],
              size_threshold_warn=128*1024),
          pages=["Home"=>"index.md",
                 "Getting started"=>"getting_started.md",
+                "Model code generator"=>"model_code_generator.md",
                 "Concepts and core workflow"=>[
                     "Framework and conventions"=>"framework.md",
                     "Architecture and efficient workflows"=>"architecture.md",

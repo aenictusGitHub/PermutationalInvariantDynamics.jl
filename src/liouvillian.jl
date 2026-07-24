@@ -2452,11 +2452,23 @@ end
 
 function _apply_local_jump_anticommutator_batch!(Y,X,qblocks,b,scale,scratch;
                                                  adjoint::Bool=false)
-    for sector in eachindex(b.sectors)
-        dimension=length(b.patterns[sector]);offset=b.offsets[sector]
-        qblock=adjoint ? LinearAlgebra.adjoint(qblocks[sector]) : qblocks[sector]
-        _batch_add_left_right!(Y,X,offset,dimension,qblock,qblock,
-            -scale/2,-scale/2,scratch)
+    # Keep the sparse forward block and its `Adjoint` wrapper in separate
+    # inferred branches. A loop-local ternary joins those types and heap-boxes
+    # one sparse block per application on Julia 1.10.
+    if adjoint
+        for sector in eachindex(b.sectors)
+            dimension=length(b.patterns[sector]);offset=b.offsets[sector]
+            qblock=LinearAlgebra.adjoint(qblocks[sector])
+            _batch_add_left_right!(Y,X,offset,dimension,qblock,qblock,
+                -scale/2,-scale/2,scratch)
+        end
+    else
+        for sector in eachindex(b.sectors)
+            dimension=length(b.patterns[sector]);offset=b.offsets[sector]
+            qblock=qblocks[sector]
+            _batch_add_left_right!(Y,X,offset,dimension,qblock,qblock,
+                -scale/2,-scale/2,scratch)
+        end
     end
     nothing
 end

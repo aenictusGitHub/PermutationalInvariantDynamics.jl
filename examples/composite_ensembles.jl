@@ -57,6 +57,34 @@ apply!(derivative, generator, rho0.data, 0.0, nothing, apply_workspace)
 trace_vector = composite_trace_vector(basis)
 @assert abs(dot(trace_vector, derivative)) < 2e-13
 
+# Block Krylov and sensitivity calculations apply the same generator to
+# several right-hand sides. Fixed-capacity scratch batches equal tensor fibres
+# across all columns without constructing a global Kronecker matrix.
+batch_source = hcat(rho0.data, derivative)
+batch_forward = similar(batch_source)
+batch_adjoint = similar(batch_source)
+batch_workspace = CompositeSuperoperatorBatchWorkspace(
+    generator; capacity=size(batch_source, 2))
+apply!(
+    batch_forward, generator, batch_source, 0.0, nothing, batch_workspace)
+apply_adjoint!(
+    batch_adjoint, generator, batch_source, 0.0, nothing, batch_workspace)
+
+forward_reference = similar(batch_source)
+adjoint_reference = similar(batch_source)
+for column in axes(batch_source, 2)
+    apply!(
+        view(forward_reference, :, column), generator,
+        view(batch_source, :, column), 0.0, nothing, apply_workspace)
+    apply_adjoint!(
+        view(adjoint_reference, :, column), generator,
+        view(batch_source, :, column), 0.0, nothing, apply_workspace)
+end
+batch_forward_error = norm(batch_forward - forward_reference)
+batch_adjoint_error = norm(batch_adjoint - adjoint_reference)
+@assert batch_forward_error < 2e-13
+@assert batch_adjoint_error < 2e-13
+
 # The generic preallocated RK4 evolution discovers a composite workspace and
 # reuses the nested workspaces of both local compiled PI actions.
 final_data = copy(rho0.data)
@@ -80,3 +108,5 @@ println("Ensemble-A Schur sectors: ", length(ensemble_a.sectors))
 println("Initial <Jz_a>: ", initial_signal)
 println("Final   <Jz_a>: ", final_signal)
 println("Final trace: ", real(trace(rho_final)))
+println("Batched forward/adjoint errors: ",
+        batch_forward_error, " / ", batch_adjoint_error)

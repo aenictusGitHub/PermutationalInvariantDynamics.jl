@@ -154,6 +154,21 @@ performs a trace-fixed restarted-GMRES solve. Pure dephasing alone does not
 have a unique stationary state, so the executable benchmark deliberately
 uses time evolution rather than a steady-state solve.
 
+Block Krylov methods and sensitivity equations can apply the hierarchy to
+several right-hand sides with fixed-capacity task-owned scratch:
+
+```julia
+X = hcat(hierarchy_1, hierarchy_2)
+Y = similar(X)
+batch_work = HEOMWorkspace(plan; batch_columns=size(X, 2))
+apply!(Y, plan, X, 0.0, parameters, batch_work)
+```
+
+ADO and source columns are flattened into bounded system batches; a driven
+system schedule is prepared once for the complete matrix application.
+`apply_adjoint!` uses the same layout. The executable validates both
+directions against scalar-column calls on its small stationary hierarchy.
+
 For adaptive or stiff integration, the same matrix-free right-hand side is
 available as an in-place SciML problem without choosing a solver package:
 

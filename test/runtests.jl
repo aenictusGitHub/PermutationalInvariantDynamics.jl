@@ -43,6 +43,8 @@ const TEST_FILES=(
     (:dynamics,"test_streaming_output.jl"),
     (:nonmarkovian,"test_correlations.jl"),
     (:workflows,"test_research_utilities.jl"),
+    (:workflows,"test_examples.jl"),
+    (:workflows,"test_model_code_generator.jl"),
     (:literature,"test_published_models.jl"),
     (:analysis,"test_local_factor_trace.jl"),
     (:analysis,"test_entanglement.jl"),

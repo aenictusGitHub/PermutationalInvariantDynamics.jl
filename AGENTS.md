@@ -200,6 +200,15 @@ scripts. Lower-level `liouvillian`, `steady_state`, `apply!`, and Krylov APIs
 are advanced interfaces. `docs/src/api_tiers.md` defines the intended stability
 tier.
 
+The static GitHub Pages model assistant lives in
+`docs/src/model_code_generator.md` with dependency-free parser/emitter and UI
+assets under `docs/src/assets/model_code_generator_*`. Its LaTeX subset must
+lower through a typed whitelist AST, never `eval`, textual Julia
+interpolation, or a remote service. Keep local versus collective jump
+semantics explicit, default generated models to the complete PI basis and
+memory-guarded automatic solver route, and test both parser rejection and
+generated Julia syntax in `test/test_model_code_generator.jl`.
+
 `PIModel.terms` is a concrete immutable tuple. `LiouvillianPlan` owns prepared
 read-only blocks, contractions, and rate descriptions. `LiouvillianWorkspace`
 owns mutable scratch. Compatibility `mul!`/`action!` calls are synchronized;

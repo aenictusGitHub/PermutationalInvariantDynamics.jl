@@ -42,6 +42,19 @@ deliberate time-local non-CP generators, as elsewhere in deterministic
 dynamics; callable rates must remain representable in the precision selected
 by the fixed operators and Kossakowski prototype.
 
+The executable propagates the prepared local model with observable-only
+output:
+
+```julia
+result = solve_dynamics(
+    prepared, rho0, (first(times), last(times));
+    saveat=times, observables=(excitation=excitation_operator,),
+    save_states=false)
+```
+
+Only the excitation samples and one evolving PI vector are retained; the
+41-state history is not stored.
+
 ## Preallocated time dependence
 
 A raw `(time, parameters) -> gamma` function is supported through the

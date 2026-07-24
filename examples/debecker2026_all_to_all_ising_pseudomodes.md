@@ -179,11 +179,23 @@ not a valid optimization for this model.
 
 For the small default stationary grid, the script compiles a sparse generator
 and uses `DirectAlgorithm`. One reference point is solved independently with
-a matrix-free `GMRESAlgorithm`, and the common-pair correlators are compared.
-For a larger feasible PI dimension, prepare the matrix-free model once, reuse
-its Krylov workspace and Schur-sector preconditioner, and continuation-seed
-neighbouring parameter points. Solver convergence does not replace the cutoff
-study described below.
+a matrix-free `GMRESAlgorithm`, one explicit `KrylovWorkspace`, and one
+`schur_sector_preconditioner`; the common-pair correlators are compared. For
+the compiled PI source, the preconditioner lowers its diagonal sector blocks
+directly from prepared physical kernels:
+
+```julia
+P = schur_sector_preconditioner(prepared, basis)
+cost = preconditioner_cost(P)
+@assert cost.block_construction === :prepared_kernels
+@assert cost.setup_block_applications == 0
+```
+
+Only the operator-scale probes remain. Reuse the workspace and preconditioner,
+and continuation-seed neighbouring parameter points, for a larger feasible PI
+dimension. Set `expected_reuses` to the number of solves that will actually
+share the object; the single reference solve in this example declares one.
+Solver convergence does not replace the cutoff study described below.
 
 ## Density-valued and weak-PI trajectory stationary estimates
 

@@ -1189,3 +1189,13 @@ capacity already retained by `HEOMWorkspace`; application does not grow it.
 The optional `batch_columns` constructor keyword pre-grows that bounded
 capacity using overflow-safe setup arithmetic. The synchronized HEOM adapter
 publishes matching forward and adjoint batch callbacks.
+
+## Julia 1.10 sparse batch inference guard (2026-07-24)
+
+The local-jump batched anticommutator keeps forward sparse blocks and adjoint
+wrappers in separate outer branches. A loop-local runtime ternary joined
+`SparseMatrixCSC` and `Adjoint` values and caused one small heap box per sector
+application on Julia 1.10. In a Floquet RK4 graph that became four allocations
+per step despite fully preallocated numerical buffers. Splitting the short
+sector loop restores the allocation-free warmed forward and adjoint kernels
+without changing operation order or arithmetic.

@@ -1,0 +1,324 @@
+#pid-code-generator {
+  --pid-accent: #3559c7;
+  --pid-accent-strong: #2443a4;
+  --pid-panel: #f7f8fc;
+  --pid-panel-raised: #ffffff;
+  --pid-border: #d9deec;
+  --pid-code: #111827;
+  --pid-code-bg: #f1f4fa;
+  --pid-muted: #5e6679;
+  --pid-danger: #b42318;
+  --pid-success: #166534;
+  color: inherit;
+  font-size: 0.96rem;
+  margin: 1.5rem 0 2rem;
+}
+
+html.theme--documenter-dark #pid-code-generator,
+html.theme--catppuccin-mocha #pid-code-generator,
+html.theme--catppuccin-macchiato #pid-code-generator,
+html.theme--catppuccin-frappe #pid-code-generator {
+  --pid-accent: #91a7ff;
+  --pid-accent-strong: #b5c2ff;
+  --pid-panel: #202535;
+  --pid-panel-raised: #272d40;
+  --pid-border: #454d64;
+  --pid-code: #f4f6ff;
+  --pid-code-bg: #171b28;
+  --pid-muted: #b1b8cc;
+  --pid-danger: #ff9b94;
+  --pid-success: #8ce7ad;
+}
+
+#pid-code-generator * {
+  box-sizing: border-box;
+}
+
+#pid-code-generator .pid-privacy-banner {
+  align-items: flex-start;
+  background: linear-gradient(135deg, rgba(53, 89, 199, 0.12), rgba(83, 186, 156, 0.08));
+  border: 1px solid var(--pid-border);
+  border-radius: 0.8rem;
+  display: flex;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+  padding: 0.9rem 1rem;
+}
+
+#pid-code-generator .pid-privacy-mark {
+  background: var(--pid-accent);
+  border-radius: 999px;
+  color: white;
+  flex: 0 0 auto;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  padding: 0.42rem 0.5rem;
+  text-transform: uppercase;
+}
+
+#pid-code-generator .pid-layout {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: minmax(18rem, 0.92fr) minmax(22rem, 1.08fr);
+}
+
+#pid-code-generator .pid-panel {
+  background: var(--pid-panel);
+  border: 1px solid var(--pid-border);
+  border-radius: 0.85rem;
+  min-width: 0;
+  padding: 1rem;
+}
+
+#pid-code-generator .pid-panel-heading {
+  align-items: center;
+  display: flex;
+  gap: 0.75rem;
+  justify-content: space-between;
+  margin-bottom: 0.8rem;
+}
+
+#pid-code-generator .pid-panel-heading h2,
+#pid-code-generator .pid-panel-heading h3 {
+  font-size: 1.05rem;
+  margin: 0;
+}
+
+#pid-code-generator .pid-grid-two {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: 1fr 1fr;
+}
+
+#pid-code-generator .pid-field {
+  display: block;
+  margin-bottom: 0.85rem;
+}
+
+#pid-code-generator .pid-label,
+#pid-code-generator .pid-mini-label {
+  color: inherit;
+  display: block;
+  font-size: 0.82rem;
+  font-weight: 700;
+  margin-bottom: 0.3rem;
+}
+
+#pid-code-generator .pid-hint {
+  color: var(--pid-muted);
+  display: block;
+  font-size: 0.76rem;
+  line-height: 1.4;
+  margin-top: 0.3rem;
+}
+
+#pid-code-generator input,
+#pid-code-generator select,
+#pid-code-generator textarea {
+  background: var(--pid-panel-raised);
+  border: 1px solid var(--pid-border);
+  border-radius: 0.48rem;
+  color: inherit;
+  font: inherit;
+  line-height: 1.4;
+  min-height: 2.45rem;
+  padding: 0.52rem 0.65rem;
+  width: 100%;
+}
+
+#pid-code-generator .pid-latex-input,
+#pid-code-generator textarea,
+#pid-code-generator .pid-code {
+  font-family: "JuliaMono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+
+#pid-code-generator textarea {
+  min-height: 5.3rem;
+  resize: vertical;
+}
+
+#pid-code-generator input:focus,
+#pid-code-generator select:focus,
+#pid-code-generator textarea:focus,
+#pid-code-generator button:focus-visible {
+  border-color: var(--pid-accent);
+  box-shadow: 0 0 0 3px rgba(53, 89, 199, 0.16);
+  outline: none;
+}
+
+#pid-code-generator [aria-invalid="true"] {
+  border-color: var(--pid-danger);
+  box-shadow: 0 0 0 3px rgba(180, 35, 24, 0.12);
+}
+
+#pid-code-generator .pid-jump-list {
+  display: grid;
+  gap: 0.55rem;
+  margin-bottom: 0.6rem;
+}
+
+#pid-code-generator .pid-jump-row {
+  align-items: end;
+  background: var(--pid-panel-raised);
+  border: 1px solid var(--pid-border);
+  border-radius: 0.65rem;
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: minmax(9.2rem, 1.5fr) minmax(6rem, 1fr) minmax(5rem, 0.72fr) auto;
+  padding: 0.65rem;
+}
+
+#pid-code-generator .pid-jump-control {
+  margin: 0;
+}
+
+#pid-code-generator .pid-jump-row input,
+#pid-code-generator .pid-jump-row select {
+  min-height: 2.25rem;
+}
+
+#pid-code-generator .pid-button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+#pid-code-generator .pid-button {
+  align-items: center;
+  background: var(--pid-panel-raised);
+  border: 1px solid var(--pid-border);
+  border-radius: 0.48rem;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-weight: 700;
+  justify-content: center;
+  min-height: 2.35rem;
+  padding: 0.48rem 0.75rem;
+}
+
+#pid-code-generator .pid-button:hover {
+  border-color: var(--pid-accent);
+  color: var(--pid-accent-strong);
+}
+
+#pid-code-generator .pid-button-primary {
+  background: var(--pid-accent);
+  border-color: var(--pid-accent);
+  color: white;
+}
+
+#pid-code-generator .pid-button-primary:hover {
+  background: var(--pid-accent-strong);
+  color: white;
+}
+
+#pid-code-generator .pid-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+#pid-code-generator .pid-button-quiet {
+  font-size: 0.75rem;
+  min-height: 2.15rem;
+}
+
+#pid-code-generator .pid-output-actions {
+  display: flex;
+  gap: 0.45rem;
+}
+
+#pid-code-generator .pid-code-shell {
+  background: var(--pid-code-bg);
+  border: 1px solid var(--pid-border);
+  border-radius: 0.7rem;
+  max-height: 40rem;
+  min-height: 24rem;
+  overflow: auto;
+}
+
+#pid-code-generator .pid-code {
+  background: transparent;
+  color: var(--pid-code);
+  display: block;
+  font-size: 0.82rem;
+  line-height: 1.55;
+  margin: 0;
+  overflow: visible;
+  padding: 1rem;
+  white-space: pre;
+}
+
+#pid-code-generator .pid-status {
+  border-radius: 0.45rem;
+  font-size: 0.82rem;
+  margin: 0.7rem 0;
+  padding: 0.55rem 0.65rem;
+}
+
+#pid-code-generator .pid-status-success {
+  background: rgba(22, 101, 52, 0.1);
+  color: var(--pid-success);
+}
+
+#pid-code-generator .pid-status-error {
+  background: rgba(180, 35, 24, 0.1);
+  color: var(--pid-danger);
+}
+
+#pid-code-generator .pid-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-bottom: 0.55rem;
+}
+
+#pid-code-generator .pid-summary-chip {
+  background: rgba(53, 89, 199, 0.1);
+  border: 1px solid rgba(53, 89, 199, 0.22);
+  border-radius: 999px;
+  color: inherit;
+  font-size: 0.72rem;
+  padding: 0.25rem 0.5rem;
+}
+
+#pid-code-generator .pid-warning-list {
+  color: var(--pid-muted);
+  font-size: 0.78rem;
+  margin: 0.55rem 0 0 1.15rem;
+}
+
+#pid-code-generator .pid-warning-list li {
+  margin: 0.25rem 0;
+}
+
+#pid-code-generator .pid-copy-helper {
+  left: -10000px;
+  position: fixed;
+  top: 0;
+}
+
+@media (max-width: 1100px) {
+  #pid-code-generator .pid-layout {
+    grid-template-columns: 1fr;
+  }
+
+  #pid-code-generator .pid-code-shell {
+    min-height: 20rem;
+  }
+}
+
+@media (max-width: 700px) {
+  #pid-code-generator .pid-grid-two,
+  #pid-code-generator .pid-jump-row {
+    grid-template-columns: 1fr;
+  }
+
+  #pid-code-generator .pid-panel-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

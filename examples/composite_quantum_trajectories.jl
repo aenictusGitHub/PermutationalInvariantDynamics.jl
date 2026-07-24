@@ -30,9 +30,13 @@ plan=CompositeTrajectoryPlan(background,loss)
 times=collect(0.0:0.25:2.0)
 dt=0.01
 npaths=1024
+batch_workspace=CompositeTrajectoryBatchWorkspace(
+    plan,rho0;workers=Threads.nthreads())
+serial_workspace=CompositeTrajectoryWorkspace(plan,rho0)
 
 paths=quantum_trajectories(
-    plan,rho0,times,npaths;dt,seed=2026,threaded=true)
+    plan,rho0,times,npaths;dt,seed=2026,threaded=true,
+    workspace=batch_workspace)
 stochastic=trajectory_average(paths)
 
 # The plan exposes the independently propagated unconditional generator.
@@ -54,15 +58,18 @@ auxiliary_excitation=composite_tensor_operator(
     basis,identity_atoms,excited)
 summary=quantum_trajectories(
     plan,rho0,times,512;dt,seed=17,threaded=true,
+    workspace=batch_workspace,
     observables=(atom_z=atom_signal,auxiliary_excitation=auxiliary_excitation),
     save_states=false,jump_statistics=true)
 
 # Global trajectory-index seeding makes serial and threaded scheduling sample
 # the same ordered paths.
 serial_check=quantum_trajectories(
-    plan,rho0,[0.0,0.5],16;dt,seed=91,threaded=false)
+    plan,rho0,[0.0,0.5],16;dt,seed=91,threaded=false,
+    workspace=serial_workspace)
 threaded_check=quantum_trajectories(
-    plan,rho0,[0.0,0.5],16;dt,seed=91,threaded=true)
+    plan,rho0,[0.0,0.5],16;dt,seed=91,threaded=true,
+    workspace=batch_workspace)
 @assert map(path->path.jump_times,serial_check)==
         map(path->path.jump_times,threaded_check)
 
@@ -72,4 +79,3 @@ println("Full density-matrix coordinate formula: ",
 println("Final stochastic/master coefficient error: ",final_error)
 println("Mean jumps per trajectory: ",summary.jumps.mean_count)
 println("Final <Jz>: ",summary.observables.observables[:atom_z].mean[end])
-

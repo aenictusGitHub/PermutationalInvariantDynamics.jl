@@ -45,6 +45,10 @@ supported.
 Read the [hosted documentation](https://aenictusgithub.github.io/PermutationalInvariantDynamics.jl/stable/),
 starting with the step-by-step
 [model-to-solution tutorial](https://aenictusgithub.github.io/PermutationalInvariantDynamics.jl/stable/getting_started/).
+The browser-only
+[PI model code generator](https://aenictusgithub.github.io/PermutationalInvariantDynamics.jl/dev/model_code_generator/)
+turns a supported LaTeX subset into a commented stationary-state or
+stationary-observable Julia program without sending formulas to a server.
 Its sources are
 also available in [docs/src](docs/src). Then consult the
 [framework and physical conventions](docs/src/framework.md),

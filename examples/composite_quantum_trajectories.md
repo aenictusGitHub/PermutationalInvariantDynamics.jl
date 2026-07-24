@@ -63,6 +63,21 @@ under `composite_master_superoperator(plan)`. It also demonstrates
 observable-only online statistics and checks that serial and threaded batches
 use identical trajectory-indexed random streams.
 
+The numerical scratch is prepared once and reused across ensembles:
+
+```julia
+batch = CompositeTrajectoryBatchWorkspace(
+    plan, rho0; workers=Threads.nthreads())
+paths = quantum_trajectories(
+    plan, rho0, times, npaths;
+    dt, threaded=true, workspace=batch)
+```
+
+Every worker owns a `CompositeTrajectoryWorkspace` and RNG; the immutable
+physical plan is shared. A separate single-worker workspace is reused for the
+serial reproducibility check. Workspaces are task-owned and must not be used
+concurrently.
+
 Run it from the repository root:
 
 ```sh

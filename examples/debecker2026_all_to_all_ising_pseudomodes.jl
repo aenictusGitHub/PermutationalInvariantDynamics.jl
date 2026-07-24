@@ -399,15 +399,16 @@ function main(;N::Int=parse(Int,get(ENV,"PI_PSEUDOMODE_N","3")),
         DirectPIHamiltonian((-(J_dynamic/(N-1))/2)*(Jx*Jx)),
         reference_model.terms[4])
     direct_model=PIModel(basis,direct_terms)
-    Ls=liouvillian(reference_model;representation=:sparse)
+    krylov_prepared=compile(reference_model;backend=:matrixfree)
+    Ls=liouvillian(krylov_prepared;representation=:sparse)
     Ldirect=liouvillian(direct_model;representation=:sparse)
     all_pair_error=norm(Ls-Ldirect)
-    Lmf=liouvillian(reference_model;representation=:matrixfree)
-    action_error=norm(Ls*rho0.data-Lmf*rho0.data)
-    generator_report=check_generator(reference_model)
+    action_error=norm(Ls*rho0.data-krylov_prepared*rho0.data)
+    trace_preservation_error=norm(
+        transpose(identity_operator(basis).data)*Ls)
     @assert all_pair_error<2e-9
     @assert action_error<2e-10
-    @assert generator_report.trace_preservation_error<2e-9
+    @assert trace_preservation_error<2e-9
 
     # Manuscript-Fig.-2(b)-style dynamics, now using the only distinct PI pair
     # correlation rather than a distance-dependent nearest-neighbour value.
@@ -460,12 +461,24 @@ function main(;N::Int=parse(Int,get(ENV,"PI_PSEUDOMODE_N","3")),
     spin_trace_oracle_error=abs(
         moment_negativity-direct_reference.negativity)
     @assert spin_trace_oracle_error<3e-9
-    krylov_prepared=compile(reference_model;backend=:matrixfree)
+    krylov_workspace=KrylovWorkspace(krylov_prepared,50)
+    # This is one validation solve, so keep the amortization declaration
+    # truthful. A parameter scan should pass its actual planned reuse count.
+    krylov_preconditioner=schur_sector_preconditioner(
+        krylov_prepared,basis;
+        expected_reuses=1,warn_unamortized=false)
+    krylov_preconditioner_cost=preconditioner_cost(krylov_preconditioner)
     krylov=stationary_state(
         krylov_prepared;
-        algorithm=GMRESAlgorithm(krylovdim=50,maxiter=800),
+        algorithm=GMRESAlgorithm(
+            krylovdim=50,maxiter=800,
+            preconditioner=krylov_preconditioner),
+        workspace=krylov_workspace,
         initial_state=rho0,atol=1e-10,rtol=1e-9,
         return_info=true)
+    @assert krylov_preconditioner_cost.block_construction===
+            :prepared_kernels
+    @assert krylov_preconditioner_cost.setup_block_applications==0
     krylov.info.converged||error(
         "reference matrix-free GMRES steady solve did not converge")
     krylov_cxx=checked_real(two_body_expectation(
@@ -709,6 +722,10 @@ function main(;N::Int=parse(Int,get(ENV,"PI_PSEUDOMODE_N","3")),
     println("dynamics Liouvillian applications = ",
             Tuple(curve.operator_applications for curve in dynamics))
     println("direct/GMRES stationary Cxx error = ",solver_agreement)
+    println("reference Schur preconditioner construction = ",
+            krylov_preconditioner_cost.block_construction,
+            "; block-probe applications = ",
+            krylov_preconditioner_cost.setup_block_applications)
     println("prepared local-factor trace / Pauli-oracle negativity error = ",
             spin_trace_oracle_error)
     println("trajectory stationary state error = ",trajectory_state_error,

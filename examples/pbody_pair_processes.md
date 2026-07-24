@@ -23,6 +23,21 @@ Use `PBodyHamiltonian` for the two-site Hamiltonian kernel,
 `CollectivePBodyJump` for the coherent sum of pair amplitudes. These terms
 implement the Appendix-D combinatorics directly in PI space.
 
+The explicit operator check prepares one reusable geometry:
+
+```julia
+geometry = PBodyGeometry(basis, 2)
+pair_sum = pbody_collective_operator(
+    basis, pair_interaction, 2; cache=geometry)
+```
+
+Every removal-path isometry is retained as an exact-support sparse CSC map,
+not as its zero-heavy three-index dense equivalent. The script prints
+`geometry.estimates.retained_entries` beside `dense_entries` and verifies
+that the packed representation is smaller. Model compilation applies the
+same selection rules automatically; pass an explicit cache when constructing
+several standalone p-body operators with the same basis and body order.
+
 The model is first lowered with
 
 ```julia

@@ -69,6 +69,12 @@ solution](getting_started.md). It explains, line by line, how to:
 The runnable companion is
 [`examples/getting_started.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/getting_started.jl).
 
+To start from formulas instead, the browser-only
+[PI model code generator](model_code_generator.md) translates a documented
+LaTeX subset into a commented, memory-guarded stationary-state program. It
+keeps formulas in the browser and refuses ambiguous local-versus-collective
+jump semantics.
+
 ## Five-minute preview
 
 This compact version evolves eight driven qubits with independent emission
@@ -112,6 +118,9 @@ and convergence metadata. Adaptive or stiff integration is available through
 
 - [Getting started](getting_started.md) is the task-oriented model-to-solution
   tutorial and troubleshooting guide.
+- [PI model code generator](model_code_generator.md) creates a minimal
+  stationary-state or stationary-observable script from supported LaTeX
+  ingredients.
 - [Framework introduction](framework.md) derives the PI Schur-block
   representation, scaling, model terms, and validity conditions.
 - [Architecture and efficient workflows](architecture.md) explains sparse and

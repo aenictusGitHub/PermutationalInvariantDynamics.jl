@@ -55,3 +55,9 @@ and factorizes only diagonal Schur-sector Liouville blocks; final convergence
 is still checked against the unpreconditioned Liouvillian. The printed
 `preconditioner_cost` metadata makes setup applications, factorization count,
 storage, apply-cost estimate, and expected amortization visible.
+
+For this compatible compiled PI model, `block_construction` is
+`:prepared_kernels` and `setup_block_applications` is zero. The diagonal
+blocks are lowered directly from the immutable physical term plan; only the
+small operator-scale probes remain. A plan-less callback cannot expose that
+structure and retains the coordinate-probing fallback.

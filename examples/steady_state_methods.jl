@@ -67,6 +67,10 @@ function main()
             matrixfree.info.iterations)
     println("Schur preconditioner cost metadata: ", cost)
 
+    # A compatible compiled PI source lowers diagonal sector blocks directly
+    # from the immutable term plan. Only the operator-scale probes remain.
+    @assert cost.block_construction === :prepared_kernels
+    @assert cost.setup_block_applications == 0
     @assert matrixfree.info.converged
     @assert norm(matrixfree.state.data - exact.data) < 2e-8
 end

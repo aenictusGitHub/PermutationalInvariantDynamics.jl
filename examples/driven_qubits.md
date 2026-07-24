@@ -32,8 +32,13 @@ Two reusable analysis objects are prepared before propagation:
 
 - `CollectiveObservablePlan` evaluates the total excited-state population at
   every saved state;
-- `ReductionPlan(basis, 1)` computes the final one-qubit reduced density
-  matrix without repeating the Schur branching setup.
+- `OneBodyRDMWorkspace` computes the complete final one-qubit density matrix
+  in one geometry traversal.
+
+Both share one `OneBodyGeometry`. This specialized one-particle route avoids
+preparing the more general SU(2)/Littlewood--Richardson bipartition geometry
+needed by `ReductionPlan`; use the latter for reductions to two or more
+particles, purity, or negativity.
 
 The script also calls `diagnostics` on the compiled model and the final state.
 It asserts that the initial and final states are valid and that the reduced

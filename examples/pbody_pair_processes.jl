@@ -10,10 +10,13 @@ pair_interaction = kron(sz, sz)
 
 # Appendix D represents the unordered-pair sum directly. Verify the familiar
 # identity sum_{i<j} sz_i sz_j = ((sum_i sz_i)^2-N I)/2.
-pair_sum = pbody_collective_operator(basis, pair_interaction, 2)
+pair_geometry = PBodyGeometry(basis, 2)
+pair_sum = pbody_collective_operator(
+    basis, pair_interaction, 2; cache=pair_geometry)
 Jz = collective_operator(basis, sz)
 pair_sum_reference = (Jz * Jz - N * identity_operator(basis)) * (1 / 2)
 identity_error = norm(pair_sum.data - pair_sum_reference.data)
+packing = pair_geometry.estimates
 
 model = PIModel(basis, [PBodyHamiltonian(pair_interaction, 2; rate=0.05),
                         LocalPBodyJump(pair_loss, 2; rate=0.02),
@@ -36,10 +39,14 @@ println("N=$N pair-process PI dimension: ", length(basis),
         "; full density-matrix entries: ", 2^(2N))
 println("prepared backend: ", compiled_report.backend,
         "; retained bytes: ", compiled_report.retained_bytes)
+println("Appendix-D path entries (packed/dense): ",
+        packing.retained_entries, " / ", packing.dense_entries)
 println("pair-sum identity error: ",identity_error)
 println("matrix-free/sparse action error: ", action_error)
 println("initial trace derivative: ", trace_derivative)
 
+@assert packing.storage === :exact_support_sparse_csc
+@assert packing.retained_entries < packing.dense_entries
 @assert identity_error < 1e-10
 @assert action_error < 1e-10
 @assert trace_derivative < 1e-10

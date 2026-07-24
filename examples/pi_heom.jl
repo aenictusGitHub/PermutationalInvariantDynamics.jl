@@ -136,6 +136,38 @@ println("small stationary HEOM residual = ", small_stationary.residual,
         "; block-preconditioner setup applications = ",
         preconditioner_cost(small_preconditioner).setup_liouvillian_applications)
 
+# Block Krylov and sensitivity calculations use matrix right-hand sides.
+# ADO and source columns share bounded system batches, while driven schedules
+# are prepared once per complete application.
+batch_source = reshape(
+    ComplexF64.(1:(2 * size(small_plan, 1))), size(small_plan, 1), 2)
+batch_forward = similar(batch_source)
+batch_adjoint = similar(batch_source)
+batch_workspace = HEOMWorkspace(
+    small_plan; batch_columns=size(batch_source, 2))
+apply!(
+    batch_forward, small_plan, batch_source, 0.0, nothing, batch_workspace)
+apply_adjoint!(
+    batch_adjoint, small_plan, batch_source, 0.0, nothing, batch_workspace)
+
+scalar_workspace = HEOMWorkspace(small_plan)
+forward_reference = similar(batch_source)
+adjoint_reference = similar(batch_source)
+for column in axes(batch_source, 2)
+    apply!(
+        view(forward_reference, :, column), small_plan,
+        view(batch_source, :, column), 0.0, nothing, scalar_workspace)
+    apply_adjoint!(
+        view(adjoint_reference, :, column), small_plan,
+        view(batch_source, :, column), 0.0, nothing, scalar_workspace)
+end
+batch_forward_error = maximum(abs, batch_forward - forward_reference)
+batch_adjoint_error = maximum(abs, batch_adjoint - adjoint_reference)
+@assert batch_forward_error < 2e-12
+@assert batch_adjoint_error < 2e-12
+println("HEOM batched forward/adjoint errors = ",
+        batch_forward_error, " / ", batch_adjoint_error)
+
 if makie_available()
     M = makie_module()
     figure = M.Figure(size=(1120, 440), fontsize=17)

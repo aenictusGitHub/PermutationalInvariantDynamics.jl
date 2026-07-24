@@ -17,11 +17,25 @@ compact validation of both the stationary solver and continuation machinery.
 
 ## Prepared scan
 
-`ParameterScanPlan` owns the copied rate grid and a model builder, but no
-compiled model or mutable solver workspace. The builder returns one `PIModel`
-for each pumping rate. Every point therefore receives the correct prepared
-rate kernels, while a serial scan reuses its compatible GMRES storage and uses
-the preceding steady state as its initial iterate.
+Only the two scalar jump rates vary, so the script first calls
+`compile_family` on one prototype model. `ParameterScanPlan` then binds
+`(1.0, pump)` through `rate_builder` at each point:
+
+```julia
+family = compile_family(thermal_model(first(pump_rates)))
+plan = ParameterScanPlan(pump_rates, family;
+    rate_builder=pump -> (1.0, pump),
+    algorithm=RecycledGMRESAlgorithm(
+        krylovdim=24, recycle_dim=6),
+    continuation=true)
+```
+
+The immutable Schur geometry is prepared once. Every specialization owns the
+correct numerical rates, while the serial scan reuses its matrix-free
+application workspace, GMRES storage, and a bounded revalidated GCRO recycle
+space. The preceding steady state is also used as the next initial iterate.
+Use the ordinary model-builder constructor instead when an operator, body
+order, basis, or other non-scalar geometry changes.
 
 The example sets `save_outputs=false`. The streaming callback still sees each
 new `PIState`, extracts the excitation fraction, and then lets the state be
@@ -38,6 +52,27 @@ the checkpoint-neutral result.
 The final `parameter_scan_columns` call provides dependency-free column data
 for plotting or tabular analysis. The script checks the exact thermal
 prediction and asserts that no state history was retained.
+
+## Batched dynamic sensitivity
+
+The last setup-only check prepares the augmented equation for
+``[\rho,\partial\rho/\partial r]``:
+
+```julia
+dynamic_model = specialize(family, (1.0, first(pump_rates)))
+rho_dynamic = iid_pure_state(basis, ComplexF64[1, 0])
+dL = compile(
+    PIModel(basis, (LocalJump(sp; rate=1.0),));
+    backend=:matrixfree)
+problem = sensitivity_problem(
+    dynamic_model, rho_dynamic, (0.0, 0.1), (dL,))
+```
+
+`sensitivity_problem` applies the prepared physical generator to the state
+and tangent columns in one genuine matrix-RHS call. Static derivative
+generators receive their own task-owned workspaces. The example evaluates
+this in-place right-hand side once, compares both columns with separate
+prepared applications, and introduces no ODE solver dependency.
 
 ## Run
 

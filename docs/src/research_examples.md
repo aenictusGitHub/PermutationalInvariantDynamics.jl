@@ -10,15 +10,15 @@ script. Then choose the closest workflow below.
 | Goal | Suggested runnable example | What it adds |
 |:--|:--|:--|
 | First deterministic model | [`getting_started.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/getting_started.jl) | Basis, terms, compilation, dynamics, stationary state, diagnostics, and time-step refinement |
-| Prepared observables and a reduced state | [`driven_qubits.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/driven_qubits.jl) | Reusable observable and reduction plans |
-| Compare stationary solvers | [`steady_state_methods.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/steady_state_methods.jl) | Direct, shift-invert, SVD, and matrix-free GMRES paths |
+| Prepared observables and a reduced state | [`driven_qubits.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/driven_qubits.jl) | Shared one-body geometry, a prepared observable, and a specialized one-body marginal workspace |
+| Compare stationary solvers | [`steady_state_methods.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/steady_state_methods.jl) | Direct, shift-invert, SVD, and prepared-preconditioned matrix-free GMRES paths |
 | Keep observables but not states | [`streaming_output.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/streaming_output.jl) | Memory-light deterministic and stochastic output |
 | Simulate jump records | [`quantum_trajectories.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/quantum_trajectories.jl) | Event-driven paths and analytical ensemble checks |
 | Study periodic dynamics | [`floquet_periodic_decay.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/floquet_periodic_decay.jl) | Reusable matrix-free period maps, selected multipliers, and a periodic state |
 | Compare density and Schur pseudo-ket paths | [`weak_pi_trajectories.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/weak_pi_trajectories.jl) | Fixed/event-driven weak-PI paths, confidence stopping, and stationary batch diagnostics |
-| Combine ensembles or an ancilla | [`composite_ensembles.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/composite_ensembles.jl) | Factorized composite coordinates and cross-system maps |
+| Combine ensembles or an ancilla | [`composite_ensembles.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/composite_ensembles.jl) | Factorized composite coordinates, cross-system maps, and fixed-capacity matrix-RHS actions |
 | Couple the ensemble to one shared cavity | [`global_pseudomode_cavity.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/global_pseudomode_cavity.jl) | Collective Tavis--Cummings dynamics, factor reductions, and a mode-cutoff diagnostic |
-| Add a finite-memory bath | [`pi_heom.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/pi_heom.jl) | Exactly scaled ADOs, depth convergence, SciML construction, and a block-preconditioned steady solve |
+| Add a finite-memory bath | [`pi_heom.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/pi_heom.jl) | Exactly scaled ADOs, depth convergence, fixed-capacity matrix-RHS actions, SciML construction, and a block-preconditioned steady solve |
 | Unravel one shared structured bath | [`pi_hops.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/pi_hops.jl) | Direct-sum Schur pure-state hierarchy, stationary colored noise, and an HEOM/analytic comparison |
 | Embed one truncated pseudomode per spin | [`debecker2026_all_to_all_ising_pseudomodes.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/debecker2026_all_to_all_ising_pseudomodes.jl) | Uniform-all-pair PI supersites, trajectory estimates, spin-only negativity, a strong-parity-reduced x-GHZ steady solve, and cutoff checks |
 
@@ -182,10 +182,13 @@ transform.
 ## Prepared continuation and non-Markovian hierarchy examples
 
 `examples/parameter_scan.jl` follows an exactly soluble emission/pumping
-steady-state curve while retaining no state history. It stops, stores one
-ownership-safe continuation seed, resumes in a fresh workspace, and exports
-compact columns. Threaded and optional Distributed execution apply only after
-continuation is disabled. See [Prepared parameter scans](parameter_scans.md).
+steady-state curve while retaining no state history. It compiles the fixed
+geometry as one scalar-rate family, reuses a bounded GCRO recycle space,
+stops, stores one ownership-safe continuation seed, resumes in a fresh
+workspace, and exports compact columns. A setup-only
+`sensitivity_problem` check exercises the same prepared matrix-RHS protocol.
+Threaded and optional Distributed execution apply only after continuation is
+disabled. See [Prepared parameter scans](parameter_scans.md).
 
 `examples/pi_heom.jl` stores every ADO of a collectively dephased qubit
 ensemble in exactly similarity-scaled PI coordinates and compares three
@@ -193,7 +196,8 @@ hierarchy depths with an exact exponential-bath coherence. It separately
 demonstrates that convergence of one observable is weaker than convergence of
 the complete reduced state. A one-step `heom_problem` check exposes the same
 matrix-free right-hand side to SciML, while a small unique stationary model
-demonstrates a reusable ADO-diagonal `HEOMBlockPreconditioner`. Scaling changes
+demonstrates a reusable ADO-diagonal `HEOMBlockPreconditioner` and validates
+fixed-capacity forward/adjoint matrix-RHS applications. Scaling changes
 conditioning and stored auxiliary coordinates, not the root reduced state or
 the hierarchy truncation. See [PI--HEOM](heom.md) and [Numerical convergence
 reports](convergence.md).
