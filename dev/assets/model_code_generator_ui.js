@@ -75,7 +75,9 @@
 
   function initialize() {
     const root = document.getElementById("pid-code-generator");
-    if (!root || !window.PIDModelCodeGenerator) return;
+    if (!root) return;
+    document.documentElement.classList.add("pid-generator-page");
+    if (!window.PIDModelCodeGenerator) return;
     const api = window.PIDModelCodeGenerator;
     const form = root.querySelector("#pid-generator-form");
     const jumpContainer = root.querySelector("#pid-jump-list");
@@ -100,11 +102,11 @@
       kind.setAttribute("aria-label", "Jump channel semantics");
       const local = element("option", {
         value: "local",
-        text: "Independent local: sum_i D[l_i]",
+        text: "Independent local",
       });
       const collective = element("option", {
         value: "collective",
-        text: "Collective: D[sum_i l_i]",
+        text: "Collective",
       });
       kind.append(local, collective);
       kind.value = jump && jump.kind === "collective" ? "collective" : "local";

@@ -10,8 +10,27 @@
   --pid-danger: #b42318;
   --pid-success: #166534;
   color: inherit;
+  container-name: pid-generator;
+  container-type: inline-size;
   font-size: 0.96rem;
   margin: 1.5rem 0 2rem;
+  max-width: 100rem;
+}
+
+/*
+ * Documenter limits ordinary articles to 52rem.  That is comfortable for
+ * prose but too narrow for this two-pane application.  The UI script adds
+ * this page marker only when the generator is present, so other documentation
+ * pages keep Documenter's standard measure.
+ */
+@media screen and (min-width: 1056px) {
+  html.pid-generator-page #documenter .docs-main {
+    max-width: min(100rem, calc(100vw - 21rem));
+  }
+
+  html.pid-generator-page #documenter-page > :not(#pid-code-generator) {
+    max-width: 52rem;
+  }
 }
 
 html.theme--documenter-dark #pid-code-generator,
@@ -61,7 +80,7 @@ html.theme--catppuccin-frappe #pid-code-generator {
 #pid-code-generator .pid-layout {
   display: grid;
   gap: 1rem;
-  grid-template-columns: minmax(18rem, 0.92fr) minmax(22rem, 1.08fr);
+  grid-template-columns: minmax(0, 1fr);
 }
 
 #pid-code-generator .pid-panel {
@@ -75,13 +94,22 @@ html.theme--catppuccin-frappe #pid-code-generator {
 #pid-code-generator .pid-panel-heading {
   align-items: center;
   display: flex;
+  flex-wrap: wrap;
   gap: 0.75rem;
   justify-content: space-between;
   margin-bottom: 0.8rem;
 }
 
+#pid-code-generator .pid-panel-heading > .pid-field {
+  flex: 1 1 14rem;
+  margin-bottom: 0;
+  max-width: 22rem;
+  min-width: 0;
+}
+
 #pid-code-generator .pid-panel-heading h2,
 #pid-code-generator .pid-panel-heading h3 {
+  flex: 0 0 auto;
   font-size: 1.05rem;
   margin: 0;
 }
@@ -89,7 +117,7 @@ html.theme--catppuccin-frappe #pid-code-generator {
 #pid-code-generator .pid-grid-two {
   display: grid;
   gap: 0.75rem;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 #pid-code-generator .pid-field {
@@ -142,7 +170,8 @@ html.theme--catppuccin-frappe #pid-code-generator {
 #pid-code-generator input:focus,
 #pid-code-generator select:focus,
 #pid-code-generator textarea:focus,
-#pid-code-generator button:focus-visible {
+#pid-code-generator button:focus-visible,
+#pid-code-generator .pid-code-shell:focus-visible {
   border-color: var(--pid-accent);
   box-shadow: 0 0 0 3px rgba(53, 89, 199, 0.16);
   outline: none;
@@ -166,17 +195,20 @@ html.theme--catppuccin-frappe #pid-code-generator {
   border-radius: 0.65rem;
   display: grid;
   gap: 0.5rem;
-  grid-template-columns: minmax(9.2rem, 1.5fr) minmax(6rem, 1fr) minmax(5rem, 0.72fr) auto;
+  grid-template-columns:
+    minmax(0, 1.55fr) minmax(0, 1fr) minmax(0, 0.8fr) auto;
   padding: 0.65rem;
 }
 
 #pid-code-generator .pid-jump-control {
   margin: 0;
+  min-width: 0;
 }
 
 #pid-code-generator .pid-jump-row input,
 #pid-code-generator .pid-jump-row select {
   min-height: 2.25rem;
+  min-width: 0;
 }
 
 #pid-code-generator .pid-button-row {
@@ -228,7 +260,9 @@ html.theme--catppuccin-frappe #pid-code-generator {
 
 #pid-code-generator .pid-output-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.45rem;
+  justify-content: flex-end;
 }
 
 #pid-code-generator .pid-code-shell {
@@ -236,20 +270,27 @@ html.theme--catppuccin-frappe #pid-code-generator {
   border: 1px solid var(--pid-border);
   border-radius: 0.7rem;
   max-height: 40rem;
+  max-width: 100%;
   min-height: 24rem;
+  min-width: 0;
   overflow: auto;
+  width: 100%;
 }
 
 #pid-code-generator .pid-code {
   background: transparent;
+  border: 0;
   color: var(--pid-code);
   display: block;
   font-size: 0.82rem;
   line-height: 1.55;
   margin: 0;
+  max-width: none;
+  min-width: 100%;
   overflow: visible;
   padding: 1rem;
   white-space: pre;
+  width: max-content;
 }
 
 #pid-code-generator .pid-status {
@@ -301,11 +342,7 @@ html.theme--catppuccin-frappe #pid-code-generator {
   top: 0;
 }
 
-@media (max-width: 1100px) {
-  #pid-code-generator .pid-layout {
-    grid-template-columns: 1fr;
-  }
-
+@media (max-width: 1320px) {
   #pid-code-generator .pid-code-shell {
     min-height: 20rem;
   }
@@ -314,11 +351,42 @@ html.theme--catppuccin-frappe #pid-code-generator {
 @media (max-width: 700px) {
   #pid-code-generator .pid-grid-two,
   #pid-code-generator .pid-jump-row {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   #pid-code-generator .pid-panel-heading {
     align-items: flex-start;
     flex-direction: column;
+  }
+}
+
+/*
+ * Prefer the application's actual width over the viewport width.  The media
+ * queries above remain a fallback for older browsers without container-query
+ * support.
+ */
+@container pid-generator (min-width: 68rem) {
+  #pid-code-generator .pid-layout {
+    grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+  }
+}
+
+@container pid-generator (max-width: 42rem) {
+  #pid-code-generator .pid-grid-two,
+  #pid-code-generator .pid-jump-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  #pid-code-generator .pid-panel-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
+@supports not (container-type: inline-size) {
+  @media (min-width: 1321px) {
+    #pid-code-generator .pid-layout {
+      grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+    }
   }
 }
