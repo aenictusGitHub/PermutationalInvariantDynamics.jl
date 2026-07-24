@@ -133,7 +133,8 @@ ambiguous notation produces an error instead of guessed physics.
            role="status" aria-live="polite">
         Loading the generator…
       </div>
-      <div class="pid-code-shell">
+      <div class="pid-code-shell" role="region" tabindex="0"
+           aria-labelledby="pid-output-heading">
         <pre id="pid-generated-code" class="pid-code"
              aria-label="Generated Julia code"></pre>
       </div>

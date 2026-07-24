@@ -20,6 +20,7 @@
 
     core_source=read(core,String)
     ui_source=read(ui,String)
+    stylesheet_source=read(stylesheet,String)
     page_source=read(page,String)
     make_source=read(joinpath(root,"docs","make.jl"),String)
     @test occursin("PIDModelCodeGenerator",core_source)
@@ -28,6 +29,19 @@
                    make_source)
     @test occursin("assets/model_code_generator_core.js",make_source)
     @test occursin("assets/model_code_generator_ui.js",make_source)
+    @test occursin("pid-generator-page",ui_source)
+    @test occursin(
+        "html.pid-generator-page #documenter .docs-main",
+        stylesheet_source)
+    @test occursin("@media (max-width: 1320px)",stylesheet_source)
+    @test occursin("container-type: inline-size",stylesheet_source)
+    @test occursin(
+        "@container pid-generator (min-width: 68rem)",
+        stylesheet_source)
+    @test occursin("minmax(0, 1.55fr)",stylesheet_source)
+    @test occursin(
+        "class=\"pid-code-shell\" role=\"region\" tabindex=\"0\"",
+        page_source)
     @test !occursin(r"\beval\s*\(",core_source)
     @test !occursin("new Function",core_source)
     @test !occursin(".innerHTML",ui_source)

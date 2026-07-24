@@ -14,6 +14,16 @@ both the PI density-coordinate dimension ``\sum_\nu(\dim U_\nu)^2`` and the
 full labeled-particle dimension ``d^N``. Production code constructs neither a
 ``d^N`` ket nor a ``d^N\times d^N`` operator.
 
+Related literature includes Elliot W. Lloyd, Aleksandra A. Ziolkowska, and
+Jonathan Keeling,
+[*Permutation-symmetric quantum trajectories*,
+arXiv:2605.11103 (2026)](https://arxiv.org/abs/2605.11103), which develops
+weak-permutation-symmetric stochastic unravelings for emitters coupled to a
+common system such as a cavity. The single-ensemble backend documented here
+implements Schur-sector pseudo-ket trajectories; the distinction from the
+shared-system cases in that work is stated under
+[scope and convergence](#Scope-and-convergence).
+
 ## What the pseudo-ket means
 
 A `WeakPIPseudoKet` maps to a physical PI density state through
@@ -329,7 +339,10 @@ uses the decay model of Zhang, Zhang, and Mølmer,
 For the paper's ``\gamma_l/\Gamma_c=1`` case it compares four routes:
 certified population dynamics, general matrix-free PI master evolution,
 density-valued PI trajectories, and weak-PI pseudo-kets. The stochastic
-backends use equal ensemble sizes and identical fixed-step controls.
+backends use equal ensemble sizes and identical fixed-step controls. Lloyd,
+Ziolkowska, and Keeling's related 2026 paper cited above provides the broader
+common-system weak-symmetry context, but this example does not reproduce its
+shared-cavity calculations.
 
 Two optional CairoMakie figures show the fluxes and 95% confidence bands,
 PI-state ensemble errors, sampled ``J\rightarrow J'`` sector changes,

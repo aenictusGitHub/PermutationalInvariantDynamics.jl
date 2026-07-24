@@ -9,6 +9,13 @@ render_plots && include(joinpath(@__DIR__, "utils", "makie_support.jl"))
 # motivates resolving an unresolved local event into total-spin-sector
 # branches. Here those branches come from the exact PI gain-map Kraus
 # factorization and work for every retained Schur irrep.
+#
+# Related weak-symmetry trajectory work:
+# E. W. Lloyd, A. A. Ziolkowska, and J. Keeling,
+# "Permutation-symmetric quantum trajectories," arXiv:2605.11103 (2026).
+# Their construction treats emitters coupled to a common system, including a
+# shared cavity. This executable remains the emitter-only Zhang--Mølmer decay
+# benchmark and does not claim to reproduce the shared-cavity calculations.
 N = 6
 GammaC = 1.0
 gammaL = 1.0
@@ -182,6 +189,8 @@ weak_history_bytes = Base.summarysize(weak_paths)
 density_history_bytes = Base.summarysize(density_paths)
 
 println("reference: Zhang--Zhang--Mølmer, NJP 20, 112001 (2018)")
+println("related reference: Lloyd--Ziolkowska--Keeling, ",
+        "arXiv:2605.11103 (2026)")
 println("full Hilbert dimension: ", 2^N)
 println("PI density dimension: ",length(basis))
 println("weak-PI pseudo-ket dimension: ",weak_pi_dimension(basis))

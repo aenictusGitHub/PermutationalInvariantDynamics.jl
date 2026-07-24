@@ -20,6 +20,15 @@ does not assign a label to the emitting particle. Instead, it factorizes the
 already permutation-averaged PI gain into a complete set of Schur-sector
 Kraus branches.
 
+Closely related weak-symmetry trajectory work is Elliot W. Lloyd, Aleksandra
+A. Ziolkowska, and Jonathan Keeling,
+[*Permutation-symmetric quantum trajectories*,
+arXiv:2605.11103 (2026)](https://arxiv.org/abs/2605.11103). Their construction
+addresses emitters coupled to a common system, including a shared bosonic
+cavity. The present runnable example deliberately remains the emitter-only
+Zhang--Zhang--Mølmer decay benchmark, so it does not claim to reproduce the
+shared-cavity calculations in Lloyd, Ziolkowska, and Keeling.
+
 The two recorded fluxes are
 
 ```math
