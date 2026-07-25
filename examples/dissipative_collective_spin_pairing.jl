@@ -185,5 +185,5 @@ if makie_available()
     M.vlines!(z_axis, [2.0]; color=:gray50, linestyle=:dash)
     M.vlines!(order_axis, [2.0]; color=:gray50, linestyle=:dash)
     M.axislegend(order_axis; position=:rt, labelsize=12)
-    save_example_figure(figure, "pra110_062208_dissipative_collective_spin_pairing_meanfield")
+    save_example_figure(figure, "dissipative_collective_spin_pairing_meanfield")
 end

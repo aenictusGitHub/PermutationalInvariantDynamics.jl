@@ -45,7 +45,7 @@ julia --project=examples -e 'using Pkg; Pkg.develop(path="."); Pkg.instantiate()
 Then run a figure-producing example with, for example,
 
 ```sh
-julia --project=examples examples/pra94_033838_superradiance.jl
+julia --project=examples examples/correlated_superradiance.jl
 ```
 
 Figures display in Makie-capable front ends and are saved as both PDF and PNG
@@ -93,8 +93,8 @@ snapshot.
 | `pi_hops_collective_emission.jl` | [PI--HOPS collective emission](pi_hops_collective_emission.md) | Non-Hermitian shared-bath coupling, exact one-excitation hierarchy closure, prescribed-noise paths, and conditioned `hops_rhs!` |
 | `pi_hops_mixed_multibath.jl` | [Mixed-state, multi-bath PI--HOPS](pi_hops_mixed_multibath.md) | Schur spectral initialization, reusable batch workspaces, Monte Carlo diagnostics, hierarchy metadata, and importance pruning |
 | `interacting_boundary_time_crystal.jl` | [Interacting boundary time crystal](interacting_boundary_time_crystal.md) | Nonlinear collective-spin slow modes |
-| `pra110_062208_dissipative_collective_spin_pairing.jl` | [Dissipative collective-spin pairing](pra110_062208_dissipative_collective_spin_pairing.md) | Exact finite PI versus finite-product and thermodynamic mean-field predictions |
-| `pra94_033838_superradiance.jl` | [Correlated superradiance](pra94_033838_superradiance.md) | Two-atom analytic benchmark, `N=30` radiated pulse, and peak-state Schur blocks |
+| `dissipative_collective_spin_pairing.jl` | [Dissipative collective-spin pairing](dissipative_collective_spin_pairing.md) | Exact finite PI versus finite-product and thermodynamic mean-field predictions |
+| `correlated_superradiance.jl` | [Correlated superradiance](correlated_superradiance.md) | Two-atom analytic benchmark, `N=30` radiated pulse, and peak-state Schur blocks |
 | `qubit_population_dynamics.jl` | [Certified qubit population dynamics](qubit_population_dynamics.md) | Six-rate model, reduced population evolution, and stationary populations |
 | `qudit_coherent_state_q_distribution.jl` | [Generalized qudit coherent-state Q](qudit_coherent_state_q_distribution.md) | Qutrit Schur-sector coherent-state data and qubit normalization sanity check |
 | `quantum_regression.jl` | [Quantum regression](quantum_regression.md) | Exact PI two-time correlations, antibunching, and optical spectra |

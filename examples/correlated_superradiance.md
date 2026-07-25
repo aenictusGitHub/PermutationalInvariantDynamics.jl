@@ -1,6 +1,6 @@
 # Correlated superradiance from PRA 94, 033838
 
-Source: [`pra94_033838_superradiance.jl`](pra94_033838_superradiance.jl)
+Source: [`correlated_superradiance.jl`](correlated_superradiance.jl)
 
 ## Model and radiated intensity
 
@@ -142,14 +142,14 @@ and analytical curves from Fig. 6, the normalized `N=30` radiated pulse and
 its maximum, and the multiplicity-weighted Schur-sector populations at that
 maximum on a logarithmic axis. It complements the detailed Young-diagram SVG
 with a compact quantitative plot. The script saves
-`pra94_033838_superradiance.pdf` and `.png`.
+`correlated_superradiance.pdf` and `.png`.
 
 ## Run
 
 From a checkout with its dependencies instantiated:
 
 ```sh
-julia --project=examples examples/pra94_033838_superradiance.jl
+julia --project=examples examples/correlated_superradiance.jl
 ```
 
 The example uses the package in the active checkout and does not modify the
@@ -157,7 +157,7 @@ project environment or install a second copy from GitHub.
 
 ## Expected output
 
-![Expected altered-superradiance validation, pulse, and peak Schur-sector populations](../docs/src/assets/example_figures/pra94_033838_superradiance.png)
+![Expected altered-superradiance validation, pulse, and peak Schur-sector populations](../docs/src/assets/example_figures/correlated_superradiance.png)
 
 The plotted `N=30` population solve and its step-doubling check are the same
 data used by the assertions.

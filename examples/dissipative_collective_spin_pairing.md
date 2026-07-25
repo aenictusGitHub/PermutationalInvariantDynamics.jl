@@ -1,6 +1,6 @@
 # Dissipative collective-spin pairing model from PRA 110, 062208
 
-Source: [`pra110_062208_dissipative_collective_spin_pairing.jl`](pra110_062208_dissipative_collective_spin_pairing.jl)
+Source: [`dissipative_collective_spin_pairing.jl`](dissipative_collective_spin_pairing.jl)
 
 ## Model
 
@@ -102,17 +102,17 @@ finite-`N` Liouvillian gap, the longitudinal polarization `Z`, and the
 parity-even transverse order `Cperp`. Exact PI, finite-product,
 thermodynamic, and analytical predictions use consistent markers and colours;
 the vertical dashed line marks the thermodynamic transition. PDF and PNG
-copies are saved as `pra110_062208_dissipative_collective_spin_pairing_meanfield.*`.
+copies are saved as `dissipative_collective_spin_pairing_meanfield.*`.
 
 ## Run
 
 ```sh
-julia --project=examples examples/pra110_062208_dissipative_collective_spin_pairing.jl
+julia --project=examples examples/dissipative_collective_spin_pairing.jl
 ```
 
 ## Expected output
 
-![Expected dissipative LMG finite-PI and mean-field comparison](../docs/src/assets/example_figures/pra110_062208_dissipative_collective_spin_pairing_meanfield.png)
+![Expected dissipative LMG finite-PI and mean-field comparison](../docs/src/assets/example_figures/dissipative_collective_spin_pairing_meanfield.png)
 
 The three panels compare the default finite PI calculation, finite-product
 closure, thermodynamic prediction, and available analytical results.

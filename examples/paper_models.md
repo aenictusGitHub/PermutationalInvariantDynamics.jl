@@ -118,9 +118,9 @@ rapid coordinate growth estimated before large scans.
 `paper_models.jl` is a constructor module and intentionally performs no solve
 when included. Its constructors feed the checked workflows illustrated below:
 
-![Expected correlated-superradiance output](../docs/src/assets/example_figures/pra94_033838_superradiance.png)
+![Expected correlated-superradiance output](../docs/src/assets/example_figures/correlated_superradiance.png)
 
-![Expected dissipative collective-spin pairing output](../docs/src/assets/example_figures/pra110_062208_dissipative_collective_spin_pairing_meanfield.png)
+![Expected dissipative collective-spin pairing output](../docs/src/assets/example_figures/dissipative_collective_spin_pairing_meanfield.png)
 
 ![Expected all-to-all local-pseudomode output](../docs/src/assets/example_figures/all_to_all_xx_spin_local_pseudomodes.png)
 

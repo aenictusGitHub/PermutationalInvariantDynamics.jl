@@ -167,5 +167,5 @@ if makie_available()
         (partition.parts[1]-partition.parts[2])/2 for partition in basis.sectors]
     M.barplot!(sector_axis, sector_spins, peak_sector_populations;
                color=:mediumpurple, strokecolor=:black, strokewidth=0.5)
-    save_example_figure(figure, "pra94_033838_superradiance")
+    save_example_figure(figure, "correlated_superradiance")
 end

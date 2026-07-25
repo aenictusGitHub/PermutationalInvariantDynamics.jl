@@ -76,7 +76,7 @@ finite-size caveats. Makie remains confined to the examples environment.
 
 ## Cooperative spontaneous emission (2016)
 
-`examples/pra94_033838_superradiance.jl` implements Eqs. (3)--(5) of
+`examples/correlated_superradiance.jl` implements Eqs. (3)--(5) of
 Damanet, Braun, and Martin, *Phys. Rev. A* **94**, 033838 (2016). The decay
 matrix is decomposed exactly as
 
@@ -101,7 +101,7 @@ state vector or a ``2^{30}\times2^{30}`` density matrix.
 
 ## Dissipative LMG model (2024)
 
-`examples/pra110_062208_dissipative_collective_spin_pairing.jl` implements Eqs. (1)--(6) of Pausch *et al.*,
+`examples/dissipative_collective_spin_pairing.jl` implements Eqs. (1)--(6) of Pausch *et al.*,
 *Phys. Rev. A* **110**, 062208 (2024):
 
 ```math
