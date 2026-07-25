@@ -118,6 +118,52 @@ dictionaries, or vectors of pairs can replace either candidate set. These are
 weak superoperator symmetries; they do not assert that every Hamiltonian and
 jump operator commutes individually with `U` (the stronger notion).
 
+## Automatic strong-symmetry reduction
+
+`strong_symmetry_report(model)` performs the stronger, term-resolved test:
+every Hamiltonian and every effective Lindblad operator must commute with the
+same diagonal local unitary. A jump that changes by a phase can pass the weak
+covariance test above while correctly failing this strong test. Reports use
+`true`, `false`, or `missing`; an unfrozen operator schedule is inconclusive
+instead of being evaluated at an implicit time.
+
+The default search tests the diagonal clock (Pauli-Z parity for qubits) and
+solves the exact support constraints over ``\mathbb Z_2`` to find binary
+diagonal sign parities. Its completeness claim is limited to binary sign
+candidates represented by the supported microscopic matrices. Arbitrary
+continuous diagonal symmetries, non-diagonal symmetries, and unsupported
+custom microscopic representations are not claimed to have been exhausted.
+Every returned `true` candidate is nevertheless checked term by term.
+
+```julia
+report = strong_symmetry_report(model)
+reduction = strong_symmetry_reduction(model; report)
+
+# One validated solution per trace-bearing charge, retained in reduced form.
+stationary = strong_symmetry_steady_states(
+    reduction; embed_states=false)
+
+# Each spectrum remains explicitly charge resolved.
+spectra = strong_symmetry_spectra(
+    reduction; method=:krylov, nev=4)
+```
+
+`strong_symmetry_reduction(model)` compiles the source once and constructs a
+certified `RestrictedLiouvillian` for every equal ket/bra charge. These are all
+trace-bearing charge blocks: the routine deliberately does not choose one
+stationary sector, since strong symmetry generally makes the global stationary
+state nonunique. `strong_symmetry_steady_states` returns one trace-fixed
+solution and its ambient residual for each block. Set `embed_states=false` to
+retain only reduced state coordinates after validation.
+`strong_symmetry_spectra` similarly returns separate charge-resolved spectra
+and, by default, checks every returned eigenvector against the unreduced
+Liouvillian. A selected spectrum remains partial and charge resolved; it is
+not silently promoted to a certified global gap. Even complete spectra of all
+trace-bearing blocks omit off-diagonal ket/bra charge sectors and therefore
+are not the global Liouvillian spectrum. Reduction, multi-sector stationary
+output, and multi-sector spectral output each enforce one aggregate memory
+budget rather than applying the same budget independently to every charge.
+
 ## Vectorization and permutation covariance
 
 The package uses column-major vectorization. The exported constructors

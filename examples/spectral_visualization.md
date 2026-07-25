@@ -24,17 +24,17 @@ SVG-capable notebook displays inline.
 
 Three qubits undergo a collective coherent drive and independent decay,
 
-\[
+```math
 \mathcal L(\rho)=-i\Omega[J_x,\rho]
 +\gamma\sum_{n=1}^{3}\mathcal D[\sigma_-^{(n)}]\rho,
 \qquad \Omega=0.8,\quad\gamma=0.35.
-\]
+```
 
 The complete qubit PI basis has coordinate dimension 20 at `N=3`, making a
 dense full-spectrum calculation an appropriate diagnostic. In the resulting
 complex-plane diagram the horizontal axis is
-\(\mathrm{Re}\,\lambda\), the decay or growth rate, and the vertical axis
-is \(\mathrm{Im}\,\lambda\), the oscillation frequency. The vertical line
+$\mathrm{Re}\,\lambda$, the decay or growth rate, and the vertical axis
+is $\mathrm{Im}\,\lambda$, the oscillation frequency. The vertical line
 at `Re = 0` is the stability boundary. A trace-preserving relaxing generator
 has a stationary eigenvalue at the origin and all other modes in the open
 left half-plane. The script asserts both properties.
@@ -60,32 +60,32 @@ requested Ritz residuals have converged.
 The second model keeps the collective operator fixed but modulates its scalar
 rate,
 
-\[
+```math
 \Omega(t)=0.9[1+0.45\cos(2\pi t/T)],\qquad T=2,
-\]
+```
 
 while retaining the same local decay. Fixed-operator scalar time dependence
 uses the preallocated compiled kernels. The one-period propagator
-\(F=\mathcal T\exp\int_0^T\mathcal L(t)\,dt\) is computed with 128 and 256
+$F=\mathcal T\exp\int_0^T\mathcal L(t)\,dt$ is computed with 128 and 256
 RK4 steps; the script requires the two maps to agree before interpreting its
 spectrum.
 
-Floquet multipliers \(\mu_j\) are displayed in the complex plane. The unit
+Floquet multipliers $\mu_j$ are displayed in the complex plane. The unit
 circle is the discrete-time stability boundary: a stable quantum channel has
-\(|\mu_j|\leq1\), and trace preservation supplies a fixed multiplier
-\(\mu=1\). Arguments give phases accumulated per period, while magnitudes
+$|\mu_j|\leq1$, and trace preservation supplies a fixed multiplier
+$\mu=1$. Arguments give phases accumulated per period, while magnitudes
 give stroboscopic damping.
 
 The corresponding exponents use the principal complex logarithm,
 
-\[
+```math
 \xi_j=\frac{\mathrm{Log}\,\mu_j}{T},
 \qquad -\frac{\pi}{T}\leq\mathrm{Im}\,\xi_j\leq\frac{\pi}{T}.
-\]
+```
 
 Their real and imaginary axes again represent decay rates and frequencies,
 but quasifrequencies outside that interval differ by an integer multiple of
-\(2\pi/T\) and fold onto the same multiplier. The branch choice is therefore
+$2\pi/T$ and fold onto the same multiplier. The branch choice is therefore
 part of the data convention, not evidence that other logarithm branches do
 not exist. Julia preserves the signed-zero side of the negative-real branch
 cut, so either endpoint can occur exactly on that cut.

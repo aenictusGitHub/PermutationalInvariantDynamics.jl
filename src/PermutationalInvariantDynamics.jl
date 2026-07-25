@@ -66,6 +66,7 @@ include("meanfield.jl")
 include("composite.jl")
 include("evolution.jl")
 include("restricted_symmetries.jl")
+include("automatic_symmetries.jl")
 include("heom.jl")
 include("trajectories.jl")
 include("composite_trajectories.jl")
@@ -266,6 +267,9 @@ export Partition, partitions, weight, length_nonzero, removable_corners,
        diagonal_symmetry_restriction, retained_indices,
        restricted_trace_vector, restrict!, embed!, restriction_invariance,
        restriction_full_residual, restricted_steady_state,
+       StrongSymmetryReport, StrongSymmetryReduction,
+       strong_symmetry_report, strong_symmetry_reduction,
+       strong_symmetry_steady_states, strong_symmetry_spectra,
        FloquetMap, FloquetWorkspace, FloquetBatchWorkspace,
        floquet_map, restricted_floquet_map,
        selected_floquet_multipliers,

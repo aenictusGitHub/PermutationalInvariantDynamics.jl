@@ -52,6 +52,12 @@ embed!
 restriction_invariance
 restriction_full_residual
 restricted_steady_state
+StrongSymmetryReport
+StrongSymmetryReduction
+strong_symmetry_report
+strong_symmetry_reduction
+strong_symmetry_steady_states
+strong_symmetry_spectra
 ```
 
 Simultaneous commuting-charge projectors are documented in

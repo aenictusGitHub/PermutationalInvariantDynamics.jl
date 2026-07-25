@@ -55,6 +55,8 @@ end
     @test operator.compatibility_workspace===nothing
     @test operator.certificate.invariant
     @test PID.restricted_trace_vector(restriction,ComplexF64)==operator.tracevec
+    @test operator.tracevec isa SparseVector
+    @test PID._operator_trace_functional(operator)===operator.tracevec
     @test PID._operator_trace_vector(operator)===operator.tracevec
     @test PID._operator_has_adjoint(operator)
     @test PID._linear_operator_workspace(operator) isa
@@ -208,6 +210,33 @@ end
     PID.apply_adjoint!(rectangular_output,rectangular_operator,
                        rectangular_input,rectangular_work)
     @test rectangular_output≈adjoint(rectangular_reference)*rectangular_input atol=8e-13
+
+    # Local p-body gains must remain rectangular Schur sandwiches after
+    # restriction. Expanding them into reduced coordinate triplets would
+    # restore quartic setup/storage precisely where symmetry reduction is
+    # intended to help.
+    pair_z=kron(z,z)
+    pbody_model=PIModel(many_basis,(
+        LocalPBodyJump(pair_z,2;rate=0.03),))
+    pbody_source=compile(pbody_model;backend=:matrixfree)
+    pbody_operator=PID.RestrictedLiouvillian(
+        pbody_source,density_restriction)
+    @test pbody_operator.backend===:lowered
+    @test first(pbody_operator.compressed_source.plan.kernels) isa
+        PID._RestrictedFactorizedLocalPBodyJumpKernel
+    @test !hasproperty(
+        first(pbody_operator.compressed_source.plan.kernels),:I)
+    pbody_indices=PID.retained_indices(density_restriction)
+    pbody_reference=Matrix(liouvillian(
+        pbody_model;representation=:sparse))[pbody_indices,pbody_indices]
+    pbody_input=randn(rng,ComplexF64,length(density_restriction))
+    pbody_output=similar(pbody_input)
+    pbody_work=PID.RestrictedLiouvillianWorkspace(pbody_operator)
+    PID.apply!(pbody_output,pbody_operator,pbody_input,pbody_work)
+    @test pbody_output≈pbody_reference*pbody_input atol=2e-12
+    PID.apply_adjoint!(
+        pbody_output,pbody_operator,pbody_input,pbody_work)
+    @test pbody_output≈adjoint(pbody_reference)*pbody_input atol=2e-12
 
     # Response solvers must retain the reduced application scratch rather
     # than reintroducing two ambient PI vectors behind the lowered operator.

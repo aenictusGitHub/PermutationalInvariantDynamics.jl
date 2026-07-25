@@ -380,6 +380,13 @@ end
 
     wrapped=global_pseudomode_matrixfree(
         model;workspace)
+    @test model.trace_vector isa SparseVector
+    @test wrapped.tracevec isa SparseVector
+    @test collect(model.trace_vector)==
+        composite_trace_vector(
+            model.basis;T=typeof(real(zero(eltype(model)))))
+    @test model.resource_estimates.trace_vector_bytes<
+        model.resource_estimates.state_bytes
     wrapper_bytes=
         model.resource_estimates.workspace_upper_bytes+
         model.resource_estimates.trace_vector_bytes

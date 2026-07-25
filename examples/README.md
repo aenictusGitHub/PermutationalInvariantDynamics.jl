@@ -55,6 +55,8 @@ same scripts still perform all numerical assertions when run from the root
 environment without CairoMakie; only the figure-generation step is skipped.
 The loader deliberately requires CairoMakie to be declared by the active
 project and does not borrow a potentially incompatible global installation.
+Set `PID_EXAMPLE_RENDER=0` to disable rendering explicitly even in the
+examples environment. This is the mode used by executable-example CI.
 
 Each paired guide embeds a curated expected-output snapshot from
 `docs/src/assets/example_figures/`. Those reviewed PNG/SVG files are copied
@@ -117,8 +119,23 @@ julia --project=. -e 'using Pkg; Pkg.instantiate()'  # first local run only
 julia --project=. examples/<name>.jl
 ```
 
+For a fast cross-cutting check of user-facing scripts, run the same two
+isolated shards as CI:
+
+```sh
+julia --startup-file=no --project=. test/run_quick_examples.jl --shard 1/2
+julia --startup-file=no --project=. test/run_quick_examples.jl --shard 2/2
+```
+
+List the curated scripts with
+`julia --startup-file=no --project=. test/run_quick_examples.jl --list`.
+The runner sets `PID_EXAMPLE_QUICK=1` as a stable CI marker and
+`PID_EXAMPLE_RENDER=0`, uses a fresh Julia process for each script, and retains
+every selected example's default numerical assertions.
+
 Use `--project=examples` for the Makie-enabled literature scripts: the
-literature examples in the table, both `pra*.jl` validations,
+literature examples in the table, including the correlated-superradiance and
+dissipative-collective-spin-pairing validations,
 `quantum_trajectories.jl`, `meanfield_time_crystal.jl`, `pi_heom.jl`,
 the three `pi_hops*.jl` scripts, and
 `qudit_coherent_state_q_distribution.jl`. The local-pseudomode example is the permutation-invariant

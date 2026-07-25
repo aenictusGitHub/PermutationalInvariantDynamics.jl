@@ -619,15 +619,17 @@ function schur_sector_preconditioner(L,basis::PIBasis;trace_vector=nothing,
     operator_scale===nothing||_validated_operator_scale(operator_scale)
     expected_reuses>0||throw(ArgumentError("expected_reuses must be positive"))
     expected_solve_applications>0||throw(ArgumentError("expected_solve_applications must be positive"))
-    raw_t=trace_vector===nothing ? _trace_vector(basis,_complex_float_type(eltype(L))) :
-                                  collect(trace_vector)
+    raw_t=trace_vector===nothing ?
+        _trace_functional(basis,_complex_float_type(eltype(L))) :
+        trace_vector
     T=promote_type(_complex_float_type(eltype(L)),eltype(raw_t))
     T=_promote_krylov_scalar_type(T,regularization)
     T=_promote_krylov_scalar_type(T,operator_scale)
     _check_krylov_matvec_precision(L,T)
-    t=T.(raw_t)
+    t=_convert_trace_functional(raw_t,T;
+        context="Schur-preconditioner trace functional")
     length(t)==n||throw(DimensionMismatch("trace vector has wrong length"))
-    v=t/dot(t,t);e=zeros(T,n);y=zeros(T,n)
+    v=_normalized_trace_functional(t);e=zeros(T,n);y=zeros(T,n)
     direct_plan=_schur_preconditioner_plan(L,basis)
     scale_probes=operator_scale===nothing && !(L isa AbstractMatrix) ? 3 : 0
     Lscale=_validated_operator_scale(if operator_scale===nothing
@@ -658,7 +660,7 @@ function schur_sector_preconditioner(L,basis::PIBasis;trace_vector=nothing,
         prepared
     end
     for (B,r) in zip(blocks,ranges)
-        @views B .+= v[r]*adjoint(t[r])
+        _add_trace_border_block!(B,v,t,first(r)-1)
         if !iszero(regularization)
             @inbounds for i in axes(B,1);B[i,i]+=regularization;end
         end
@@ -800,9 +802,9 @@ function krylov_steady_state(L;basis=nothing,trace_vector=nothing,
                              operator_scale=nothing,return_info::Bool=false)
     n=size(L,1);size(L,2)==n||throw(DimensionMismatch("L must be square"))
     operator_scale===nothing||_validated_operator_scale(operator_scale)
-    t=trace_vector!==nothing ? collect(trace_vector) : basis!==nothing ?
-      _trace_vector(basis,_complex_float_type(eltype(L))) :
-      L isa MatrixFreeLiouvillian ? collect(L.tracevec) : nothing
+    t=trace_vector!==nothing ? trace_vector : basis!==nothing ?
+      _trace_functional(basis,_complex_float_type(eltype(L))) :
+      _operator_trace_functional(L)
     t===nothing&&throw(ArgumentError("the physical trace is ambiguous; pass basis=... or trace_vector=..."))
     length(t)==n||throw(DimensionMismatch("trace vector has wrong length"))
     initial_type=initial_state isa PIState ? eltype(initial_state.data) :
@@ -811,8 +813,11 @@ function krylov_steady_state(L;basis=nothing,trace_vector=nothing,
     T=_promote_krylov_scalar_type(T,operator_scale)
     preconditioner===nothing||(T=_promote_krylov_operator_type(T,preconditioner))
     _check_krylov_matvec_precision(L,T)
-    tc=T.(t);v=tc/dot(tc,tc)
-    x=initial_state isa PIState ? T.(initial_state.data) : initial_state===nothing ? copy(v) : T.(initial_state)
+    tc=_convert_trace_functional(t,T;
+        context="Krylov trace functional")
+    v=_normalized_trace_functional(tc)
+    x=initial_state isa PIState ? T.(initial_state.data) :
+      initial_state===nothing ? _trace_dense_copy(v,T) : T.(initial_state)
     length(x)==n||throw(DimensionMismatch("initial_state has wrong length"))
     recycle_dim>=0||throw(ArgumentError("recycle_dim must be nonnegative"))
     ws = if workspace===nothing
@@ -849,7 +854,8 @@ function krylov_steady_state(L;basis=nothing,trace_vector=nothing,
     invscale=inv(Lscale)
     function apply!(y,z)
         mul!(y,L,z);α=dot(tc,z)
-        @inbounds @simd for i in eachindex(y);y[i]=invscale*y[i]+v[i]*α;end
+        @inbounds @simd for i in eachindex(y);y[i]=invscale*y[i];end
+        _trace_axpy!(y,α,v)
         y
     end
     RT=_real_float_type(T);atolT=RT(atol);rtolT=RT(rtol)

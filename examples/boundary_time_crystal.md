@@ -6,10 +6,10 @@ Source: [`boundary_time_crystal.jl`](boundary_time_crystal.jl)
 
 The collective-spin model of Iemini *et al.* has
 
-\[
+```math
 H=\omega_0 J_x,\qquad
 \dot\rho=-i[H,\rho]+\frac{2\kappa}{N}\mathcal D[J_-]\rho .
-\]
+```
 
 Only the fully symmetric Schur sector is required because both the Hamiltonian
 and jump operator are collective. The script studies `ω0/κ = 0.5` and `1.5`

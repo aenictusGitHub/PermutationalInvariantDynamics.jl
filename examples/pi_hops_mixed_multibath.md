@@ -28,7 +28,7 @@ r&1
 ```
 
 and the complete initial state is
-\(\rho(0)=\rho_\mathrm{loc}^{\otimes N}\) with \(N=3\). Although it is a
+$\rho(0)=\rho_\mathrm{loc}^{\otimes N}$ with $N=3$. Although it is a
 tensor product, it is mixed and generally occupies multiple Schur sectors.
 The library constructs it directly in PI coordinates:
 
@@ -40,13 +40,13 @@ initial = hops_initial_ensemble(plan, rho0)
 `hops_initial_ensemble` diagonalizes each multiplicity-weighted Schur block.
 Its positive eigenvalues form a categorical distribution over normalized
 Schur-irrep roots. It does not sample multiplicity tableaux, clip negative
-eigenvalues, or construct a \(2^N\) state. Passing `rho0` directly to
+eigenvalues, or construct a $2^N$ state. Passing `rho0` directly to
 `hops_average` invokes the same preparation automatically.
 
 ## Two shared baths
 
 The two statistically independent baths both couple through the collective
-operator \(J_z\):
+operator $J_z$:
 
 ```math
 C_b(t)=c_b e^{-\nu_b t},
@@ -67,7 +67,7 @@ plan = HOPSPlan(
 
 Every realization remains PI because each bath noise multiplies one PI
 collective operator. This is not a model of independent local noises
-\(z_i(t)\), which break permutation symmetry on individual paths.
+$z_i(t)$, which break permutation symmetry on individual paths.
 
 For commuting collective dephasing, the normalized transverse signal is
 
@@ -108,14 +108,14 @@ changes.
 
 `result.states` are averages of the **unnormalized** root outer products.
 `result.standard_error` is a Hilbert--Schmidt state standard error. The
-example contracts it with the coefficient-space norm of \(2J_x/N\) to obtain
+example contracts it with the coefficient-space norm of $2J_x/N$ to obtain
 a conservative Cauchy--Schwarz observable bound. It describes Monte Carlo
 dispersion only; it does not include hierarchy, time-step, correlation-fit, or
 initial-model error.
 
 ## Hierarchy metadata and importance pruning
 
-The complete two-pole hierarchy at depth \(D=4\) has
+The complete two-pole hierarchy at depth $D=4$ has
 
 ```math
 \binom{2+D}{D}=15

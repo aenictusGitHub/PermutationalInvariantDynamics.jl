@@ -656,7 +656,6 @@ function _apply_kernel!(y,x,ker::HamiltonianPIKernel,b,t,p,work)
     scale=convert(eltype(work[1][1]),value_at(ker.scale,t,p))
     for s in eachindex(b.sectors)
         n=length(b.patterns[s]);off=b.offsets[s];A,B,X=work[s];K=ker.blocks[s]
-        copyto!(X,1,x,off,n*n)
         mul!(A,K,X); mul!(B,X,K)
         @inbounds for j in eachindex(A);y[off+j-1]+=(-1im*scale)*(A[j]-B[j]);end
     end
@@ -665,7 +664,6 @@ function _apply_kernel!(y,x,ker::DissipatorPIKernel,b,t,p,work)
     scale=convert(eltype(work[1][1]),_evaluated_dissipative_rate(ker.scale,t,p))
     for s in eachindex(b.sectors)
         n=length(b.patterns[s]);off=b.offsets[s];A,B,X=work[s]
-        copyto!(X,1,x,off,n*n)
         K=ker.blocks[s]; Q=ker.qblocks[s]; mul!(A,K,X); mul!(B,A,adjoint(K))
         @inbounds for j in eachindex(B);y[off+j-1]+=scale*B[j];end
         mul!(A,Q,X); mul!(B,X,Q)
@@ -679,7 +677,6 @@ function _apply_kernel!(y,x,ker::LocalJumpPIKernel,b,t,p,work)
     end
     for s in eachindex(b.sectors)
         n=length(b.patterns[s]);off=b.offsets[s];A,B,X=work[s];Q=ker.qblocks[s]
-        copyto!(X,1,x,off,n*n)
         mul!(A,Q,X); mul!(B,X,Q)
         @inbounds for j in eachindex(A);y[off+j-1]-=(scale/2)*(A[j]+B[j]);end
     end
@@ -689,7 +686,6 @@ function _apply_adjoint_kernel!(y,x,ker::HamiltonianPIKernel,b,t,p,work)
     scale=conj(convert(eltype(work[1][1]),value_at(ker.scale,t,p)))
     for s in eachindex(b.sectors)
         n=length(b.patterns[s]);off=b.offsets[s];A,B,X=work[s];K=ker.blocks[s]
-        copyto!(X,1,x,off,n*n)
         mul!(A,adjoint(K),X);mul!(B,X,adjoint(K))
         @inbounds for j in eachindex(A);y[off+j-1]+=(1im*scale)*(A[j]-B[j]);end
     end
@@ -699,7 +695,6 @@ function _apply_adjoint_kernel!(y,x,ker::DissipatorPIKernel,b,t,p,work)
     scale=conj(convert(eltype(work[1][1]),_evaluated_dissipative_rate(ker.scale,t,p)))
     for s in eachindex(b.sectors)
         n=length(b.patterns[s]);off=b.offsets[s];A,B,X=work[s]
-        copyto!(X,1,x,off,n*n)
         K=ker.blocks[s];Q=ker.qblocks[s]
         mul!(A,adjoint(K),X);mul!(B,A,K)
         @inbounds for j in eachindex(B);y[off+j-1]+=scale*B[j];end
@@ -715,7 +710,6 @@ function _apply_adjoint_kernel!(y,x,ker::LocalJumpPIKernel,b,t,p,work)
     end
     for s in eachindex(b.sectors)
         n=length(b.patterns[s]);off=b.offsets[s];A,B,X=work[s];Q=ker.qblocks[s]
-        copyto!(X,1,x,off,n*n)
         mul!(A,adjoint(Q),X);mul!(B,X,adjoint(Q))
         @inbounds for j in eachindex(A);y[off+j-1]-=(scale/2)*(A[j]+B[j]);end
     end
@@ -1843,7 +1837,7 @@ function _liouvillian_plan_from_kernels(model,kernels)
     fallback=fixed_operators ? nothing : model
     T = kernels===nothing||isempty(kernels) ? ComplexF64 :
         foldl(promote_type,(_kernel_scalar_type(k) for k in kernels))
-    LiouvillianPlan(model.basis,kernels,_trace_vector(model.basis,T),
+    LiouvillianPlan(model.basis,kernels,_trace_functional(model.basis,T),
                     fallback,T,isautonomous(model))
 end
 
@@ -2666,7 +2660,6 @@ function _apply_prepared_kernel!(y,x,kernel::InPlaceLocalJumpPIKernel,
                                  b,t,p,work)
     scale=convert(eltype(work[1][1]),
                   _evaluated_dissipative_rate(kernel.scale,t,p))
-    _copy_input_blocks!(work,x,b)
     _apply_factorized_onebody_gain!(y,kernel.branches,prepared.contractions,
         prepared.gain_scratch,b,scale,work,1)
     _apply_local_jump_anticommutator!(
@@ -2677,7 +2670,6 @@ function _apply_adjoint_prepared_kernel!(y,x,kernel::InPlaceLocalJumpPIKernel,
                                          b,t,p,work)
     scale=conj(convert(eltype(work[1][1]),
                        _evaluated_dissipative_rate(kernel.scale,t,p)))
-    _copy_input_blocks!(work,x,b)
     _apply_factorized_onebody_gain!(y,kernel.branches,prepared.contractions,
         prepared.gain_scratch,b,scale,work,1;adjoint=true)
     _apply_local_jump_anticommutator!(
@@ -2691,7 +2683,6 @@ function _apply_prepared_kernel!(y,x,
     for sector in eachindex(b.sectors)
         n=length(b.patterns[sector]);offset=b.offsets[sector]
         left,right,input=work[sector]
-        copyto!(input,1,x,offset,n*n)
         for channel in 1:prepared.rank[]
             block=prepared.effective_blocks[channel][sector]
             mul!(left,block,input);mul!(right,left,adjoint(block))
@@ -2715,7 +2706,6 @@ function _apply_adjoint_prepared_kernel!(y,x,
     for sector in eachindex(b.sectors)
         n=length(b.patterns[sector]);offset=b.offsets[sector]
         left,right,input=work[sector]
-        copyto!(input,1,x,offset,n*n)
         for channel in 1:prepared.rank[]
             block=prepared.effective_blocks[channel][sector]
             mul!(left,adjoint(block),input);mul!(right,left,block)
@@ -2735,7 +2725,6 @@ function _apply_prepared_kernel!(y,x,kernel::InPlaceCorrelatedLocalJumpPIKernel,
         prepared::InPlaceCorrelatedLocalJumpKernelWorkspace,b,t,p,work)
     scale=convert(eltype(work[1][1]),
                   _evaluated_dissipative_rate(kernel.scale,t,p))
-    _copy_input_blocks!(work,x,b)
     _apply_factorized_onebody_gain!(y,kernel.branches,prepared.contractions,
         prepared.gain_scratch,b,scale,work,prepared.rank[])
     _apply_local_jump_anticommutator!(
@@ -2746,7 +2735,6 @@ function _apply_adjoint_prepared_kernel!(y,x,
         prepared::InPlaceCorrelatedLocalJumpKernelWorkspace,b,t,p,work)
     scale=conj(convert(eltype(work[1][1]),
                        _evaluated_dissipative_rate(kernel.scale,t,p)))
-    _copy_input_blocks!(work,x,b)
     _apply_factorized_onebody_gain!(y,kernel.branches,prepared.contractions,
         prepared.gain_scratch,b,scale,work,prepared.rank[];adjoint=true)
     _apply_local_jump_anticommutator!(
@@ -2935,6 +2923,7 @@ end
 
 function _apply_prepared_batch_kernel!(Y,X,kernel,prepared,b,t,p,work)
     for column in axes(X,2)
+        _copy_input_blocks!(work.blocks,view(X,:,column),b)
         _apply_prepared_kernel!(view(Y,:,column),view(X,:,column),kernel,
             prepared,b,t,p,work.blocks)
     end
@@ -2942,6 +2931,7 @@ function _apply_prepared_batch_kernel!(Y,X,kernel,prepared,b,t,p,work)
 end
 function _apply_adjoint_prepared_batch_kernel!(Y,X,kernel,prepared,b,t,p,work)
     for column in axes(X,2)
+        _copy_input_blocks!(work.blocks,view(X,:,column),b)
         _apply_adjoint_prepared_kernel!(view(Y,:,column),view(X,:,column),
             kernel,prepared,b,t,p,work.blocks)
     end
@@ -3041,7 +3031,6 @@ function _apply_prepared_kernel!(y,x,kernel::FactorizedLocalJumpPIKernel,
         prepared::StaticFactorizedGainKernelWorkspace,b,t,p,work)
     scale=convert(eltype(work[1][1]),
                   _evaluated_dissipative_rate(kernel.scale,t,p))
-    _copy_input_blocks!(work,x,b)
     _apply_factorized_onebody_gain!(y,kernel.branches,kernel.contractions,
         prepared.gain_scratch,b,scale,work,1)
     _apply_local_jump_anticommutator!(y,kernel.qblocks,b,scale,work)
@@ -3052,7 +3041,6 @@ function _apply_adjoint_prepared_kernel!(y,x,
         prepared::StaticFactorizedGainKernelWorkspace,b,t,p,work)
     scale=conj(convert(eltype(work[1][1]),
                        _evaluated_dissipative_rate(kernel.scale,t,p)))
-    _copy_input_blocks!(work,x,b)
     _apply_factorized_onebody_gain!(y,kernel.branches,kernel.contractions,
         prepared.gain_scratch,b,scale,work,1;adjoint=true)
     _apply_local_jump_anticommutator!(
@@ -3063,7 +3051,6 @@ function _apply_prepared_kernel!(y,x,kernel::FactorizedLocalPBodyJumpPIKernel,
         prepared::StaticFactorizedGainKernelWorkspace,b,t,p,work)
     scale=convert(eltype(work[1][1]),
                   _evaluated_dissipative_rate(kernel.scale,t,p))
-    _copy_input_blocks!(work,x,b)
     _apply_factorized_pbody_gain!(y,kernel.groups,kernel.contractions,
         kernel.pair_scales,prepared.gain_scratch,b,scale,work)
     _apply_local_jump_anticommutator!(y,kernel.qblocks,b,scale,work)
@@ -3074,7 +3061,6 @@ function _apply_adjoint_prepared_kernel!(y,x,
         prepared::StaticFactorizedGainKernelWorkspace,b,t,p,work)
     scale=conj(convert(eltype(work[1][1]),
                        _evaluated_dissipative_rate(kernel.scale,t,p)))
-    _copy_input_blocks!(work,x,b)
     _apply_adjoint_factorized_pbody_gain!(y,kernel.groups,kernel.contractions,
         kernel.pair_scales,prepared.gain_scratch,b,scale,work)
     _apply_local_jump_anticommutator!(
@@ -3083,7 +3069,6 @@ end
 
 function _apply_prepared_kernel!(y,x,kernel::FusedStaticPIKernel,
         prepared::StaticFactorizedGainKernelWorkspace,b,t,p,work)
-    _copy_input_blocks!(work,x,b)
     if kernel.hamiltonian_blocks!==nothing
         for sector in eachindex(b.sectors)
             offset=b.offsets[sector];left,right,input=work[sector]
@@ -3121,7 +3106,6 @@ end
 
 function _apply_adjoint_prepared_kernel!(y,x,kernel::FusedStaticPIKernel,
         prepared::StaticFactorizedGainKernelWorkspace,b,t,p,work)
-    _copy_input_blocks!(work,x,b)
     if kernel.hamiltonian_blocks!==nothing
         for sector in eachindex(b.sectors)
             offset=b.offsets[sector];left,right,input=work[sector]
@@ -3162,7 +3146,6 @@ function _apply_prepared_kernel!(y,x,kernel::InPlaceLocalPBodyJumpPIKernel,
         prepared::InPlaceLocalPBodyJumpKernelWorkspace,b,t,p,work)
     scale=convert(eltype(work[1][1]),
                   _evaluated_dissipative_rate(kernel.scale,t,p))
-    _copy_input_blocks!(work,x,b)
     _apply_factorized_pbody_gain!(y,kernel.groups,prepared.contractions,
         kernel.pair_scales,prepared.gain_scratch,b,scale,work)
     _apply_local_jump_anticommutator!(y,prepared.qblocks,b,scale,work)
@@ -3171,7 +3154,6 @@ function _apply_adjoint_prepared_kernel!(y,x,kernel::InPlaceLocalPBodyJumpPIKern
         prepared::InPlaceLocalPBodyJumpKernelWorkspace,b,t,p,work)
     scale=conj(convert(eltype(work[1][1]),
                        _evaluated_dissipative_rate(kernel.scale,t,p)))
-    _copy_input_blocks!(work,x,b)
     _apply_adjoint_factorized_pbody_gain!(y,kernel.groups,prepared.contractions,
         kernel.pair_scales,prepared.gain_scratch,b,scale,work)
     _apply_local_jump_anticommutator!(y,prepared.qblocks,b,scale,work;adjoint=true)
@@ -3222,6 +3204,9 @@ end
 """Apply a compiled Liouvillian using caller-owned scratch."""
 function _apply_prepared_vector!(y,plan,x,t,p,work)
     fill!(y,zero(eltype(y)))
+    # Every standard kernel reads the same immutable source blocks. Pack them
+    # once per complete Liouvillian action instead of once per physical term.
+    _copy_input_blocks!(work.blocks,x,plan.basis)
     _apply_kernels!(y,x,plan.kernels,work.kernel_workspaces,
                     plan.basis,t,p,work.blocks)
     y
@@ -3301,6 +3286,7 @@ function apply_adjoint!(y::AbstractVector,plan::LiouvillianPlan,x::AbstractVecto
     end
     _prepare_kernels!(plan.kernels,work.kernel_workspaces,plan.basis,t,p)
     fill!(y,zero(eltype(y)))
+    _copy_input_blocks!(work.blocks,x,plan.basis)
     _apply_adjoint_kernels!(y,x,plan.kernels,work.kernel_workspaces,
                             plan.basis,t,p,work.blocks)
     y
@@ -4579,8 +4565,9 @@ function steady_state(L; basis=nothing, trace_vector=nothing, method=:auto,
     L isa MatrixFreeLiouvillian && _require_autonomous(L, "steady_state")
     n=size(L,1);size(L,2)==n||throw(DimensionMismatch("L must be square"))
     source_type=_complex_float_type(eltype(L))
+    inferred_trace=_operator_trace_functional(L)
     factor_trace_type=trace_vector!==nothing ? eltype(trace_vector) :
-        L isa MatrixFreeLiouvillian ? eltype(L.tracevec) : source_type
+        inferred_trace===nothing ? source_type : eltype(inferred_trace)
     dense_scalar=promote_type(source_type,factor_trace_type,ComplexF64)
     shift_initial = method===:shiftinvert ?
         _check_shiftinvert_initial(initial_state,dense_scalar,n) : nothing
@@ -4613,7 +4600,7 @@ function steady_state(L; basis=nothing, trace_vector=nothing, method=:auto,
     end
     if method===:krylov
         trace_type=trace_vector!==nothing ? eltype(trace_vector) :
-            L isa MatrixFreeLiouvillian ? eltype(L.tracevec) : source_type
+            inferred_trace===nothing ? source_type : eltype(inferred_trace)
         initial_type=initial_state isa PIState ? eltype(initial_state.data) :
             initial_state===nothing ? trace_type : eltype(initial_state)
         solver_type=promote_type(source_type,trace_type,initial_type)
@@ -4673,7 +4660,7 @@ function steady_state(L; basis=nothing, trace_vector=nothing, method=:auto,
     M=_materialize(L)
     t = trace_vector !== nothing ? collect(trace_vector) :
         basis !== nothing ? _trace_vector(basis,promote_type(eltype(M),ComplexF64)) :
-        L isa MatrixFreeLiouvillian ? collect(L.tracevec) : nothing
+        inferred_trace===nothing ? nothing : collect(inferred_trace)
     t===nothing && throw(ArgumentError("the physical trace is ambiguous; pass basis=... or trace_vector=..."))
     length(t)==n||throw(DimensionMismatch("trace vector has wrong length"))
     CT=promote_type(eltype(M),eltype(t),ComplexF64); Mc=CT.(M); tc=CT.(t)

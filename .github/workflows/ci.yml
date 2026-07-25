@@ -13,6 +13,28 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  release-metadata:
+    name: release metadata
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: '1.10'
+      - name: Validate release-candidate metadata and repository hygiene
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        run: >-
+          julia --startup-file=no scripts/release_gate.jl
+          --require-clean
+      - name: Validate immutable release tag
+        if: ${{ startsWith(github.ref, 'refs/tags/') }}
+        run: >-
+          julia --startup-file=no scripts/release_gate.jl
+          --require-clean --require-released
+          --tag-ref "${{ github.ref }}"
+
   test:
     name: Julia ${{ matrix.julia-version }} / ${{ matrix.os }}
     permissions:
@@ -109,6 +131,34 @@ jobs:
           Pkg.develop(path=pwd()); Pkg.instantiate()'
       - name: Clarabel, Makie, QuantumCumulants, JLD2, and HDF5 smoke tests
         run: julia --project=test/optional test/optional/runtests.jl
+
+  executable-examples:
+    name: executable examples ${{ matrix.shard }}
+    runs-on: ubuntu-latest
+    env:
+      JULIA_NUM_THREADS: 1
+      PID_EXAMPLE_QUICK: 1
+      PID_EXAMPLE_RENDER: 0
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ['1/2', '2/2']
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: '1.10'
+      - uses: julia-actions/cache@v3
+        with:
+          delete-old-caches: 'false'
+      - name: Instantiate core environment
+        run: julia --startup-file=no --project=. -e 'using Pkg; Pkg.instantiate()'
+      - name: Run deterministic numerical examples
+        run: >-
+          julia --startup-file=no --project=.
+          test/run_quick_examples.jl --shard "${{ matrix.shard }}"
 
   threaded:
     runs-on: ubuntu-latest

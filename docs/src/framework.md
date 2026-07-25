@@ -1,12 +1,12 @@
 # Framework and physical conventions
 
-`PermutationalInvariantDynamics.jl` simulates open dynamics of \(N\)
-identical \(d\)-level systems when both the state and its evolution are
+`PermutationalInvariantDynamics.jl` simulates open dynamics of ``N``
+identical ``d``-level systems when both the state and its evolution are
 invariant under relabelling the particles. The reduction is exact: the package
 keeps every degree of freedom in the permutationally invariant (PI) operator
 space, rather than closing correlations or projecting onto a mean-field
-ansatz. At fixed local dimension \(d\), this space grows polynomially with
-\(N\), even though the full many-body Hilbert and Liouville spaces grow
+ansatz. At fixed local dimension ``d``, this space grows polynomially with
+``N``, even though the full many-body Hilbert and Liouville spaces grow
 exponentially.
 
 The representation follows Thierry Bastin and John Martin,
@@ -25,17 +25,17 @@ conventions behind each object.
 
 Let
 
-\[
+```math
 \mathcal H=(\mathbb C^d)^{\otimes N}
-\]
+```
 
-and let \(P_\pi\) permute the tensor factors according to
-\(\pi\in S_N\). An operator \(A\) is permutationally invariant when
+and let ``P_\pi`` permute the tensor factors according to
+``\pi\in S_N``. An operator ``A`` is permutationally invariant when
 
-\[
+```math
 P_\pi A P_\pi^\dagger=A
 \qquad\text{for every }\pi\in S_N.
-\]
+```
 
 In particular, a PI density operator describes particles that are physically
 equivalent under relabelling. This condition does **not** mean that the state
@@ -44,20 +44,20 @@ supported only in the fully symmetric Hilbert-space sector.
 
 Define the permutation superoperator
 
-\[
+```math
 \mathcal P_\pi(X)=P_\pi X P_\pi^\dagger.
-\]
+```
 
 A sufficient and natural condition for a generator to preserve PI states is
 permutation covariance,
 
-\[
+```math
 \mathcal P_\pi\mathcal L(t)
 =\mathcal L(t)\mathcal P_\pi
 \qquad\text{for every }\pi.
-\]
+```
 
-Thus, if \(\rho(0)\) is PI, the solution remains PI. An individual local jump
+Thus, if ``\rho(0)`` is PI, the solution remains PI. An individual local jump
 operator need not itself be invariant: the sum of identical channels over
 all particle labels is covariant as a whole. The package's built-in term
 constructors encode precisely these PI sums.
@@ -65,19 +65,19 @@ constructors encode precisely these PI sums.
 The deterministic dynamics may be a general time-local Lindblad-like
 equation,
 
-\[
+```math
 \frac{d\rho}{dt}
 =-\frac{i}{\hbar}[H(t),\rho]
 +\sum_k\gamma_k(t)\,\mathcal D[L_k(t)]\rho,
-\]
+```
 
 with
 
-\[
+```math
 \mathcal D[L]\rho
 =L\rho L^\dagger
 -\frac12\left(L^\dagger L\rho+\rho L^\dagger L\right).
-\]
+```
 
 Time-dependent real rates may be negative. This is useful for time-local
 non-Markovian models, but the resulting map is not guaranteed to be
@@ -88,74 +88,74 @@ because negative rates do not define jump probabilities.
 
 Schur--Weyl duality decomposes the many-body Hilbert space as
 
-\[
+```math
 (\mathbb C^d)^{\otimes N}
 \simeq
 \bigoplus_{\substack{\nu\vdash N\\\ell(\nu)\le d}}
 S^\nu\otimes U^\nu(d).
-\]
+```
 
-Here \(\nu=(\nu_1,\ldots,\nu_d)\) is a partition of \(N\), padded with
+Here ``\nu=(\nu_1,\ldots,\nu_d)`` is a partition of ``N``, padded with
 zeros, and may be drawn as a Young diagram. The symmetric-group irrep
-\(S^\nu\) has dimension
+``S^\nu`` has dimension
 
-\[
+```math
 f^\nu=\dim S^\nu,
-\]
+```
 
-the number of standard Young tableaux of shape \(\nu\). The unitary-group
-irrep \(U^\nu(d)\) has dimension
+the number of standard Young tableaux of shape ``\nu``. The unitary-group
+irrep ``U^\nu(d)`` has dimension
 
-\[
+```math
 g_\nu=\dim U^\nu(d).
-\]
+```
 
-The package labels a basis of \(U^\nu(d)\) by Gel'fand--Tsetlin (GT)
-patterns, denoted \(W\) below. A Schur basis vector can therefore be written
+The package labels a basis of ``U^\nu(d)`` by Gel'fand--Tsetlin (GT)
+patterns, denoted ``W`` below. A Schur basis vector can therefore be written
 
-\[
+```math
 |\nu,T,W\rangle,
-\]
+```
 
-where \(T=1,\ldots,f^\nu\) is the symmetric-group multiplicity label and
-\(W=1,\ldots,g_\nu\) is retained explicitly.
+where ``T=1,\ldots,f^\nu`` is the symmetric-group multiplicity label and
+``W=1,\ldots,g_\nu`` is retained explicitly.
 
 Schur's lemma implies that every PI operator acts identically on the
-\(f^\nu\) equivalent copies within a sector:
+``f^\nu`` equivalent copies within a sector:
 
-\[
+```math
 A_{\mathrm{PI}}
 =\bigoplus_\nu I_{S^\nu}\otimes R_\nu.
-\]
+```
 
-The small matrices \(R_\nu\) contain all physical information. The package
+The small matrices ``R_\nu`` contain all physical information. The package
 constructs and evolves these blocks directly; production algorithms never
-construct a Schur transform or a \(d^N\)-dimensional operator.
+construct a Schur transform or a ``d^N``-dimensional operator.
 
 ### The orthonormal PI basis
 
 The numerical representation uses the orthonormal operator basis of equation
 (7) of Bastin and Martin,
 
-\[
+```math
 F_\nu^{W,W'}
 =\frac{1}{\sqrt{f^\nu}}
 \sum_{T=1}^{f^\nu}
 |\nu,T,W\rangle\langle\nu,T,W'|.
-\]
+```
 
 A PI operator is stored as
 
-\[
+```math
 A=\sum_{\nu,W,W'}(C_\nu)_{W,W'}F_\nu^{W,W'}.
-\]
+```
 
-`coefficient_block(A, nu)` returns the stored matrix \(C_\nu\), while
+`coefficient_block(A, nu)` returns the stored matrix ``C_\nu``, while
 `physical_block(A, nu)` returns the matrix acting on one Schur copy,
 
-\[
+```math
 R_\nu=\frac{C_\nu}{\sqrt{f^\nu}}.
-\]
+```
 
 For block-wise input and inspection, `each_schur_block(A)` iterates over
 `partition => physical_block` pairs in the basis sector order.  The matching
@@ -182,15 +182,15 @@ dimension without expanding the multiplicity copies.
 This normalization makes the global PI coordinates orthonormal in the
 Hilbert--Schmidt inner product:
 
-\[
+```math
 \mathrm{Tr}(A^\dagger B)
 =\sum_\nu
 \mathrm{tr}\!\left(C_\nu(A)^\dagger C_\nu(B)\right).
-\]
+```
 
 Several package conventions then follow immediately:
 
-\[
+```math
 \begin{aligned}
 \mathrm{Tr}(A)
   &=\sum_\nu\sqrt{f^\nu}\,\mathrm{tr}(C_\nu),\\
@@ -201,32 +201,32 @@ C_\nu(I)
 \mathrm{Tr}(\rho^2)
   &=\sum_\nu\lVert C_\nu(\rho)\rVert_F^2.
 \end{aligned}
-\]
+```
 
-For a density operator, the population of sector \(\nu\) is
+For a density operator, the population of sector ``\nu`` is
 
-\[
+```math
 p_\nu
 =f^\nu\mathrm{tr}(R_\nu)
 =\sqrt{f^\nu}\mathrm{tr}(C_\nu).
-\]
+```
 
-A valid state has Hermitian positive-semidefinite \(R_\nu\) in every retained
-sector and \(\sum_\nu p_\nu=1\). `validate_state` checks these properties
+A valid state has Hermitian positive-semidefinite ``R_\nu`` in every retained
+sector and ``\sum_\nu p_\nu=1``. `validate_state` checks these properties
 without normalizing, symmetrizing, or clipping the input.
 
-Young-diagram visualizations display the shape \(\nu\), not an arbitrarily
-chosen filled tableau. The \(T\) label is summed over in \(F_\nu^{W,W'}\), and
-its exact multiplicity \(f^\nu\) is retained analytically. See
+Young-diagram visualizations display the shape ``\nu``, not an arbitrarily
+chosen filled tableau. The ``T`` label is summed over in ``F_\nu^{W,W'}``, and
+its exact multiplicity ``f^\nu`` is retained analytically. See
 [Schur-block visualization](schur_visualization.md) for the block and
 rendering conventions.
 
 ### PI is broader than the symmetric sector
 
 The fully symmetric Hilbert-space sector is only
-\(\nu=(N,0,\ldots,0)\), for which \(f^\nu=1\). A pure identical product state
-\(|\psi\rangle^{\otimes N}\) lies in this sector, but an identical mixed
-product state \(\sigma^{\otimes N}\) generally has support in several Schur
+``\nu=(N,0,\ldots,0)``, for which ``f^\nu=1``. A pure identical product state
+``|\psi\rangle^{\otimes N}`` lies in this sector, but an identical mixed
+product state ``\sigma^{\otimes N}`` generally has support in several Schur
 sectors. Independent local dissipation can also transfer population between
 sectors even though the resulting state remains PI.
 
@@ -246,10 +246,10 @@ Some generators preserve states that are diagonal in the stored GT-pattern
 basis. In that case define the physical population of pattern `W` in sector
 `nu` by
 
-\[
+```math
 p_{\nu,W}=\sqrt{f^\nu}(C_\nu)_{W,W}
              =f^\nu(R_\nu)_{W,W}.
-\]
+```
 
 These populations include the exact symmetric-group multiplicity and satisfy
 `sum(p) == trace(rho)`. `PopulationPlan(model)` certifies that no diagonal
@@ -311,40 +311,40 @@ The different representations have the following dimensions:
 
 | Space | Dimension |
 |:--|:--|
-| Many-body Hilbert space | \(d^N\) |
-| Full Liouville space | \(d^{2N}\) |
-| Complete PI operator space | \(n_{\mathrm{PI}}=\sum_\nu g_\nu^2={N+d^2-1\choose N}\) |
+| Many-body Hilbert space | ``d^N`` |
+| Full Liouville space | ``d^{2N}`` |
+| Complete PI operator space | ``n_{\mathrm{PI}}=\sum_\nu g_\nu^2={N+d^2-1\choose N}`` |
 
-At fixed \(d\),
+At fixed ``d``,
 
-\[
+```math
 n_{\mathrm{PI}}=O\!\left(N^{d^2-1}\right),
-\]
+```
 
 so the symmetry changes exponential growth into polynomial growth. For
 qubits,
 
-\[
+```math
 n_{\mathrm{PI}}={N+3\choose 3}.
-\]
+```
 
 If only the fully symmetric sector is retained, its Hilbert-space irrep has
 
-\[
+```math
 g_{(N)}={N+d-1\choose N}
-\]
+```
 
-states and \(g_{(N)}^2\) PI operator coordinates.
+states and ``g_{(N)}^2`` PI operator coordinates.
 
 In this one-sector case, collective one-body operators are lifted directly in
 the occupation basis through
 
-\[
+```math
 a_a^\dagger a_b\lvert\boldsymbol n\rangle
 =\sqrt{n_b(n_a+1)}\,
  \lvert\boldsymbol n+\boldsymbol e_a-\boldsymbol e_b\rangle
 \quad (a\ne b).
-\]
+```
 
 This avoids constructing the general one-box recoupling geometry. Fixed
 collective terms retain their exact sparse block support, while driven terms
@@ -354,11 +354,11 @@ sector-diagonal one-box contractions. Models with local gains still use the
 complete sector-changing one-box geometry.
 
 Polynomial scaling does not make every operation inexpensive. A dense PI
-Liouvillian contains \(n_{\mathrm{PI}}^2\) entries, and a complete dense
-eigendecomposition has cubic cost in \(n_{\mathrm{PI}}\). The matrix-free
+Liouvillian contains ``n_{\mathrm{PI}}^2`` entries, and a complete dense
+eigendecomposition has cubic cost in ``n_{\mathrm{PI}}``. The matrix-free
 backend avoids materializing that matrix, but it still stores PI state and
-Krylov vectors of length \(n_{\mathrm{PI}}\). At fixed body order \(p\), the
-local contraction cost includes \(d^{2p}\), and general-qudit reductions can
+Krylov vectors of length ``n_{\mathrm{PI}}``. At fixed body order ``p``, the
+local contraction cost includes ``d^{2p}``, and general-qudit reductions can
 retain large packed Littlewood--Richardson intertwiner spaces and use a dense
 temporary nullspace basis during setup. Consult
 [Architecture and efficient workflows](architecture.md) and
@@ -446,24 +446,24 @@ has become genuinely unrepresentable.
 
 ## Physical model terms
 
-Let \(h\), \(\ell\), and \(L\) be matrices on one particle, and let \(h_p\),
-\(\ell_p\), and \(L_p\) act on \(p\) particles. For a subset
-\(S\subset\{1,\ldots,N\}\), a subscript \(S\) denotes the corresponding
+Let ``h``, ``\ell``, and ``L`` be matrices on one particle, and let ``h_p``,
+``\ell_p``, and ``L_p`` act on ``p`` particles. For a subset
+``S\subset\{1,\ldots,N\}``, a subscript ``S`` denotes the corresponding
 embedded operator. The built-in terms map to the following physical objects.
 
 | Constructor | Contribution before the common scalar rate |
 |:--|:--|
-| `LocalHamiltonian(h)` | \(H=\sum_i h^{(i)}\) |
-| `CollectiveHamiltonian(h)` | \(H=\sum_i h^{(i)}\) |
-| `LocalJump(ell)` | \(\sum_i\mathcal D[\ell^{(i)}]\) |
-| `CollectiveJump(L)` | \(\mathcal D[J]\), \(J=\sum_iL^{(i)}\) |
-| `CorrelatedLocalJumps((La,...), Gamma)` | \(\sum_i\sum_{a,b}\Gamma_{ab}\mathcal D_{ab}[L_a^{(i)},L_b^{(i)}]\) |
-| `CorrelatedCollectiveJumps((La,...), Gamma)` | \(\sum_{a,b}\Gamma_{ab}\mathcal D_{ab}[J_a,J_b]\) |
-| `PBodyHamiltonian(hp, p)` | \(H_p=\sum_{|S|=p}(h_p)_S\) |
-| `LocalPBodyJump(ellp, p)` | \(\sum_{|S|=p}\mathcal D[(\ell_p)_S]\) |
-| `CollectivePBodyJump(Lp, p)` | \(\mathcal D[J_p]\), \(J_p=\sum_{|S|=p}(L_p)_S\) |
-| `DirectPIHamiltonian(H)` | Commutator with an existing `PIOperator` \(H\) |
-| `DirectPIJump(L)` | Dissipator of an existing PI operator \(L\) |
+| `LocalHamiltonian(h)` | ``H=\sum_i h^{(i)}`` |
+| `CollectiveHamiltonian(h)` | ``H=\sum_i h^{(i)}`` |
+| `LocalJump(ell)` | ``\sum_i\mathcal D[\ell^{(i)}]`` |
+| `CollectiveJump(L)` | ``\mathcal D[J]``, ``J=\sum_iL^{(i)}`` |
+| `CorrelatedLocalJumps((La,...), Gamma)` | ``\sum_i\sum_{a,b}\Gamma_{ab}\mathcal D_{ab}[L_a^{(i)},L_b^{(i)}]`` |
+| `CorrelatedCollectiveJumps((La,...), Gamma)` | ``\sum_{a,b}\Gamma_{ab}\mathcal D_{ab}[J_a,J_b]`` |
+| `PBodyHamiltonian(hp, p)` | ``H_p=\sum_{|S|=p}(h_p)_S`` |
+| `LocalPBodyJump(ellp, p)` | ``\sum_{|S|=p}\mathcal D[(\ell_p)_S]`` |
+| `CollectivePBodyJump(Lp, p)` | ``\mathcal D[J_p]``, ``J_p=\sum_{|S|=p}(L_p)_S`` |
+| `DirectPIHamiltonian(H)` | Commutator with an existing `PIOperator` ``H`` |
+| `DirectPIJump(L)` | Dissipator of an existing PI operator ``L`` |
 
 `LocalHamiltonian` and `CollectiveHamiltonian` lower to the same identical
 one-body Hamiltonian sum; the two names allow a model to express its physical
@@ -474,8 +474,8 @@ dissipator; it is sector diagonal.
 
 The correlated constructors accept a Hermitian positive-semidefinite
 Kossakowski matrix `Gamma`, with
-\(\mathcal D_{ab}[A,B]\,(\rho)=A\rho B^\dagger-
-\{B^\dagger A,\rho\}/2\). A fixed matrix is validated and factorized once in
+``\mathcal D_{ab}[A,B]\,(\rho)=A\rho B^\dagger-\{B^\dagger A,\rho\}/2``.
+A fixed matrix is validated and factorized once in
 the small channel space; its effective independent jumps then use the same PI
 kernels as `LocalJump` or `CollectiveJump`. `InPlaceTimeOperator` also accepts
 a fixed-shape Kossakowski-matrix schedule. Its evaluated matrix and
@@ -483,8 +483,8 @@ factorization scratch belong to `LiouvillianWorkspace`, and every value is
 revalidated before use.
 
 The `rate` keyword multiplies the displayed contribution. Hamiltonian terms
-also accept `hbar`. Operators supplied to a \(p\)-body constructor have size
-\(d^p\times d^p\) and must be invariant under permutations of their \(p\)
+also accept `hbar`. Operators supplied to a ``p``-body constructor have size
+``d^p\times d^p`` and must be invariant under permutations of their ``p``
 tensor factors. All subset sums are over unordered subsets. The package uses
 rates exactly as supplied and never inserts a Kac or thermodynamic scaling
 factor. When both a Hamiltonian `rate` and `hbar` are exact Integer/Rational
@@ -667,7 +667,7 @@ show literature models and their numerical checks.
 
 | Research task | Recommended entry point | Essential qualification |
 |:--|:--|:--|
-| Exact finite-\(N\) PI dynamics | `compile`, then `solve_dynamics` | Converge the fixed time step |
+| Exact finite-``N`` PI dynamics | `compile`, then `solve_dynamics` | Converge the fixed time step |
 | Adaptive or stiff dynamics | `dynamics_problem` | Add and configure a SciML solver |
 | Autonomous steady state | `stationary_state` | Inspect residual, trace, and possible degeneracy |
 | Slow modes or Liouvillian gap | `liouvillian_spectrum`, `pi_liouvillian_gap` | A selected Krylov window is not a complete spectrum |
@@ -690,20 +690,20 @@ show literature models and their numerical checks.
 | Shared-bath finite-memory pure-state ensemble | `HOPSBath`, `HOPSPlan`, `hops_average` | Coupling and noise must preserve PI on every path; average unnormalized root outer products and converge bath poles, hierarchy depth, time step, and sample count separately |
 | Generalized qudit coherent-state Q | `QuditHusimiPlan`, `qudit_husimi_q` | Normalized Haar data on supplied points; no qudit Wigner convention inferred |
 | Numerical refinement evidence | `convergence_study` and specialized wrappers | Final refinement agreement is distinct from inner solver convergence |
-| Large-\(N\) product prediction | `MeanFieldPlan`, `solve_meanfield` | Approximate after correlations develop |
+| Large-``N`` product prediction | `MeanFieldPlan`, `solve_meanfield` | Approximate after correlations develop |
 | Repeated collective observable | `CollectiveObservablePlan` | Reuse one plan for many states |
 | Trace a mode/ancilla inside every PI supersite | `LocalFactorTracePlan`, `LocalFactorTraceWorkspace` | Complete kept-factor PI output; exact-support sparse transforms have a setup memory guard |
 | Repeated marginal or negativity | `ReductionPlan`, `ReductionWorkspace` | Setup can be large for qudits |
 | Repeated one-factor composite trace | `CompositeReductionPlan` | Packed exact diagonal contraction; no full composite trace vector |
 
-For product-state predictions at \(N\) beyond a practical PI basis, the
+For product-state predictions at ``N`` beyond a practical PI basis, the
 mean-field layer evaluates
 
-\[
+```math
 \rho^{(p)}\approx\sigma^{\otimes p}
-\]
+```
 
-directly on one \(d\times d\) density matrix. Its finite rule reproduces the
+directly on one ``d\times d`` density matrix. Its finite rule reproduces the
 exact initial one-body derivative of a supported factorized state, but later
 propagation discards generated correlations. It must not be described as
 exact PI dynamics. See [Mean-field dynamics and
@@ -714,12 +714,12 @@ predictions](meanfield.md) for the finite and thermodynamic conventions.
 The following conventions matter when comparing with analytical formulas or
 manipulating coefficient data directly:
 
-- Partitions are descending length-\(d\) tuples padded with zeros and ordered
+- Partitions are descending length-``d`` tuples padded with zeros and ordered
   in descending lexicographic order.
 - GT patterns are ordered by their stored entry tuples; sector matrices are
   flattened in Julia column-major order.
-- The paper labels local computational states \(0,\ldots,d-1\), whereas Julia
-  matrix indices are \(1,\ldots,d\). The ordering of the supplied local
+- The paper labels local computational states ``0,\ldots,d-1``, whereas Julia
+  matrix indices are ``1,\ldots,d``. The ordering of the supplied local
   matrices and state vectors must be consistent.
 - Rates, Hamiltonian prefactors, and normalization factors are never changed
   implicitly. In particular, no Kac factor is inferred.

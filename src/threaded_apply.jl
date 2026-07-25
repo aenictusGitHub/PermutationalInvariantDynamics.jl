@@ -138,6 +138,18 @@ end
     input
 end
 
+# Multi-worker application packs the full source once on the calling task.
+# Workers then share those immutable matrices while retaining private
+# left/right/rectangular scratch and disjoint destination sectors.
+struct _ThreadedPreparedSource{V,B}
+    vector::V
+    blocks::B
+end
+Base.getindex(source::_ThreadedPreparedSource,index::Int)=
+    source.vector[index]
+@inline _threaded_copy_source!(scratch,source::_ThreadedPreparedSource,
+        basis,sector::Int)=source.blocks[sector][3]
+
 @inline _threaded_forward_scale(kernel::HamiltonianPIKernel,::Type{T},t,p) where T =
     convert(T,value_at(kernel.scale,t,p))
 @inline _threaded_forward_scale(kernel::DissipatorPIKernel,::Type{T},t,p) where T =
@@ -573,15 +585,18 @@ function _threaded_apply_impl!(destination::AbstractVector,
                           plan.basis,time,parameters)
         scales=_threaded_scales(plan.kernels,plan.Ttype,time,parameters,adjoint)
         fill!(destination,zero(eltype(destination)))
+        _copy_input_blocks!(preparation.blocks,source,plan.basis)
+        prepared_source=_ThreadedPreparedSource(source,preparation.blocks)
 
         # One Julia task per private scratch.  Static scheduling and disjoint
         # output sectors make the arithmetic order for every coordinate
-        # independent of task scheduling.
+        # independent of task scheduling. Every worker reads the same
+        # caller-packed source blocks.
         @sync for worker_index in eachindex(work.assignments)
             Threads.@spawn begin
                 scratch=work.workers[worker_index]
                 for sector in work.assignments[worker_index]
-                    _threaded_apply_sector_kernels!(destination,source,
+                    _threaded_apply_sector_kernels!(destination,prepared_source,
                         plan.kernels,preparation.kernel_workspaces,scales,
                         plan.basis,scratch,sector;adjoint)
                 end

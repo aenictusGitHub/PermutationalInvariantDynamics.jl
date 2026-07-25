@@ -502,7 +502,7 @@ function _empty_trajectory_plan(model::PIModel,::Type{R}) where R<:AbstractFloat
     isconcretetype(R)||throw(ArgumentError(
         "the trajectory scalar type T must be a concrete AbstractFloat type"))
     CT=Complex{R}
-    plan=LiouvillianPlan(model.basis,(),_trace_vector(model.basis,CT),
+    plan=LiouvillianPlan(model.basis,(),_trace_functional(model.basis,CT),
                          nothing,CT,true)
     _trajectory_plan(model,plan)
 end
@@ -912,7 +912,6 @@ function _apply_effective_jump_drift_and_intensity!(y,x,w,b,t,p)
     for sector in eachindex(b.sectors)
         n=length(b.patterns[sector]);off=b.offsets[sector]
         A,B,X=w.liouvillian_work.blocks[sector]
-        copyto!(X,1,x,off,n*n)
         effective=w.effective_qblocks[sector]
         mul!(A,effective,X)
         total+=w.plan.trace_weights[sector]*real(tr(A))
@@ -932,6 +931,8 @@ end
 
 function _conditional_action_and_intensity!(y,x,w,b,t,p,tau)
     fill!(y,zero(eltype(y)))
+    # Hamiltonian and combined-loss kernels share one immutable Schur packing.
+    _copy_input_blocks!(w.liouvillian_work.blocks,x,b)
     _apply_trajectory_hamiltonians!(y,x,w.plan.hamiltonians,b,t,p,
                                     w.liouvillian_work)
     lambda=_apply_effective_jump_drift_and_intensity!(y,x,w,b,t,p)

@@ -604,7 +604,9 @@ function global_pseudomode_model(
     end
     generator=CompositeSuperoperator(
         basis,generator_terms...;T=Complex{R})
-    trace_vector=composite_trace_vector(basis;T=R)
+    trace_vector=_composite_trace_functional(basis;T=R)
+    trace_vector_bytes=_performance_trace_functional_bytes(
+        trace_vector;bigfloat_precision)
 
     workspace_bytes=_global_composite_workspace_upper_bytes(
         generator,Complex{R};bigfloat_precision)
@@ -623,7 +625,7 @@ function global_pseudomode_model(
     resource_estimates=(
         coordinate_dimension=length(basis),
         state_bytes=coordinate_bytes,
-        trace_vector_bytes=coordinate_bytes,
+        trace_vector_bytes,
         coupling_action_upper_bytes=predicted_action_bytes,
         coupling_operator_upper_bytes,
         reduction_plan_bytes,
@@ -868,8 +870,8 @@ Return a synchronized [`MatrixFreeLiouvillian`](@ref) for Krylov and response
 solvers.  The wrapper owns or reuses exactly one composite workspace and
 provides explicit forward and adjoint callbacks.  Parallel hot loops should
 instead call `apply!` with one [`global_pseudomode_workspace`](@ref) per task.
-The memory preflight includes the workspace and the wrapper's copied physical
-trace vector.
+The memory preflight includes the workspace and the wrapper's copied sparse
+physical trace functional.
 """
 function global_pseudomode_matrixfree(
         model::GlobalPseudomodeModel;workspace=nothing,

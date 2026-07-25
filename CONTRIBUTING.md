@@ -43,6 +43,24 @@ The reproducible scaling and ecosystem-comparison commands, validation rules,
 and interpretation limits are documented in `benchmark/README.md` and
 `docs/src/benchmarks.md`.
 
+Run the dependency-free release metadata check before proposing a versioned
+release:
+
+```bash
+julia --startup-file=no scripts/release_gate.jl \
+  --expect-version X.Y.Z --require-clean
+```
+
+The executable-example CI job is reproducible locally without CairoMakie:
+
+```bash
+julia --startup-file=no --project=. test/run_quick_examples.jl --shard 1/2
+julia --startup-file=no --project=. test/run_quick_examples.jl --shard 2/2
+```
+
+See `docs/src/releasing.md` for the complete clean-checkout gate and the
+maintainer-only General registration step.
+
 ## Architectural expectations
 
 - Keep PI production algorithms polynomial in the retained PI dimension;
@@ -58,5 +76,9 @@ and interpretation limits are documented in `benchmark/README.md` and
 - Keep non-core dependencies in package extensions.
 
 Every exported binding needs a source docstring and one canonical `@docs`
-entry. GitHub's math renderer does not accept `operatorname`; use roman labels
-such as `\mathrm{tr}` instead.
+entry. In `docs/src` and Documenter docstrings, use double backticks for
+inline mathematics and fenced `math` blocks for displays; Julia Markdown does
+not preserve `\(...\)`, `\[...\]`, or single-dollar delimiters for KaTeX.
+Example guides rendered directly by GitHub use `$...$` inline and fenced
+`math` blocks for displays. GitHub does not accept `\operatorname`; use roman
+labels such as `\mathrm{tr}` instead.

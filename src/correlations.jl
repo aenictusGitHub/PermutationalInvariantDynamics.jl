@@ -22,31 +22,19 @@ The first operator is *not* implicitly adjointed: the returned contraction is
 exactly `tr(A * ...)`.  Thus the standard optical first-order correlation is
 obtained with `A=adjoint(c)` and `B=c`.
 """
-struct CorrelationPlan{B,L,T,RB}
+struct CorrelationPlan{B,L,T,RB,F}
     basis::B
     generator::L
     readout::Vector{Complex{T}}
     left_blocks::Vector{Matrix{Complex{T}}}
     right_blocks::RB
-    tracevec::Vector{Complex{T}}
+    tracevec::F
 end
 
 _correlation_generator(model::PIModel)=compile(model;backend=:matrixfree)
 _correlation_generator(L)=L
 
 _correlation_basis(L)=_operator_basis(L)
-
-function _correlation_trace_vector(b::PIBasis,::Type{R}) where R<:AbstractFloat
-    tau=zeros(Complex{R},length(b))
-    for (s,p) in pairs(b.sectors)
-        n=length(b.patterns[s]);scale=_schur_multiplicity_scale(R,p)
-        offset=b.offsets[s]
-        @inbounds for index in 1:n
-            tau[offset+index-1+(index-1)*n]=scale
-        end
-    end
-    tau
-end
 
 function _correlation_can_store(::Type{R},::Type{S}) where {R,S}
     promote_type(R,S)===R
@@ -116,7 +104,7 @@ function CorrelationPlan(L0,A::PIOperator,B::PIOperator;right=nothing)
     left_blocks=_correlation_physical_blocks(B,R)
     right_blocks=right===nothing ? nothing : _correlation_physical_blocks(right,R)
     CorrelationPlan(b,L,readout,left_blocks,right_blocks,
-                    _correlation_trace_vector(b,R))
+                    _trace_functional(b,Complex{R}))
 end
 
 Base.eltype(::CorrelationPlan{B,L,T}) where {B,L,T}=Complex{T}

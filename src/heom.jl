@@ -870,7 +870,7 @@ never constructs a `d^N` system object. See [`HEOMBath`](@ref) for the
 finite-correlation convention and [`heom_depth_convergence`](@ref) for an
 explicit truncation study.
 """
-struct HEOMPlan{B,S,C,E,I,D,G,V,R,T}
+struct HEOMPlan{B,S,C,E,I,D,G,V,R,F,T}
     basis::B
     system::S
     coupling_blocks::C
@@ -892,7 +892,7 @@ struct HEOMPlan{B,S,C,E,I,D,G,V,R,T}
     full_ado_count::BigInt
     max_depth::Int
     npi::Int
-    tracevec::V
+    tracevec::F
     Ttype::Type{T}
     autonomous::Bool
     terminator::Symbol
@@ -1073,11 +1073,13 @@ function HEOMPlan(source,baths;max_depth::Integer,basis=nothing,
         end
         decays[position]=value
     end
-    tracevec=zeros(T,npi*length(multiindices))
-    tracevec[1:npi].=_trace_vector(selected_basis,T)
+    tracevec=_resize_trace_functional(
+        _trace_functional(selected_basis,T),
+        npi*length(multiindices))
     HEOMPlan{typeof(selected_basis),typeof(prepared),typeof(coupling_blocks),
              typeof(exponent_baths),typeof(multiindices),typeof(lookup),
-             typeof(topology),typeof(coefficients),eltype(ado_scales),T}(
+             typeof(topology),typeof(coefficients),eltype(ado_scales),
+             typeof(tracevec),T}(
         selected_basis,prepared,coupling_blocks,exponent_baths,
         coefficients,right_coefficients,frequencies,multiindices,lookup,
         topology,upward_level_factors,downward_level_factors,
@@ -1213,7 +1215,7 @@ function _linear_operator_batch_workspace(
         {F,T,V,P<:HEOMPlan,S}
     HEOMWorkspace(L.plan;batch_columns=columns)
 end
-_operator_trace_vector(plan::HEOMPlan)=plan.tracevec
+_operator_trace_functional(plan::HEOMPlan)=plan.tracevec
 _operator_has_adjoint(::HEOMPlan)=true
 
 function _performance_heom_workspace_bytes(
@@ -1914,8 +1916,7 @@ Base.length(state::HEOMState)=length(state.data)
 Base.eltype(state::HEOMState)=eltype(state.data)
 
 function show(io::IO,state::HEOMState)
-    root_trace=dot(view(state.plan.tracevec,1:state.plan.npi),
-                   view(state.data,1:state.plan.npi))
+    root_trace=dot(state.plan.tracevec,state.data)
     print(io,"HEOMState(ADOs=$(heom_number_ados(state.plan)), " *
              "dimension=$(length(state.data)), root_trace=$root_trace)")
 end
@@ -2244,12 +2245,13 @@ function _heom_prefix_plan(template::HEOMPlan,depth::Int)
         copy(view(template.ado_importances,1:count))
     decays=copy(view(template.decays,1:count))
     full_ado_count=exact_binomial(BigInt(K)+BigInt(depth),BigInt(depth))
-    tracevec=zeros(template.Ttype,template.npi*count)
-    tracevec[1:template.npi].=view(template.tracevec,1:template.npi)
+    tracevec=_resize_trace_functional(
+        template.tracevec,template.npi*count)
     HEOMPlan{typeof(template.basis),typeof(template.system),
              typeof(template.coupling_blocks),typeof(template.exponent_baths),
              typeof(multiindices),typeof(lookup),typeof(topology),
-             typeof(template.coefficients),eltype(ado_scales),template.Ttype}(
+             typeof(template.coefficients),eltype(ado_scales),
+             typeof(tracevec),template.Ttype}(
         template.basis,template.system,template.coupling_blocks,
         template.exponent_baths,template.coefficients,
         template.right_coefficients,template.frequencies,
@@ -2618,7 +2620,8 @@ function heom_block_preconditioner(plan::HEOMPlan;
     _heom_isfinite(regularizationT)&&regularizationT==regularization||
         throw(ArgumentError(
         "regularization is not exactly representable in $(plan.Ttype); prepare the HEOM plan at wider precision"))
-    t=copy(plan.tracevec);v=t/dot(t,t)
+    t=plan.tracevec
+    v=_normalized_trace_functional(t)
     e=zeros(T,n);image=zeros(T,n)
     adapter=heom_liouvillian(plan)
     scale_probes=operator_scaleT===nothing ? 3 : 0
@@ -2650,8 +2653,7 @@ function heom_block_preconditioner(plan::HEOMPlan;
         end
     end
     root_block=copy(normalized_system)
-    root_range=1:npi
-    @views root_block .+=v[root_range]*adjoint(t[root_range])
+    _add_trace_border_block!(root_block,v,t,0)
     if !iszero(regularizationT)
         @inbounds for diagonal in axes(root_block,1)
             root_block[diagonal,diagonal]+=regularizationT

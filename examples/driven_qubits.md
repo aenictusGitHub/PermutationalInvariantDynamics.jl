@@ -6,10 +6,10 @@ Source: [`driven_qubits.jl`](driven_qubits.jl)
 
 The example considers `N = 20` identical qubits with
 
-\[
+```math
 H=\frac{1}{2}\sum_i\sigma_i^x,\qquad
 \dot\rho=-i[H,\rho]+0.1\sum_i\mathcal D[\sigma_i^-]\rho .
-\]
+```
 
 Both sums are permutation invariant even though the decay channels are local.
 The initial state is the product ground state.

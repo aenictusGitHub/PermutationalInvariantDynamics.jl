@@ -104,7 +104,8 @@ end
 function _empty_diffusive_liouvillian(model::PIModel,::Type{R}) where R<:AbstractFloat
     isconcretetype(R)||throw(ArgumentError("T must be a concrete AbstractFloat type"))
     CT=Complex{R}
-    LiouvillianPlan(model.basis,(),_trace_vector(model.basis,CT),nothing,CT,true)
+    LiouvillianPlan(model.basis,(),_trace_functional(model.basis,CT),
+                    nothing,CT,true)
 end
 
 function _prepare_diffusive_operator(b::PIBasis,operator,::Type{R}) where R

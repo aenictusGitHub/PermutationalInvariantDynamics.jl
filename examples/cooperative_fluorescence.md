@@ -6,10 +6,10 @@ Source: [`cooperative_fluorescence.jl`](cooperative_fluorescence.jl)
 
 The driven collective spin obeys
 
-\[
+```math
 H=\Omega J_x,\qquad
 \dot\rho=-i[H,\rho]+\frac{2\gamma}{N}\mathcal D[J_-]\rho .
-\]
+```
 
 For `N = 20`, the example tests several damping strengths in the fully
 symmetric sector.

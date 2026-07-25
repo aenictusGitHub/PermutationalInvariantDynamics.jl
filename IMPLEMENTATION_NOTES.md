@@ -1031,7 +1031,7 @@ the established connection/contraction order, while the fully symmetric
 occupation route emits only the diagonal and allowed occupation transitions.
 Public `collective_block` remains dense, and driven operators retain dense
 preallocated blocks because their support may change with time. Guarded-wide
-large-\(N\) lowering keeps its certified dense fallback for the small feasible
+large-$N$ lowering keeps its certified dense fallback for the small feasible
 irreps where cancellation requires wider arithmetic.
 
 Collective jump losses form `K'K` from the retained sparse blocks and remove
@@ -1238,3 +1238,60 @@ Unsupported prepared precision raises for an explicit factorizing method;
 Neither a BigFloat shift nor a wider floating initial state is silently
 converted to Float64. Exact integer/rational components use checked conversion
 and reject overflow or nonzero underflow.
+
+## Structured physical trace functionals (2026-07-25)
+
+Prepared PI, composite, restricted-symmetry, global-pseudomode, Floquet, and
+HEOM operators now retain the physical trace as exact-support
+`SparseVector` data. A PI functional stores only Schur-block diagonal
+coordinates; a composite functional stores only joint factor diagonals; an
+HEOM functional stores only root-ADO diagonals. The public
+`composite_trace_vector` compatibility API still returns a detached dense
+vector.
+
+The private source protocol validates and converts these functionals without
+scanning or allocating their structural zeros. Restarted GMRES keeps both the
+trace functional and its normalized border vector sparse, performs the
+rank-one update with an exact-support AXPY, and creates only the dense state
+iterate required by the solver. Schur and HEOM block preconditioners add the
+same rank-one border directly from sparse support. This removes
+coordinate-sized retained trace copies from matrix-free wrappers and removes
+hierarchy-sized trace vectors from HEOM plans without changing the trace
+constraint, solver tolerances, or public dense/factorizing behavior.
+
+## Once-per-action Schur packing and restricted gains (2026-07-25)
+
+Ordinary forward and adjoint Liouvillian actions now copy every immutable
+input Schur block into workspace storage once before visiting the prepared
+kernel tuple. Conditional trajectory drift and lowered Cartesian
+strong-symmetry actions use the same rule. Multiworker application performs
+that packing on the calling task and shares only those read-only matrices;
+worker output ownership and mutable scratch remain disjoint. This removes a
+full PI-coordinate read per physical term without changing kernel order or
+floating-point accumulation order.
+
+Fixed local one- and p-body gains no longer expand into reduced-coordinate
+triplets when a strong-symmetry restriction is Cartesian inside each Schur
+block. Setup instead slices the existing rectangular Schur contractions and
+application evaluates their matrix sandwiches with one largest-block scratch
+matrix. Appendix-D scales stay in their prepared exact/binary-scaled form in
+both the forward and adjoint routes. Unsupported or non-Cartesian
+restrictions continue to use the exhaustively certified embedded fallback.
+
+## Automatic diagonal strong symmetries (2026-07-25)
+
+The automatic strong-symmetry layer tests every microscopic Hamiltonian and
+effective jump separately. Its default discovery combines the usual diagonal
+clock candidate with an exact GF(2) nullspace of nonzero one- and p-body
+support, while explicitly limiting completeness to supported binary sign
+symmetries. Scheduled operators remain inconclusive until frozen, and
+phase-covariant weak jumps are not promoted to strong commutants.
+
+A certified candidate lowers every trace-bearing equal ket/bra charge through
+the existing exhaustive restriction machinery. The wrapper never chooses one
+stationary sector and never labels the union a global spectrum: off-diagonal
+charge coherences are outside this trace-bearing workflow. Reduction,
+multi-charge steady solving, and multi-charge spectra use aggregate memory
+guards that include retained restrictions, lowered gain scratch, solver
+peaks, ambient residual validation, and requested outputs. Reduced-only
+stationary output avoids retaining one ambient PI state per charge.

@@ -7,27 +7,27 @@ Source: [`interacting_boundary_time_crystal.jl`](interacting_boundary_time_cryst
 Piccitto, Wauters, Nori, and Shammah study fully connected spin models with a
 collective bath. Their normalized collective variables are
 
-\[
+```math
 J_\alpha=\frac{1}{N}\sum_{i=1}^N\sigma_i^\alpha,
 \qquad
 J_\pm=J_x\pm iJ_y=\frac{2}{N}\sum_{i=1}^N\sigma_i^\pm .
-\]
+```
 
 For the `p = 2`, `q = 1` case used here,
 
-\[
+```math
 H=-N\left(\omega_zJ_z^2+\omega_xJ_x\right)
   =-\frac{\omega_z}{N}\left(\sum_i\sigma_i^z\right)^2
    -\omega_x\sum_i\sigma_i^x,
-\]
+```
 
 and the collective master equation is
 
-\[
+```math
 \dot\rho=-i[H,\rho]
  +N\Gamma^\uparrow\mathcal D[J_+]\rho
  +N\Gamma^\downarrow\mathcal D[J_-]\rho .
-\]
+```
 
 The library constructor removes only the identity part of
 `(sum sigma_z)^2`, which has no effect on a commutator. The remaining
@@ -44,11 +44,11 @@ Schur sector is therefore exact, rather than a state-space truncation.
 
 The script chooses the oscillatory parameters used in Figs. 6 and 8,
 
-\[
+```math
 \omega_x=3\omega_z,\qquad
 \Gamma^\uparrow-\Gamma^\downarrow=0.2\omega_z,
 \qquad \Gamma^\downarrow=0,
-\]
+```
 
 and computes complete PI Liouvillian spectra for `N = 8, 12, 16`. At each
 size it selects the oscillatory eigenvalue with largest real part and reports

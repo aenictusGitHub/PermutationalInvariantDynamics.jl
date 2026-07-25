@@ -5,11 +5,11 @@ compact sector diagram. It has no plotting dependency: `visualize_schur_blocks`
 returns a small object with an SVG display, which notebooks can render inline,
 and `save_schur_block_visualization` writes the same SVG to a file.
 
-For a PI state, one tile is shown for every partition \(\nu\) retained by the
+For a PI state, one tile is shown for every partition ``\nu`` retained by the
 `PIBasis`. For a superoperator the diagram is a block matrix: **rows are output
-sectors and columns are input sectors**. Thus a nonzero tile at row \(\lambda\)
-and column \(\nu\) means that the map can send an operator in sector \(\nu\)
-to sector \(\lambda\). Collective Hamiltonians and collective jumps are
+sectors and columns are input sectors**. Thus a nonzero tile at row ``\lambda``
+and column ``\nu`` means that the map can send an operator in sector ``\nu``
+to sector ``\lambda``. Collective Hamiltonians and collective jumps are
 sector diagonal. Permutation-invariant sums of unresolved local channels can
 couple different Schur sectors, and appear as off-diagonal tiles.
 
@@ -52,8 +52,8 @@ matrix.
 
 A partition shape does **not** select one standard Young tableau. In the PI
 basis the standard-tableau label is summed over, and the number of such labels
-is the exact symmetric-group multiplicity \(f^\nu\). Hovering a diagram reports
-the padded partition, its U(d) irrep dimension, \(f^\nu\), and this convention.
+is the exact symmetric-group multiplicity ``f^\nu``. Hovering a diagram reports
+the padded partition, its U(d) irrep dimension, ``f^\nu``, and this convention.
 Use `show_young_diagrams=false` when a compact text-only layout is preferred.
 
 For diagrams with at most 64 boxes, the SVG draws every box. Larger shapes use
@@ -65,28 +65,28 @@ tooltip remain unchanged.
 ## Coefficient blocks and physical blocks
 
 In the package convention, a state is stored as coefficient blocks
-\(C_\nu\) in the orthonormal PI basis of equation (7). Its physical block in
+``C_\nu`` in the orthonormal PI basis of equation (7). Its physical block in
 the Schur--Weyl decomposition is
 
-\[
+```math
 \rho_\nu=\frac{C_\nu}{\sqrt{f^\nu}},
-\]
+```
 
-where \(f^\nu\) is the symmetric-group multiplicity. The complete operator is
-\(\bigoplus_\nu \rho_\nu\otimes I_{f^\nu}\). Consequently,
+where ``f^\nu`` is the symmetric-group multiplicity. The complete operator is
+``\bigoplus_\nu \rho_\nu\otimes I_{f^\nu}``. Consequently,
 
-\[
+```math
 \lVert C_\nu\rVert_F^2
 =f^\nu\lVert\rho_\nu\rVert_F^2.
-\]
+```
 
 Choose which matrix is measured with `representation=:coefficient` or
 `representation=:physical`. With `metric=:frobenius`, the coefficient choice
 makes the squared value the Hilbert--Schmidt contribution of that whole Schur
 sector, including its multiplicity. The physical choice instead measures one
-irrep copy and omits \(f^\nu\). `metric=:trace_norm` applies the same choice to
+irrep copy and omits ``f^\nu``. `metric=:trace_norm` applies the same choice to
 the Schatten one-norm. For a density operator, `metric=:population` reports
-the trace weight \(f^\nu\mathrm{tr}(\rho_\nu)\). No metric changes or
+the trace weight ``f^\nu\mathrm{tr}(\rho_\nu)``. No metric changes or
 renormalizes the state. Population mode requires each reported sector trace to
 be real (up to roundoff) and nonnegative; it throws for invalid data instead
 of taking an absolute value or clipping it. `physical_block(rho, nu)` remains
@@ -142,17 +142,17 @@ by applying the map to coordinate vectors, one input coordinate at a time,
 and accumulating the squared output norm by sector. If the PI coordinate
 dimension is
 
-\[
+```math
 n_{\mathrm{PI}}=\sum_\nu \dim(U_\nu)^2,
-\]
+```
 
-this requires \(n_{\mathrm{PI}}\) applications of the Liouvillian. It avoids
-storing the \(n_{\mathrm{PI}}\times n_{\mathrm{PI}}\) matrix, but it is a
+this requires ``n_{\mathrm{PI}}`` applications of the Liouvillian. It avoids
+storing the ``n_{\mathrm{PI}}\times n_{\mathrm{PI}}`` matrix, but it is a
 diagnostic setup cost rather than a cheap operation inside a time-stepping or
 parameter-scan loop. Compute the structure once and reuse it.
 
 The matrix-free probe uses PI vectors and the compiled Schur kernels. It never
-constructs a \(d^N\) Hilbert-space matrix or a \(d^{2N}\) Liouville-space
+constructs a ``d^N`` Hilbert-space matrix or a ``d^{2N}`` Liouville-space
 matrix. A superoperator's linear dimensions alone do not determine its Schur
 sector boundaries, so supply the matching `PIBasis`:
 

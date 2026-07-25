@@ -221,6 +221,44 @@ function _factor_trace_vector(b::FiniteOperatorBasis,::Type{T}) where T<:Abstrac
     result
 end
 
+_factor_trace_functional(b::PIBasis,::Type{T}) where T<:AbstractFloat=
+    _trace_functional(b,Complex{T})
+function _factor_trace_functional(
+        b::FiniteOperatorBasis,::Type{T}) where T<:AbstractFloat
+    indices=Int[i+(i-1)*b.d for i in 1:b.d]
+    sparsevec(indices,ones(Complex{T},b.d),length(b))
+end
+
+function _composite_trace_functional(
+        basis::CompositePIBasis;T=Float64)
+    factors=map(factor->_factor_trace_functional(factor,T),basis.factors)
+    result=sparsevec(Int[1],Complex{T}[one(T)],1)
+    for factor in factors
+        old_dimension=length(result)
+        count=Base.checked_mul(nnz(result),nnz(factor))
+        indices=Vector{Int}(undef,count)
+        values=Vector{Complex{T}}(undef,count)
+        position=1
+        @inbounds for factor_position in eachindex(nonzeros(factor))
+            factor_index=_trace_nonzero_indices(factor)[factor_position]
+            factor_value=nonzeros(factor)[factor_position]
+            for old_position in eachindex(nonzeros(result))
+                indices[position]=_trace_nonzero_indices(result)[old_position]+
+                    (factor_index-1)*old_dimension
+                values[position]=nonzeros(result)[old_position]*factor_value
+                isfinite(real(values[position]))&&
+                    isfinite(imag(values[position]))||throw(ArgumentError(
+                    "composite trace weight overflows in Complex{$T}; " *
+                    "use a wider scalar type"))
+                position+=1
+            end
+        end
+        result=SparseVector(
+            Base.checked_mul(old_dimension,length(factor)),indices,values)
+    end
+    result
+end
+
 """
     composite_trace_vector(basis; T=Float64)
 
@@ -2203,7 +2241,8 @@ function composite_matrixfree(S::CompositeSuperoperator;T=eltype(S))
     adjoint_action! =
         (y,x,t,p)->apply_adjoint!(y,S,x,t,p,workspace)
     MatrixFreeLiouvillian(length(S.basis),action!,resolved_type,
-        composite_trace_vector(S.basis;T=_real_float_type(resolved_type));
+        _composite_trace_functional(
+            S.basis;T=_real_float_type(resolved_type));
         autonomous=isautonomous(S),workspace,adjoint_action!)
 end
 

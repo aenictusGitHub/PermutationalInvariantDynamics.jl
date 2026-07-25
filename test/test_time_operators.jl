@@ -1,3 +1,14 @@
+struct _ReadCountingVector{T,V<:AbstractVector{T}} <: AbstractVector{T}
+    data::V
+    reads::Base.RefValue{Int}
+end
+Base.size(vector::_ReadCountingVector)=size(vector.data)
+Base.IndexStyle(::Type{<:_ReadCountingVector})=IndexLinear()
+@inline function Base.getindex(vector::_ReadCountingVector,index::Int)
+    vector.reads[]+=1
+    vector.data[index]
+end
+
 @testset "preallocated operator-valued time functions" begin
     PID=PermutationalInvariantDynamics
     basis=PIBasis(3,2)
@@ -131,6 +142,19 @@
             for kernel in many_work.kernel_workspaces)
     @test estimated==payload
     @test estimated>16length(many_plan.basis)*sizeof(ComplexF64)
+
+    # A complete heterogeneous action packs the source Schur blocks once.
+    # This guards against restoring one full coordinate copy per term.
+    many_source=randn(rng,ComplexF64,length(many_plan.basis))
+    reads=Ref(0)
+    counted_source=_ReadCountingVector(many_source,reads)
+    many_output=similar(many_source)
+    apply!(many_output,many_plan,counted_source,time,nothing,many_work)
+    @test reads[]==length(many_source)
+    reads[]=0
+    apply_adjoint!(
+        many_output,many_plan,counted_source,time,nothing,many_work)
+    @test reads[]==length(many_source)
 
     batch_columns=8
     batch_estimate=PID._performance_liouvillian_workspace_bytes(

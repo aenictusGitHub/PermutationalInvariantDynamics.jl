@@ -35,10 +35,10 @@ state derivatives.  `stationary_state` is validated for trace and residual but
 is never normalized or repaired.  The immutable plan may be shared; every
 concurrent solve requires a separate [`SteadyStateGradientWorkspace`](@ref).
 """
-struct SteadyStateGradientPlan{L,S,V,R}
+struct SteadyStateGradientPlan{L,S,F,V,R}
     operator::L
     state::S
-    trace_vector::V
+    trace_vector::F
     normalizer::V
     operator_scale::R
 end
@@ -51,7 +51,8 @@ function SteadyStateGradientPlan(source,state::PIState;operator_scale=nothing,
     _require_autonomous(operator,"implicit steady-state gradients")
     T=promote_type(_complex_float_type(eltype(operator)),eltype(state.data))
     _check_liouvillian_source_precision(operator,T,"steady-state gradient state")
-    trace_vector=T.(_trace_vector(state.basis,T));normalizer=trace_vector/dot(trace_vector,trace_vector)
+    trace_vector=_trace_functional(state.basis,T)
+    normalizer=_normalized_trace_functional(trace_vector)
     trace_error=abs(dot(trace_vector,state.data)-one(T))
     R=_real_float_type(T);tolerance=R(atol)+R(rtol)
     trace_error<=tolerance||throw(ArgumentError(
@@ -135,8 +136,9 @@ function implicit_steady_state_gradient(plan::SteadyStateGradientPlan,
             _research_apply!(destination,plan.operator,source,w.operator_work)
             alpha=dot(plan.trace_vector,source)
             @inbounds @simd for index in eachindex(destination)
-                destination[index]=invscale*destination[index]+plan.normalizer[index]*alpha
+                destination[index]=invscale*destination[index]
             end
+            _trace_axpy!(destination,alpha,plan.normalizer)
             destination
         end
         info=_gmres!(w.solution,fixed_apply!,w.rhs,w.krylov;

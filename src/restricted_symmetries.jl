@@ -456,6 +456,26 @@ struct _RestrictedLocalJumpKernel{Q,I,J,V,S}
     scale::S
 end
 
+struct _RestrictedFactorizedGain{L,R,S}
+    output_sector::Int
+    input_sector::Int
+    left::L
+    right::R
+    scale::S
+end
+
+struct _RestrictedFactorizedLocalJumpKernel{Q,G,S}
+    qblocks::Q
+    gains::G
+    scale::S
+end
+
+struct _RestrictedFactorizedLocalPBodyJumpKernel{Q,G,S}
+    qblocks::Q
+    gains::G
+    scale::S
+end
+
 
 struct _RestrictedKernelPlan{B,G,K,T}
     basis::B
@@ -539,50 +559,51 @@ end
 function _lower_restricted_kernel(kernel::FactorizedLocalJumpPIKernel,sectors,
                                   reverse_lookup,b)
     qpairs=_restricted_block_pairs(kernel.qblocks,sectors)
-    T=promote_type(eltype(first(kernel.contractions)),
-                   eltype(first(kernel.qblocks)))
-    I=Int[];J=Int[];V=T[]
+    sector_lookup=Dict(geometry.sector=>index
+        for (index,geometry) in pairs(sectors))
+    T=eltype(first(kernel.contractions))
+    gains=_RestrictedFactorizedGain{Matrix{T},Matrix{T},
+        typeof(first(kernel.branches.entries).scale)}[]
     @inbounds for branch_index in eachindex(kernel.branches.entries)
         branch=kernel.branches.entries[branch_index]
         li=branch.output_sector;ni=branch.input_sector
-        nl=length(b.patterns[li]);nn=length(b.patterns[ni])
+        output_index=get(sector_lookup,li,0)
+        input_index=get(sector_lookup,ni,0)
+        (iszero(output_index)||iszero(input_index))&&continue
+        output=sectors[output_index];input=sectors[input_index]
         contraction=kernel.contractions[branch_index]
-        for bb in 1:nl,a in 1:nl,d in 1:nn,c in 1:nn
-            output=get(reverse_lookup,b.offsets[li]+a-1+(bb-1)*nl,0)
-            input=get(reverse_lookup,b.offsets[ni]+c-1+(d-1)*nn,0)
-            (iszero(output)||iszero(input))&&continue
-            value=branch.scale*contraction[a,c]*conj(contraction[bb,d])
-            iszero(value)&&continue
-            push!(I,output);push!(J,input);push!(V,value)
-        end
+        left=Matrix(contraction[output.rows,input.rows])
+        right=Matrix(contraction[output.columns,input.columns])
+        (all(iszero,left)||all(iszero,right))&&continue
+        push!(gains,_RestrictedFactorizedGain(
+            output_index,input_index,left,right,branch.scale))
     end
-    _RestrictedLocalJumpKernel(qpairs,I,J,V,kernel.scale)
+    _RestrictedFactorizedLocalJumpKernel(qpairs,gains,kernel.scale)
 end
 
 function _lower_restricted_kernel(kernel::FactorizedLocalPBodyJumpPIKernel,
                                   sectors,reverse_lookup,b)
     qpairs=_restricted_block_pairs(kernel.qblocks,sectors)
-    T=promote_type(eltype(first(kernel.contractions)),
-                   eltype(first(kernel.qblocks)))
-    I=Int[];J=Int[];V=T[]
+    sector_lookup=Dict(geometry.sector=>index
+        for (index,geometry) in pairs(sectors))
+    T=eltype(first(kernel.contractions))
+    E=eltype(kernel.pair_scales)
+    gains=_RestrictedFactorizedGain{Matrix{T},Matrix{T},E}[]
     @inbounds for (li,ni,first_pair,last_pair) in kernel.groups
-        nl=length(b.patterns[li]);nn=length(b.patterns[ni])
+        output_index=get(sector_lookup,li,0)
+        input_index=get(sector_lookup,ni,0)
+        (iszero(output_index)||iszero(input_index))&&continue
+        output=sectors[output_index];input=sectors[input_index]
         for pair in first_pair:last_pair
-            contraction=kernel.contractions[pair];exact_scale=kernel.pair_scales[pair]
-            for bb in 1:nl,a in 1:nl,d in 1:nn,c in 1:nn
-                output=get(reverse_lookup,b.offsets[li]+a-1+(bb-1)*nl,0)
-                input=get(reverse_lookup,b.offsets[ni]+c-1+(d-1)*nn,0)
-                (iszero(output)||iszero(input))&&continue
-                primitive=contraction[a,c]*conj(contraction[bb,d])
-                value=exact_scale.direct ? exact_scale.factor*primitive :
-                    _apply_prepared_exact_scale(primitive,exact_scale;
-                        context="restricted local p-body gain")
-                iszero(value)&&continue
-                push!(I,output);push!(J,input);push!(V,value)
-            end
+            contraction=kernel.contractions[pair]
+            left=Matrix(contraction[output.rows,input.rows])
+            right=Matrix(contraction[output.columns,input.columns])
+            (all(iszero,left)||all(iszero,right))&&continue
+            push!(gains,_RestrictedFactorizedGain(
+                output_index,input_index,left,right,kernel.pair_scales[pair]))
         end
     end
-    _RestrictedLocalJumpKernel(qpairs,I,J,V,kernel.scale)
+    _RestrictedFactorizedLocalPBodyJumpKernel(qpairs,gains,kernel.scale)
 end
 
 function _lower_restricted_kernels(::Tuple{},sectors,reverse_lookup,basis)
@@ -612,10 +633,23 @@ function _restricted_kernel_plan(source,
                           plan.Ttype)
 end
 
-struct _RestrictedKernelWorkspace{P,W,T}
+struct _RestrictedKernelWorkspace{P,W,S,T}
     plan::P
     blocks::W
+    gain_scratch::S
     Ttype::Type{T}
+end
+
+_restricted_factorized_kernel(::Any)=false
+_restricted_factorized_kernel(
+    ::Union{_RestrictedFactorizedLocalJumpKernel,
+            _RestrictedFactorizedLocalPBodyJumpKernel})=true
+
+function _restricted_gain_scratch_entries(plan::_RestrictedKernelPlan)
+    any(_restricted_factorized_kernel,plan.kernels)||return 0
+    largest=maximum((max(length(geometry.rows),length(geometry.columns))
+                     for geometry in plan.sectors);init=0)
+    largest^2
 end
 
 function _RestrictedKernelWorkspace(plan::_RestrictedKernelPlan)
@@ -624,7 +658,9 @@ function _RestrictedKernelWorkspace(plan::_RestrictedKernelPlan)
         shape=(length(geometry.rows),length(geometry.columns))
         (zeros(T,shape),zeros(T,shape),zeros(T,shape))
     end
-    _RestrictedKernelWorkspace(plan,blocks,T)
+    largest=isqrt(_restricted_gain_scratch_entries(plan))
+    gain_scratch=zeros(T,largest,largest)
+    _RestrictedKernelWorkspace(plan,blocks,gain_scratch,T)
 end
 
 function _check_restricted_kernel_workspace(work::_RestrictedKernelWorkspace,
@@ -646,7 +682,6 @@ function _apply_restricted_kernel!(destination,input,
     scale=convert(plan.Ttype,value_at(kernel.scale,time,parameters))
     for index in eachindex(plan.sectors)
         geometry=plan.sectors[index];left,right,state=work.blocks[index]
-        _restricted_copy_block!(state,input,geometry.offset)
         mul!(left,kernel.left_blocks[index],state)
         mul!(right,state,kernel.right_blocks[index])
         @inbounds for coordinate in eachindex(left,right)
@@ -663,7 +698,6 @@ function _apply_restricted_kernel!(destination,input,
         _evaluated_dissipative_rate(kernel.scale,time,parameters))
     for index in eachindex(plan.sectors)
         geometry=plan.sectors[index];left,right,state=work.blocks[index]
-        _restricted_copy_block!(state,input,geometry.offset)
         left_jump=kernel.left_blocks[index];right_jump=kernel.right_blocks[index]
         mul!(left,left_jump,state);mul!(right,left,adjoint(right_jump))
         @inbounds for coordinate in eachindex(right)
@@ -688,7 +722,6 @@ function _apply_restricted_kernel!(destination,input,
     end
     for index in eachindex(plan.sectors)
         geometry=plan.sectors[index];left,right,state=work.blocks[index]
-        _restricted_copy_block!(state,input,geometry.offset)
         qleft,qright=kernel.qblocks[index]
         mul!(left,qleft,state);mul!(right,state,qright)
         @inbounds for coordinate in eachindex(left,right)
@@ -699,12 +732,99 @@ function _apply_restricted_kernel!(destination,input,
     destination
 end
 
+function _restricted_factorized_gain!(destination,gain,plan,work,scale;
+                                      adjoint::Bool=false,
+                                      exact_scale::Bool=false)
+    output_index=adjoint ? gain.input_sector : gain.output_sector
+    input_index=adjoint ? gain.output_sector : gain.input_sector
+    source=work.blocks[input_index][3]
+    target=work.blocks[output_index][1]
+    if adjoint
+        rows=size(gain.left,2);columns=size(source,2)
+        scratch=@view work.gain_scratch[1:rows,1:columns]
+        mul!(scratch,LinearAlgebra.adjoint(gain.left),source)
+        mul!(target,scratch,gain.right)
+    else
+        rows=size(gain.left,1);columns=size(source,2)
+        scratch=@view work.gain_scratch[1:rows,1:columns]
+        mul!(scratch,gain.left,source)
+        mul!(target,scratch,LinearAlgebra.adjoint(gain.right))
+    end
+    offset=plan.sectors[output_index].offset
+    if exact_scale
+        prepared=gain.scale
+        if prepared.direct
+            factor=scale*prepared.factor
+            @inbounds for coordinate in eachindex(target)
+                destination[offset+coordinate-1]+=factor*target[coordinate]
+            end
+        else
+            @inbounds for coordinate in eachindex(target)
+                primitive=scale*target[coordinate]
+                destination[offset+coordinate-1]+=
+                    _apply_prepared_exact_scale(primitive,prepared;
+                        context=adjoint ?
+                            "adjoint restricted local p-body gain" :
+                            "restricted local p-body gain")
+            end
+        end
+    else
+        factor=scale*(adjoint ? conj(gain.scale) : gain.scale)
+        @inbounds for coordinate in eachindex(target)
+            destination[offset+coordinate-1]+=factor*target[coordinate]
+        end
+    end
+    destination
+end
+
+function _restricted_jump_loss!(destination,kernel,plan,work,scale;
+                                adjoint::Bool=false)
+    for index in eachindex(plan.sectors)
+        geometry=plan.sectors[index];left,right,state=work.blocks[index]
+        qleft,qright=kernel.qblocks[index]
+        if adjoint
+            mul!(left,LinearAlgebra.adjoint(qleft),state)
+            mul!(right,state,LinearAlgebra.adjoint(qright))
+        else
+            mul!(left,qleft,state);mul!(right,state,qright)
+        end
+        @inbounds for coordinate in eachindex(left,right)
+            destination[geometry.offset+coordinate-1]-=
+                (scale/2)*(left[coordinate]+right[coordinate])
+        end
+    end
+    destination
+end
+
+function _apply_restricted_kernel!(destination,input,
+        kernel::_RestrictedFactorizedLocalJumpKernel,
+        plan,time,parameters,work)
+    scale=convert(plan.Ttype,
+        _evaluated_dissipative_rate(kernel.scale,time,parameters))
+    for gain in kernel.gains
+        _restricted_factorized_gain!(
+            destination,gain,plan,work,scale)
+    end
+    _restricted_jump_loss!(destination,kernel,plan,work,scale)
+end
+
+function _apply_restricted_kernel!(destination,input,
+        kernel::_RestrictedFactorizedLocalPBodyJumpKernel,
+        plan,time,parameters,work)
+    scale=convert(plan.Ttype,
+        _evaluated_dissipative_rate(kernel.scale,time,parameters))
+    for gain in kernel.gains
+        _restricted_factorized_gain!(
+            destination,gain,plan,work,scale;exact_scale=true)
+    end
+    _restricted_jump_loss!(destination,kernel,plan,work,scale)
+end
+
 function _apply_restricted_adjoint_kernel!(destination,input,
         kernel::_RestrictedHamiltonianKernel,plan,time,parameters,work)
     scale=conj(convert(plan.Ttype,value_at(kernel.scale,time,parameters)))
     for index in eachindex(plan.sectors)
         geometry=plan.sectors[index];left,right,state=work.blocks[index]
-        _restricted_copy_block!(state,input,geometry.offset)
         mul!(left,adjoint(kernel.left_blocks[index]),state)
         mul!(right,state,adjoint(kernel.right_blocks[index]))
         @inbounds for coordinate in eachindex(left,right)
@@ -721,7 +841,6 @@ function _apply_restricted_adjoint_kernel!(destination,input,
         _evaluated_dissipative_rate(kernel.scale,time,parameters)))
     for index in eachindex(plan.sectors)
         geometry=plan.sectors[index];left,right,state=work.blocks[index]
-        _restricted_copy_block!(state,input,geometry.offset)
         left_jump=kernel.left_blocks[index];right_jump=kernel.right_blocks[index]
         mul!(left,adjoint(left_jump),state);mul!(right,left,right_jump)
         @inbounds for coordinate in eachindex(right)
@@ -746,7 +865,6 @@ function _apply_restricted_adjoint_kernel!(destination,input,
     end
     for index in eachindex(plan.sectors)
         geometry=plan.sectors[index];left,right,state=work.blocks[index]
-        _restricted_copy_block!(state,input,geometry.offset)
         qleft,qright=kernel.qblocks[index]
         mul!(left,adjoint(qleft),state);mul!(right,state,adjoint(qright))
         @inbounds for coordinate in eachindex(left,right)
@@ -755,6 +873,33 @@ function _apply_restricted_adjoint_kernel!(destination,input,
         end
     end
     destination
+end
+
+function _apply_restricted_adjoint_kernel!(destination,input,
+        kernel::_RestrictedFactorizedLocalJumpKernel,
+        plan,time,parameters,work)
+    scale=conj(convert(plan.Ttype,
+        _evaluated_dissipative_rate(kernel.scale,time,parameters)))
+    for gain in kernel.gains
+        _restricted_factorized_gain!(
+            destination,gain,plan,work,scale;adjoint=true)
+    end
+    _restricted_jump_loss!(
+        destination,kernel,plan,work,scale;adjoint=true)
+end
+
+function _apply_restricted_adjoint_kernel!(destination,input,
+        kernel::_RestrictedFactorizedLocalPBodyJumpKernel,
+        plan,time,parameters,work)
+    scale=conj(convert(plan.Ttype,
+        _evaluated_dissipative_rate(kernel.scale,time,parameters)))
+    for gain in kernel.gains
+        _restricted_factorized_gain!(
+            destination,gain,plan,work,scale;
+            adjoint=true,exact_scale=true)
+    end
+    _restricted_jump_loss!(
+        destination,kernel,plan,work,scale;adjoint=true)
 end
 
 _apply_restricted_kernels!(destination,input,::Tuple{},plan,time,parameters,work)=
@@ -790,6 +935,12 @@ function apply!(destination::AbstractVector,plan::_RestrictedKernelPlan,
         throw(ArgumentError(
             "lowered restricted destination cannot represent the plan precision"))
     fill!(destination,zero(eltype(destination)))
+    # The complete heterogeneous kernel tuple reads one immutable reduced
+    # source. Pack every rectangular charge block only once per action.
+    for index in eachindex(plan.sectors)
+        geometry=plan.sectors[index]
+        _restricted_copy_block!(work.blocks[index][3],input,geometry.offset)
+    end
     _apply_restricted_kernels!(destination,input,plan.kernels,plan,time,
                                parameters,work)
 end
@@ -802,6 +953,10 @@ function apply_adjoint!(destination::AbstractVector,plan::_RestrictedKernelPlan,
         "lowered restricted adjoint source and destination must not share storage"))
     _check_restricted_kernel_workspace(work,plan)
     fill!(destination,zero(eltype(destination)))
+    for index in eachindex(plan.sectors)
+        geometry=plan.sectors[index]
+        _restricted_copy_block!(work.blocks[index][3],input,geometry.offset)
+    end
     _apply_restricted_adjoint_kernels!(destination,input,plan.kernels,plan,time,
                                        parameters,work)
 end
@@ -993,7 +1148,7 @@ function RestrictedLiouvillian(source,
         (source isa AbstractMatrix ? :compressed :
          lowered_plan===nothing ? :embedded : :lowered) : backend
     T=_complex_float_type(eltype(source))
-    tracevec=restricted_trace_vector(restriction,T)
+    tracevec=sparsevec(restricted_trace_vector(restriction,T))
     compressed=selected_backend===:compressed ?
         source[restriction.indices,restriction.indices] :
         selected_backend===:lowered ? _LoweredRestrictedOperator(lowered_plan) :
@@ -1049,7 +1204,7 @@ end
 # Participate in the common matrix-free source protocol. A compressed matrix
 # needs no mutable scratch; lowered and embedded backends receive one
 # task-owned workspace selected by the constructor above.
-_operator_trace_vector(operator::RestrictedLiouvillian)=operator.tracevec
+_operator_trace_functional(operator::RestrictedLiouvillian)=operator.tracevec
 _linear_operator_workspace(operator::RestrictedLiouvillian)=
     operator.backend===:compressed ? nothing :
     RestrictedLiouvillianWorkspace(operator)
@@ -1062,8 +1217,11 @@ function _performance_linear_operator_workspace_bytes(
         "batch_columns must be nonnegative"))
     operator.backend===:compressed&&return big(0)
     if operator.backend===:lowered
-        return _performance_array_bytes(
-            size(operator,1),eltype(operator),0;linear_arrays=3)
+        plan=operator.compressed_source.plan
+        return _performance_entries_bytes(
+            3BigInt(size(operator,1))+
+                BigInt(_restricted_gain_scratch_entries(plan)),
+            eltype(operator))
     end
     ambient=length(operator.restriction.basis)
     _performance_array_bytes(ambient,eltype(operator),0;linear_arrays=2)+

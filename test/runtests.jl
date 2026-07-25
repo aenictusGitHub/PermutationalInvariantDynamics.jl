@@ -23,6 +23,7 @@ const TEST_FILES=(
     (:solvers,"test_evans.jl"),
     (:solvers,"test_symmetries.jl"),
     (:solvers,"test_restricted_symmetries.jl"),
+    (:solvers,"test_automatic_symmetries.jl"),
     (:lowering,"test_pbody.jl"),
     (:dynamics,"test_floquet.jl"),
     (:dynamics,"test_evolution.jl"),

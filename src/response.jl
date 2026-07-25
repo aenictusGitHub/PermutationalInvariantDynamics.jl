@@ -840,10 +840,10 @@ function _pi_left_product(A::PIOperator,rho::PIState)
     out
 end
 
-struct _TraceFixedResponseOperator{T,S,W,V,R}
+struct _TraceFixedResponseOperator{T,S,W,F,V,R}
     source::S
     workspace::W
-    tracevec::V
+    tracevec::F
     anchor::V
     sign::R
     inverse_scale::R
@@ -888,8 +888,8 @@ function _trace_fixed_response_solve!(solution,source,rhs,anchor,tracevec,work;
     atolR=_response_tolerance(R,atol,"atol")
     rtolR=_response_tolerance(R,rtol,"rtol")
     operator=_TraceFixedResponseOperator{eltype(solution),typeof(source),
-        typeof(work),typeof(tracevec),R}(source,work,tracevec,anchor,R(sign),
-                                        inverse_scale)
+        typeof(work),typeof(tracevec),typeof(anchor),R}(
+        source,work,tracevec,anchor,R(sign),inverse_scale)
     @. work.rhs=inverse_scale*rhs
     fill!(solution,zero(eltype(solution)))
     result=_gmres!(solution,operator,work.rhs,work.forward;
@@ -964,13 +964,6 @@ function integrated_correlation_time(L0,rho::PIState,A::PIOperator;
     info=merge(result,(value,method=:krylov,converged=true,
         residual=result.physical_residual,workspace_reused=workspace!==nothing))
     return_info ? info : value
-end
-
-function _trace_functional(b::PIBasis,::Type{R}) where R<:AbstractFloat
-    tau=zeros(Complex{R},length(b))
-    for (s,p) in pairs(b.sectors);n=length(b.patterns[s]);for i in 1:n
-        tau[b.offsets[s]+i-1+(i-1)*n]=_schur_multiplicity_scale(R,p)
-    end;end;tau
 end
 
 """

@@ -242,6 +242,10 @@ algorithms may evolve as the remaining numerical bottlenecks are addressed.
 - `harmonic_arnoldi_spectrum` and matrix-free weak-symmetry projection target
   difficult interior modes. Residuals and spectral scope must be inspected;
   near-zero ordering is not a certified global-gap search.
+- `strong_symmetry_report`, `strong_symmetry_reduction`, and the
+  sector-resolved steady/spectral wrappers provide automatic diagonal
+  strong-symmetry workflows. Binary support discovery has deliberately narrow
+  completeness metadata, and every retained charge is returned explicitly.
 - `implicitly_restarted_arnoldi_spectrum` (`method=:iram`) applies exact
   unwanted Ritz shifts through implicit QR for bounded-memory spectral-edge
   extraction.

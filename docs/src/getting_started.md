@@ -160,7 +160,7 @@ validate_state(rho0)
 ```
 
 `computational_product_state(basis, 2)` uses Julia's one-based local level and
-constructs \((|e\rangle\langle e|)^{\otimes N}\) directly in PI coordinates.
+constructs ``(|e\rangle\langle e|)^{\otimes N}`` directly in PI coordinates.
 It does not form a
 `2^N` state vector. `validate_state` returns the state when its trace,
 Hermiticity, and positivity checks pass; it throws instead of repairing an

@@ -7,10 +7,10 @@ Source: [`local_pumping.jl`](local_pumping.jl)
 Ten qubits experience independent emission at rate `γ↓ = 1` and pumping at
 rate `γ↑ = 0.3`:
 
-\[
+```math
 \dot\rho=\gamma_\downarrow\sum_i\mathcal D[\sigma_i^-]\rho
 +\gamma_\uparrow\sum_i\mathcal D[\sigma_i^+]\rho .
-\]
+```
 
 The exact stationary state is the product of identical diagonal one-qubit
 states with excited population `γ↑/(γ↓+γ↑)`.

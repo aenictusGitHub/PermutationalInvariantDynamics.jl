@@ -1,3 +1,16 @@
+struct _ThreadedReadCountingVector{T,V<:AbstractVector{T}} <:
+        AbstractVector{T}
+    data::V
+    reads::Base.RefValue{Int}
+end
+Base.size(vector::_ThreadedReadCountingVector)=size(vector.data)
+Base.IndexStyle(::Type{<:_ThreadedReadCountingVector})=IndexLinear()
+@inline function Base.getindex(
+        vector::_ThreadedReadCountingVector,index::Int)
+    vector.reads[]+=1
+    vector.data[index]
+end
+
 @testset "deterministic target-sector Liouvillian threading" begin
     PID=PermutationalInvariantDynamics
     rng=MersenneTwister(0x71ea)
@@ -44,6 +57,30 @@
     threaded_apply_adjoint!(repeated,plan,source,many_tasks)
     @test threaded==serial
     @test repeated==threaded
+
+    # Multi-worker kernels share one caller-packed source instead of copying
+    # the same Schur block once per term and worker.
+    scheduled_rates=ntuple(4) do index
+        (time,parameters)->(0.01index)*(one(time)+parameters.shift)
+    end
+    packing_model=PIModel(basis,ntuple(index->CollectiveHamiltonian(
+        isodd(index) ? sx : sz;rate=scheduled_rates[index]),4))
+    packing_plan=LiouvillianPlan(packing_model)
+    @test length(packing_plan.kernels)==4
+    packing_work=ThreadedLiouvillianWorkspace(packing_plan;tasks=3)
+    packing_source=randn(rng,ComplexF64,length(basis))
+    packing_reads=Ref(0)
+    counted_source=_ThreadedReadCountingVector(
+        packing_source,packing_reads)
+    packing_output=similar(packing_source)
+    threaded_apply!(packing_output,packing_plan,counted_source,0.2,
+                    (shift=0.1,),packing_work)
+    @test packing_reads[]==length(packing_source)
+    packing_reads[]=0
+    threaded_apply_adjoint!(
+        packing_output,packing_plan,counted_source,0.2,
+        (shift=0.1,),packing_work)
+    @test packing_reads[]==length(packing_source)
 
     # The normal compiled-model flow delegates to the exact same immutable
     # plan and rejects a workspace prepared for any other plan object.

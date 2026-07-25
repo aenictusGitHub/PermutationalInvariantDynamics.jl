@@ -260,7 +260,7 @@ J(\omega)=\frac{\lambda^2\gamma\omega}
 {(\omega_0^2-\omega^2)^2+\gamma^2\omega^2},
 ```
 
-with $0 < \gamma < 2\omega_0$, its two conjugate damped-oscillator poles, and a
+with ``0 < \gamma < 2\omega_0``, its two conjugate damped-oscillator poles, and a
 finite Matsubara tail. Here `coupling_strength=lambda` enters quadratically;
 it is not the Drude reorganization-energy parameter. This distinction is
 recorded in [`heom_bath_metadata`](@ref). Both physical constructors store the

@@ -8,11 +8,11 @@ Following Huelga *et al.* (1997), `N = 12` qubits start in
 `|+x>^N` and undergo independent Markovian dephasing. With the convention used
 by the example,
 
-\[
+```math
 \dot\rho=\frac{\gamma}{2}\sum_i\mathcal D[\sigma_i^z]\rho,
 \qquad
 \langle J_x(t)\rangle=\frac N2 e^{-\gamma t}.
-\]
+```
 
 ## Solution
 

@@ -43,6 +43,14 @@ Base.unsafe_convert(::Type{Ptr{T}},
     identity=composite_identity_operator(basis)
     @test expectation(rho,identity)≈trace(rho)
     @test trace(identity)≈4
+    empty_generator=CompositeSuperoperator(basis;T=ComplexF64)
+    composite_wrapper=composite_matrixfree(empty_generator)
+    @test composite_wrapper.tracevec isa SparseVector
+    @test nnz(composite_wrapper.tracevec)==
+        sum(length,bpi.patterns;init=0)*baux.d
+    @test collect(composite_wrapper.tracevec)==
+        composite_trace_vector(basis)
+    @test dot(composite_wrapper.tracevec,rho.data)≈trace(rho)
 
     @test_throws ArgumentError CompositePIBasis()
     @test_throws DimensionMismatch composite_tensor_state(basis,rho_pi)

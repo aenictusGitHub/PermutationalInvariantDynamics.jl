@@ -26,9 +26,117 @@ function _exact_julia_fences(markdown::AbstractString)
     blocks
 end
 
+function _markdown_fence_marker(line::AbstractString)
+    bytes=codeunits(lstrip(line))
+    isempty(bytes)&&return nothing
+    marker=bytes[1]
+    marker in (UInt8('`'),UInt8('~'))||return nothing
+    run=1
+    while run<length(bytes)&&bytes[run+1]==marker
+        run+=1
+    end
+    run>=3 ? (marker,run) : nothing
+end
+
+function _matching_backtick_end(bytes,start,count)
+    index=start
+    while index<=length(bytes)
+        if bytes[index]==UInt8('`')
+            run=1
+            while index+run<=length(bytes)&&
+                    bytes[index+run]==UInt8('`')
+                run+=1
+            end
+            run==count&&return index+run
+            index+=run
+        else
+            index+=1
+        end
+    end
+    nothing
+end
+
+function _prose_math_delimiter_violations(
+        markdown::AbstractString;reject_single_dollar::Bool=true)
+    violations=NamedTuple{(:line,:token),Tuple{Int,String}}[]
+    fence=nothing
+    for (line_number,line) in
+            enumerate(split(markdown,'\n';keepempty=true))
+        marker=_markdown_fence_marker(line)
+        if fence===nothing
+            if marker!==nothing
+                fence=marker
+                continue
+            end
+        else
+            if marker!==nothing&&marker[1]==fence[1]&&marker[2]>=fence[2]
+                fence=nothing
+            end
+            continue
+        end
+
+        bytes=codeunits(line)
+        index=1
+        while index<=length(bytes)
+            byte=bytes[index]
+            if byte==UInt8('`')
+                run=1
+                while index+run<=length(bytes)&&
+                        bytes[index+run]==UInt8('`')
+                    run+=1
+                end
+                closing=_matching_backtick_end(bytes,index+run,run)
+                index=closing===nothing ? index+run : closing
+            elseif byte==UInt8('\\')&&index<length(bytes)&&
+                    bytes[index+1] in
+                        (UInt8('('),UInt8(')'),UInt8('['),UInt8(']'))
+                token=String(UInt8[byte,bytes[index+1]])
+                push!(violations,(line=line_number,token=token))
+                index+=2
+            elseif reject_single_dollar&&byte==UInt8('$')
+                preceding_backslashes=0
+                previous=index-1
+                while previous>=1&&bytes[previous]==UInt8('\\')
+                    preceding_backslashes+=1
+                    previous-=1
+                end
+                iseven(preceding_backslashes)&&
+                    push!(violations,(line=line_number,token="\$"))
+                index+=1
+            else
+                index+=1
+            end
+        end
+    end
+    violations
+end
+
 @testset "example inventory, syntax, and GitHub Markdown" begin
     @test _example_has_parse_error(Meta.parseall("x="))
     @test !_example_has_parse_error(Meta.parseall("x=1"))
+
+    invalid_math=raw"""
+legacy \(x\), \[y\], and $z$
+"""
+    @test _prose_math_delimiter_violations(invalid_math)==[
+        (line=1,token=raw"\("),
+        (line=1,token=raw"\)"),
+        (line=1,token=raw"\["),
+        (line=1,token=raw"\]"),
+        (line=1,token="\$"),
+        (line=1,token="\$"),
+    ]
+    valid_math=raw"""
+`inline code \(x\) and $x$`
+``inline Documenter math containing \(x\) and $x$``
+```math
+\[x\] + $y$
+```
+```julia
+source = raw"\(x\) and $y$"
+```
+"""
+    @test isempty(_prose_math_delimiter_violations(valid_math))
 
     example_directory=normpath(joinpath(@__DIR__,"..","examples"))
     entries=readdir(example_directory)
@@ -56,6 +164,8 @@ end
     for guide in guides
         markdown=read(joinpath(example_directory,guide),String)
         @test !occursin(raw"\operatorname",markdown)
+        @test isempty(_prose_math_delimiter_violations(
+            markdown;reject_single_dollar=false))
         @test occursin("## Expected output",markdown)
 
         matches=collect(eachmatch(
@@ -74,11 +184,15 @@ end
     # them or requiring their surrounding tutorial setup.
     docs_directory=normpath(joinpath(example_directory,"..","docs","src"))
     julia_fence_count=0
+    markdown_count=0
     for (root,_,files) in walkdir(docs_directory)
         for filename in sort!(filter(name->endswith(name,".md"),files))
             path=joinpath(root,filename)
-            for (opening_line,source) in
-                    _exact_julia_fences(read(path,String))
+            markdown=read(path,String)
+            markdown_count+=1
+            violations=_prose_math_delimiter_violations(markdown)
+            @test isempty(violations)
+            for (opening_line,source) in _exact_julia_fences(markdown)
                 julia_fence_count+=1
                 parsed=Meta.parseall(
                     source;filename=path,lineno=opening_line+1)
@@ -86,6 +200,7 @@ end
             end
         end
     end
+    @test markdown_count>0
     @test julia_fence_count>0
 
     # Curated figures are static documentation assets. Numerical assertions in

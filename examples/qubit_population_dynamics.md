@@ -9,23 +9,23 @@ dephasing, and pumping channels constructed by `qubit_ensemble_model`. A
 diagonal one-particle Hamiltonian is included as well. In the package order
 ``(|g>,|e>)``, the jump matrices are
 
-\[
+```math
 j_- = |g\rangle\langle e|,\qquad
 j_+ = j_-^\dagger,\qquad
 j_z = \frac{1}{2}\mathrm{diag}(-1,1).
-\]
+```
 
 The six keyword rates multiply the standard dissipators of these local
 operators or their collective sums. In particular, the `dephasing` keyword
-uses \(j_z=\sigma_z/2\), so an isolated one-qubit coherence decays at half
+uses $j_z=\sigma_z/2$, so an isolated one-qubit coherence decays at half
 that keyword rate.
 
 All terms preserve states diagonal in the Schur-sector GT-pattern basis. The
 initial state is the central fully symmetric Dicke state
 
-\[
+```math
 |j=N/2,m=0\rangle\langle j=N/2,m=0|.
-\]
+```
 
 ## Certified reduced evolution
 
@@ -43,9 +43,9 @@ dropped merely because its rate is small. `population_invariance(model)` is
 also available when only the report is needed. The resulting population
 vector contains
 
-\[
+```math
 p_{\nu,W}=\sqrt{f^\nu}(C_\nu)_{W,W},
-\]
+```
 
 so its entries are physical probabilities including the exact Schur-sector
 multiplicities and sum to the state trace. For this qubit example the reduced
@@ -60,14 +60,14 @@ to better than `2e-10`.
 ## Stationary populations
 
 `population_generator(plan; representation=:sparse)` exposes the reduced
-generator \(M\), and
+generator $M$, and
 
 ```julia
 p_stationary = stationary_populations(plan; method=:direct)
 ```
 
-solves \(M p_{\rm stationary}=0\) with
-\(\sum_i p_i=1\). The example checks the reduced residual, normalization,
+solves $M p_{\rm stationary}=0$ with
+$\sum_i p_i=1$. The example checks the reduced residual, normalization,
 reality, and nonnegativity. It reconstructs a validated `PIState` with
 `state_from_populations` and compares it with a direct stationary solve in the
 full PI coordinate space.

@@ -244,14 +244,15 @@ pattern.
 - Model terms and lowering: `terms.jl`, `correlated_jumps.jl`, `spin.jl`,
   `vectorization.jl`, `liouvillian.jl`, `threaded_apply.jl`, and
   `compiled_families.jl`. `source_protocol.jl` centralizes private basis,
-  trace-vector, task-workspace, adjoint-capability, and matrix-free-only
-  discovery for prepared linear-operator wrappers; extend those traits instead
-  of adding consumer-local `isa` cascades. `solver_algorithms.jl` owns
+  structured trace-functional, task-workspace, adjoint-capability, and
+  matrix-free-only discovery for prepared linear-operator wrappers; extend
+  those traits instead of adding consumer-local `isa` cascades.
+  `solver_algorithms.jl` owns
   canonical solver symbols and compatibility aliases. `result_protocol.jl`
   owns explicit physical-time result lookup.
 - Krylov, spectra, and symmetries: `krylov.jl`, `krylov_extensions.jl`,
   `spectra.jl`, `evans.jl`, `symmetries.jl`, and
-  `restricted_symmetries.jl`.
+  `restricted_symmetries.jl`, and `automatic_symmetries.jl`.
 - State analysis: `observables.jl`, `entanglement.jl`,
   `local_factor_trace.jl`,
   `genuine_entanglement.jl`, `information.jl`, `nonstabilizerness.jl`,
@@ -334,6 +335,16 @@ pattern.
 - Batched application evaluates each schedule once and uses sectorwise matrix-
   matrix kernels where supported. Preserve vector/column fallbacks for custom
   callbacks and uncommon driven kernels.
+- A complete vector action packs each immutable input Schur block once, before
+  visiting the heterogeneous kernel tuple. The same contract applies to
+  adjoint, conditional-trajectory, lowered restricted-symmetry, and
+  multiworker threaded actions. Thread workers may share only the caller-
+  packed read-only source; their mutable left/right/gain scratch remains
+  task-owned.
+- Fixed local one- and p-body gains lowered into Cartesian strong-symmetry
+  coordinates retain sliced rectangular Schur contractions. Do not expand
+  these gains into quartic reduced-coordinate triplets. Preserve prepared
+  exact p-body scales in both forward and adjoint sandwiches.
 
 ### Threaded application
 
@@ -381,6 +392,11 @@ BLAS threading. The workspace is guarded against concurrent reuse.
   geometry estimate.
 - Mode-specific workspaces omit dominant unused arrays and must reject an
   incompatible operation instead of allocating the missing storage lazily.
+- Prepared PI, composite, restricted, global-pseudomode, Floquet, and HEOM
+  sources retain physical trace functionals on exact sparse support. Public
+  APIs documented to return a dense trace vector remain dense compatibility
+  routes; internal Krylov borders and preconditioners must not densify the
+  functional merely to add its rank-one constraint.
 
 Benchmark measurements and dated optimization history belong in
 `IMPLEMENTATION_NOTES.md`. Regression thresholds live in the benchmark
@@ -710,6 +726,15 @@ Krylov dimension, and finite-size scaling are separate claims.
   exhaustive leakage checks. Compatible fixed prepared kernels lower directly
   into reduced Cartesian coordinates; unsupported kernels and non-Cartesian
   masks use the certified embedded fallback.
+- Automatic strong-symmetry discovery is term resolved: every Hamiltonian and
+  effective jump must commute separately. Its support-nullspace completeness
+  claim is limited to diagonal binary-sign candidates with supported
+  microscopic matrices. Reduction must retain every trace-bearing Hilbert
+  charge explicitly; never select one stationary charge or infer strong
+  commutation from weak covariance. Aggregate multi-charge guards count all
+  retained outputs and per-sector solver peaks. Equal-charge workflows omit
+  off-diagonal ket/bra decay blocks and must never call their spectral union
+  global.
 - Off-diagonal ket/bra blocks may have zero trace and are valid for decay modes,
   but trace-fixed stationary solving must reject them.
 - Always validate a reduced mode with `restriction_full_residual`; that check
@@ -893,9 +918,9 @@ fewer coordinates.
   and shift-invert routes must reject rather than probe/materialize the full
   composite map. Workspace preflight includes every nested PI workspace and
   predictable fallback action transient. The matrix-free wrapper also charges
-  its retained trace-vector copy. BigFloat stationary and spectral solvers
-  must execute entirely in the model's retained precision context, not only
-  wrap individual operator applications.
+  its retained sparse trace-functional copy. BigFloat stationary and spectral
+  solvers must execute entirely in the model's retained precision context,
+  not only wrap individual operator applications.
 - High-level selected spectra insert the factorized matrix-free wrapper before
   Arnoldi-family solving. Dense complete spectra of the global composite map
   remain unsupported.
@@ -904,7 +929,8 @@ fewer coordinates.
   return composite coordinates which its prepared workspace cannot apply.
 - `GlobalPseudomodeModel` retains one immutable `CompositeReductionPlan` for
   the system and one for the mode. Reuse those packed diagonal contractions;
-  do not rebuild sector groups or a composite trace vector on every reduction.
+  do not rebuild sector groups or a composite trace functional on every
+  reduction.
 - `trace_pseudomodes(rho,model)` contracts the global mode factor and returns
   the system `PIState`; `global_pseudomode_state` contracts the system factor.
   Do not use the local-supersite trace plan for this topology.
@@ -1056,11 +1082,18 @@ not dispatch on the accidental presence of an optional package.
   `checkdocs=:exports`.
 - Qualify names that conflict with Base, such as
   `PermutationalInvariantDynamics.isvalid`.
-- Keep Markdown and docstring TeX compatible with GitHub. GitHub rejects
-  `\operatorname`; use `\mathrm{tr}`, `\mathrm{Re}`, `\mathrm{diag}`, and
-  analogous roman labels.
+- In `docs/src` and Documenter docstrings, write inline mathematics with
+  double backticks and display mathematics in fenced `math` blocks. Do not use
+  `\(...\)`, `\[...\]`, or single-dollar delimiters there: Julia Markdown
+  consumes them before KaTeX can render the expression. Paired example guides
+  are viewed directly on GitHub, so use `$...$` inline and fenced `math`
+  blocks for displays. GitHub rejects `\operatorname`; use `\mathrm{tr}`,
+  `\mathrm{Re}`, `\mathrm{diag}`, and analogous roman labels.
 - Keep README, `CITATION.cff`, Documenter links, repository URL, and license
   synchronized. Do not add `date-released` before an actual release.
+- `scripts/release_gate.jl` is the dependency-free, non-publishing metadata
+  and repository-hygiene gate. It may validate a candidate or a dated release,
+  but it must never create a tag, GitHub release, or registry request.
 - The tracked `docs/Manifest.toml` is resolved for the current stable Julia;
   regenerate it before pinning documentation CI to an older Julia line.
 - The README disclosure of substantial Codex assistance must remain. A human
@@ -1119,6 +1152,9 @@ CairoMakie is not a core dependency. The shared loader activates it only when
 it is a direct dependency of the active project. Without CairoMakie, examples
 must still run numerical assertions and skip only rendering. Keep plotting
 after validation and render arrays already produced by the checked workflow.
+`test/run_quick_examples.jl` executes the representative CI suite in fresh
+Julia processes with `PID_EXAMPLE_RENDER=0`. Quick-suite selection must not
+weaken an included example's numerical parameters, tolerances, or assertions.
 
 ## Verification workflow
 
@@ -1244,7 +1280,7 @@ Use `--project=examples` when validating CairoMakie rendering. Refer to
   weak-PI pseudo-kets and diffusive/event-driven composite paths are absent.
 - Evans certificates return `missing` for unsupported microscopic
   recouplings, custom/direct terms, or an exceeded memory budget.
-- A coefficient-space trace vector cannot be stored when required
+- A coefficient-space trace functional cannot be stored when required
   `sqrt(f^nu)` entries exceed the chosen scalar range; compile at wider
   precision.
 - Resource estimates cannot bound arbitrary user builders, callbacks, or

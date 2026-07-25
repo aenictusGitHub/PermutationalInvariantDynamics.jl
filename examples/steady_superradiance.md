@@ -7,10 +7,10 @@ Source: [`steady_superradiance.jl`](steady_superradiance.jl)
 The Meiser-Thompson-Holland model combines collective emission and independent
 repumping:
 
-\[
+```math
 \dot\rho=\Gamma_c\mathcal D[J_-]\rho
  +w\sum_i\mathcal D[\sigma_i^+]\rho .
-\]
+```
 
 The example uses `N = 10` and scans the pump rate from weak to strong pumping.
 
@@ -21,9 +21,9 @@ Represent collective emission with `CollectiveJump` and local repumping with
 `stationary_state(...; algorithm=DirectAlgorithm())` solves the
 trace-constrained PI linear system. The emitted intensity is
 
-\[
+```math
 I=\Gamma_c\langle J_+J_-\rangle,
-\]
+```
 
 and the excited population is contracted through a
 `CollectiveObservablePlan`. The script also prints the enhancement relative

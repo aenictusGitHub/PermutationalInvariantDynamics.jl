@@ -205,41 +205,15 @@ function _floquet_source_basis(x,source,basis)
 end
 
 function _floquet_source_trace(source,basis,trace_vector,::Type{T}) where T
-    inferred=_operator_trace_vector(source)
-    inferred===nothing&&basis!==nothing&&(inferred=_trace_vector(basis,T))
+    inferred=_operator_trace_functional(source)
+    inferred===nothing&&basis!==nothing&&
+        (inferred=_trace_functional(basis,T))
     values=trace_vector===nothing ? inferred : trace_vector
     values===nothing&&return nothing
     length(values)==size(source,1)||throw(DimensionMismatch(
         "Floquet trace vector has the wrong length"))
-    prepared=Vector{T}(undef,length(values))
-    for index in eachindex(values)
-        value=values[index]
-        value isa Number&&isfinite(real(value))&&isfinite(imag(value))||
-            throw(ArgumentError(
-                "Floquet trace-vector entry $index must be a finite number"))
-        integer_components=real(value) isa Integer&&imag(value) isa Integer
-        integer_components||promote_type(T,typeof(value))===T||
-            throw(ArgumentError(
-                "Floquet trace-vector entry $index of type $(typeof(value)) would narrow in working precision $T"))
-        converted=T(value)
-        isfinite(real(converted))&&isfinite(imag(converted))||
-            throw(ArgumentError(
-                "Floquet trace-vector entry $index is not finite in working precision $T"))
-        for (component,converted_component,label) in
-                ((real(value),real(converted),"real"),
-                 (imag(value),imag(converted),"imaginary"))
-            if component isa Integer
-                BigInt(converted_component)==BigInt(component)||
-                    throw(ArgumentError(
-                        "the $label component of Floquet trace-vector entry $index is not exactly representable in working precision $T"))
-            elseif !iszero(component)&&iszero(converted_component)
-                throw(ArgumentError(
-                    "the $label component of Floquet trace-vector entry $index underflows in working precision $T"))
-            end
-        end
-        prepared[index]=converted
-    end
-    prepared
+    _convert_trace_functional(
+        values,T;context="Floquet trace-vector")
 end
 
 function _floquet_workspace(source,::Type{T},dimension::Integer) where T
@@ -675,7 +649,7 @@ Base.:*(map::_AdjointFloquetMap,input::AbstractMatrix)=
 # period-action scratch.
 _restricted_source_workspace(map::FloquetMap)=FloquetWorkspace(map)
 _operator_basis(map::FloquetMap)=map.basis
-_operator_trace_vector(map::FloquetMap)=map.tracevec
+_operator_trace_functional(map::FloquetMap)=map.tracevec
 _operator_has_adjoint(map::FloquetMap)=_operator_has_adjoint(map.source)
 
 """

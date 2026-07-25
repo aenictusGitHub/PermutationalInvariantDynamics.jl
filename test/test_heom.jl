@@ -259,6 +259,13 @@
         plan=PIDHEOM.HEOMPlan(model,(bath_z,bath_x);max_depth=2)
         plan_workspace=PIDHEOM.HEOMWorkspace(plan)
         @test plan_workspace.system isa PIDHEOM.LiouvillianWorkspace
+        @test plan.tracevec isa SparseVector
+        @test nnz(plan.tracevec)==
+            sum(length,basis.patterns;init=0)
+        @test collect(plan.tracevec)[1:length(basis)]==
+            PIDHEOM._trace_vector(basis,eltype(plan))
+        @test all(iszero,
+            collect(plan.tracevec)[length(basis)+1:end])
         @test plan_workspace.system.batch.capacity==
               min(PIDHEOM.heom_number_ados(plan),
                   PIDHEOM._HEOM_SYSTEM_BATCH_WIDTH)

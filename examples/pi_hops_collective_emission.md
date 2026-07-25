@@ -5,12 +5,12 @@ Source: [`pi_hops_collective_emission.jl`](pi_hops_collective_emission.jl)
 This example demonstrates three HOPS features not exercised by the basic
 collective-dephasing example:
 
-- a non-Hermitian shared-bath coupling \(L=J_-\);
+- a non-Hermitian shared-bath coupling $L=J_-$;
 - an exact hierarchy-depth check in a one-excitation manifold;
 - deterministic external noise and direct conditioned application through
   `hops_rhs!`.
 
-It uses only symmetric Schur coordinates and never constructs a \(2^N\) ket or
+It uses only symmetric Schur coordinates and never constructs a $2^N$ ket or
 density matrix.
 
 ## Model and exact solution
@@ -29,7 +29,7 @@ L=J_-,
 C(t)=c e^{-\nu t}.
 ```
 
-For the script, \(N=20\), \(c=0.01\), and \(\nu=1.20\). Collective operators
+For the script, $N=20$, $c=0.01$, and $\nu=1.20$. Collective operators
 preserve total spin, so the restricted basis
 
 ```julia
@@ -46,7 +46,7 @@ Within the zero- and one-excitation subspace, the survival amplitude obeys
 G(0)=1,\quad \dot G(0)=0.
 ```
 
-Writing \(\delta=\sqrt{\nu^2-4Nc}\), its solution is
+Writing $\delta=\sqrt{\nu^2-4Nc}$, its solution is
 
 ```math
 G(t)=e^{-\nu t/2}
@@ -56,15 +56,15 @@ G(t)=e^{-\nu t/2}
 \right].
 ```
 
-The line break above is only typographical: the leading \(e^{-\nu t/2}\)
+The line break above is only typographical: the leading $e^{-\nu t/2}$
 multiplies the complete bracket. With
-\(N_e=\sum_i |e_i\rangle\langle e_i|\), the collective excitation is
-\(\langle N_e(t)\rangle=|G(t)|^2\).
+$N_e=\sum_i |e_i\rangle\langle e_i|$, the collective excitation is
+$\langle N_e(t)\rangle=|G(t)|^2$.
 
 ## Why depth one is exact here
 
-The root contains the symmetric one-excitation state. Applying \(J_-\) maps it
-to the collective ground state, and applying \(J_-\) again gives zero.
+The root contains the symmetric one-excitation state. Applying $J_-$ maps it
+to the collective ground state, and applying $J_-$ again gives zero.
 Consequently no hierarchy node above occupation one can feed the physical
 amplitude. The script compares hard boundaries at depths 0, 1, and 2:
 
@@ -93,7 +93,7 @@ plan = HOPSPlan(H, bath; max_depth=1, scaling=:scaled)
 
 A built-in stationary Ornstein--Uhlenbeck path contains a stochastic ground
 amplitude. The one-excitation amplitude, however, is deterministic in this
-manifold, so even the small eight-path average reproduces \(|G(t)|^2\).
+manifold, so even the small eight-path average reproduces $|G(t)|^2$.
 Individual linear-HOPS roots remain unnormalized. The script verifies
 
 ```julia

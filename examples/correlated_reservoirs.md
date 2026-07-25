@@ -1,20 +1,20 @@
 # Correlated Kossakowski reservoirs
 
 The companion script models a qubit ensemble coupled to a reservoir whose
-one-particle noise channels are correlated. Given local matrices \(L_a\) and
-a Hermitian positive-semidefinite Kossakowski matrix \(\Gamma\), the local
+one-particle noise channels are correlated. Given local matrices $L_a$ and
+a Hermitian positive-semidefinite Kossakowski matrix $\Gamma$, the local
 generator is
 
-\[
+```math
 \mathcal L_{\mathrm{corr}}(\rho)=
 \sum_i\sum_{a,b}\Gamma_{ab}
 \left[L_a^{(i)}\rho L_b^{(i)\dagger}
 -\frac12\left\{L_b^\dagger L_a,\rho\right\}^{(i)}\right].
-\]
+```
 
 Use `CorrelatedLocalJumps` for this incoherent sum over particles. Use
-`CorrelatedCollectiveJumps` when \(L_a^{(i)}\) is first summed coherently into
-\(J_a=\sum_iL_a^{(i)}\). The latter stays within each Schur sector, while the
+`CorrelatedCollectiveJumps` when $L_a^{(i)}$ is first summed coherently into
+$J_a=\sum_iL_a^{(i)}$. The latter stays within each Schur sector, while the
 local reservoir may transfer population between sectors.
 
 ```julia
@@ -26,14 +26,14 @@ model = PIModel(basis, (term,))
 prepared = compile(model; backend=:matrixfree)
 ```
 
-For fixed \(\Gamma=C C^\dagger\), the package factorizes the small channel-space
+For fixed $\Gamma=C C^\dagger$, the package factorizes the small channel-space
 matrix once and lowers the effective operators
-\(K_r=\sum_a C_{ar}L_a\) through the established exact PI kernels. This is
+$K_r=\sum_a C_{ar}L_a$ through the established exact PI kernels. This is
 mathematically identical to a sum of `LocalJump(K_r)` or
 `CollectiveJump(K_r)` terms. It neither diagonalizes a full many-particle
-operator nor constructs a \(d^N\) state.
+operator nor constructs a $d^N$ state.
 
-The full off-diagonal \(\Gamma_{ab}\) entries matter: discarding them removes
+The full off-diagonal $\Gamma_{ab}$ entries matter: discarding them removes
 interference between reservoir channels and generally changes the dynamics.
 The constructor copies and checks fixed input, rejects nonfinite,
 non-Hermitian, or non-positive-semidefinite matrices, and preserves the

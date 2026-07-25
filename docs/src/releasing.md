@@ -6,11 +6,37 @@ clean release commit. Do not register an unreviewed working tree.
 
 ## Release gate
 
+The dependency-free metadata gate checks the package/citation/changelog
+version, release-date state, GPL identifier and canonical license, public
+URLs, the tracked-manifest policy, generated-output paths, and optionally the
+complete nonignored worktree:
+
+```sh
+julia --startup-file=no scripts/release_gate.jl \
+  --expect-version X.Y.Z --require-clean
+```
+
+It deliberately accepts a synchronized release candidate whose changelog is
+still marked `Unreleased`. After a release date actually exists in both
+`CHANGELOG.md` and `CITATION.cff`, add `--require-released`. The script only
+validates local metadata: it never creates or moves a tag, publishes a GitHub
+release, or contacts General.
+
 Before changing the public version:
 
 1. Run the full test suite on Julia 1.10 and current stable Julia from a clean
    checkout, plus the threaded performance gates, Aqua/JET, documentation,
-   and representative examples.
+   and representative examples. The same dependency-free numerical examples
+   used by CI can be run locally as two isolated shards:
+
+   ```sh
+   julia --startup-file=no --project=. test/run_quick_examples.jl --shard 1/2
+   julia --startup-file=no --project=. test/run_quick_examples.jl --shard 2/2
+   ```
+
+   These shards execute the examples' default numerical assertions with
+   rendering explicitly disabled; they do not substitute smaller tolerances
+   or weaker physics checks.
 2. Confirm that `docs/Manifest.toml` is the only tracked `Manifest.toml`.
    Root, quality, example, benchmark, comparison, optional-test, and notebook
    manifests are generated locally and must remain untracked. Also confirm
@@ -22,7 +48,10 @@ Before changing the public version:
 4. Confirm `LICENSE` is the canonical GPL-3.0-only text and that repository,
    documentation, and citation URLs agree.
 5. Require green GitHub CI and documentation checks on the exact commit that
-   will be registered.
+   will be registered. In particular, confirm both `executable examples`
+   shards and the `release metadata` job. On a `vX.Y.Z` push, that job
+   automatically switches to `--require-released --tag-ref refs/tags/vX.Y.Z`;
+   an undated or version-mismatched release tag therefore fails.
 
 ## Documentation deployment
 

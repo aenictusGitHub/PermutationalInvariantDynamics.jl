@@ -19,8 +19,8 @@ L=J_z,\qquad
 C(t)=c e^{-\nu t},
 ```
 
-with \(c=0.10\) and \(\nu=1.50\). The system Hamiltonian is zero and the
-initial state is \(|+x\rangle^{\otimes N}\), with \(N=3\). For this commuting,
+with $c=0.10$ and $\nu=1.50$. The system Hamiltonian is zero and the
+initial state is $|+x\rangle^{\otimes N}$, with $N=3$. For this commuting,
 real-correlation problem,
 
 ```math
@@ -31,7 +31,7 @@ g(t)=\frac{c}{\nu^2}
 ```
 
 This analytic signal tests both non-Markovian memory and the normalization
-convention without constructing a full \(2^N\) density matrix.
+convention without constructing a full $2^N$ density matrix.
 
 ## HOPS calculation
 
@@ -80,7 +80,7 @@ time, not the estimator.
 
 ## HEOM comparison
 
-The deterministic reference uses the same \(J_z\), \(c\), and \(\nu\):
+The deterministic reference uses the same $J_z$, $c$, and $\nu$:
 
 ```julia
 system = PIModel(basis, ())

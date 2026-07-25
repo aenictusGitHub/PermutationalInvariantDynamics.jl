@@ -7,11 +7,11 @@ Source: [`pbody_pair_processes.jl`](pbody_pair_processes.jl)
 For `N = 6`, the example combines a two-body Ising interaction, local pair
 loss, and collective pair loss. Representative terms are
 
-\[
+```math
 \sum_{i<j}\sigma_i^z\sigma_j^z
 =\frac{J_z^2-NI}{2},\qquad
 L_{ij}=\sigma_i^-\sigma_j^- .
-\]
+```
 
 The precise factor in the collective identity follows the `Jz` convention in
 the source.

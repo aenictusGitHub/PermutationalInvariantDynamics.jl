@@ -15,6 +15,13 @@
                    matrixfree.plan,matrixfree.operator)
         @test PID._operator_basis(source)===basis
     end
+    @test matrixfree.plan.tracevec isa SparseVector
+    @test nnz(matrixfree.plan.tracevec)==
+        sum(length,matrixfree.plan.basis.patterns;init=0)
+    @test collect(matrixfree.plan.tracevec)==
+        PID._trace_vector(basis,eltype(matrixfree))
+    @test PID._operator_trace_functional(matrixfree)===
+        matrixfree.plan.tracevec
     @test PID._operator_trace_vector(matrixfree)===matrixfree.plan.tracevec
     @test PID._operator_trace_vector(specialized)===specialized.plan.tracevec
     @test PID._linear_operator_workspace(matrixfree) isa LiouvillianWorkspace

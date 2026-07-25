@@ -79,7 +79,7 @@ prepared applications, and introduces no ODE solver dependency.
 ![Expected prepared parameter-scan figure](../docs/src/assets/example_figures/parameter_scan.png)
 
 The left panel compares the streamed PI stationary values with the exact
-thermal fraction \(r/(1+r)\); the right panel shows the residual returned at
+thermal fraction $r/(1+r)$; the right panel shows the residual returned at
 each continuation point. The plot reuses the callback records and does not
 retain or recompute stationary states. It is a default-grid illustration:
 the pointwise solver assertions and exact curve are the quantitative checks.

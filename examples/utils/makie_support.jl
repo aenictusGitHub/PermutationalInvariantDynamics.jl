@@ -6,12 +6,18 @@ export makie_available, makie_module, save_example_figure,
        figure_output_directory
 
 const _load_error = Ref{Any}(nothing)
+const _render_enabled = lowercase(strip(get(
+    ENV, "PID_EXAMPLE_RENDER", "1"))) ∉ ("0", "false", "no", "off")
 const _declared_in_active_project = let project=Base.active_project()
     project!==nothing&&isfile(project)&&
         haskey(get(TOML.parsefile(project),"deps",Dict{String,Any}()),
                "CairoMakie")
 end
-const _available = if !_declared_in_active_project
+const _available = if !_render_enabled
+    _load_error[]=ArgumentError(
+        "example rendering was disabled by PID_EXAMPLE_RENDER")
+    false
+elseif !_declared_in_active_project
     _load_error[]=ArgumentError(
         "CairoMakie is not a direct dependency of the active project")
     false
@@ -28,7 +34,7 @@ end
 
 """Return whether CairoMakie is available in the active Julia environment."""
 function makie_available()
-    _available || @info(
+    _available || !_render_enabled || @info(
         "Makie figure skipped. Prepare the examples environment with " *
         "`julia --project=examples -e 'using Pkg; " *
         "Pkg.develop(path=\".\"); Pkg.instantiate()'`.",

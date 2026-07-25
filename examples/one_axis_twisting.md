@@ -7,16 +7,16 @@ Source: [`one_axis_twisting.jl`](one_axis_twisting.jl)
 For `N = 8` spins initially polarized along `+x`, the one-axis-twisting
 Hamiltonian is
 
-\[
+```math
 H=\chi J_z^2.
-\]
+```
 
 It is collective and conserves total spin, so evolution remains in the fully
 symmetric sector. A standard analytic benchmark is
 
-\[
+```math
 \langle J_x(t)\rangle=\frac N2[\cos(\chi t)]^{N-1}.
-\]
+```
 
 ## Solution
 

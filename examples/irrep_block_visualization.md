@@ -23,24 +23,24 @@ local dissipative channels.
 
 For four qubits the partitions are
 
-\[
+```math
 (4,0),\qquad(3,1),\qquad(2,2).
-\]
+```
 
 Their U(2) irrep dimensions are 5, 3, and 1, so their vectorized PI-coordinate
 dimensions are 25, 9, and 1. The displayed state is computed from independent
 emission and pumping,
 
-\[
+```math
 \mathcal L\rho=
 \gamma_\downarrow\sum_i\mathcal D[\sigma_-^{(i)}]\rho+
 \gamma_\uparrow\sum_i\mathcal D[\sigma_+^{(i)}]\rho.
-\]
+```
 
 `stationary_state` solves the PI stationary equation. The script separately
 constructs the exact iid thermal state with one-site populations
-\(\gamma_\downarrow/(\gamma_\downarrow+\gamma_\uparrow)\) and
-\(\gamma_\uparrow/(\gamma_\downarrow+\gamma_\uparrow)\), then checks the two
+$\gamma_\downarrow/(\gamma_\downarrow+\gamma_\uparrow)$ and
+$\gamma_\uparrow/(\gamma_\downarrow+\gamma_\uparrow)$, then checks the two
 density operators agree. Every retained Schur sector has nonzero population.
 
 ```julia
@@ -51,19 +51,19 @@ state_structure = schur_block_structure(
 The state diagram is diagonal because a PI operator has no coherences between
 inequivalent Schur irreps. Here each diagonal tile is the physical trace weight
 
-\[
+```math
 p_\nu=f^\nu\mathrm{tr}(\rho_\nu),
 \qquad \sum_\nu p_\nu=1,
-\]
+```
 
 not a matrix norm. The script displays the raw populations inside the tiles
 and verifies their sum. For comparison, the coefficient-block norm obeys
 
-\[
+```math
 \|C_\nu\|_F^2=f^\nu\|\rho_\nu\|_F^2,
-\]
+```
 
-where \(\rho_\nu=C_\nu/\sqrt{f^\nu}\) is the physical block and \(f^\nu\)
+where $\rho_\nu=C_\nu/\sqrt{f^\nu}$ is the physical block and $f^\nu$
 is its symmetric-group multiplicity. The general
 [visualization guide](../docs/src/schur_visualization.md) describes these
 alternative metrics and representations.
@@ -71,7 +71,7 @@ alternative metrics and representations.
 The diagram above each diagonal tile is the Young shape of the corresponding
 partition. It is not one arbitrarily chosen standard tableau: the PI block
 sums over that label, and the SVG tooltip reports the exact number
-\(f^\nu\) of standard tableaux together with the U(2) irrep dimension.
+$f^\nu$ of standard tableaux together with the U(2) irrep dimension.
 
 ## Multiplicity-compressed density spectrum
 
@@ -91,8 +91,8 @@ sector. Each tooltip records the partition, the within-sector eigenvalue
 index, and the exact symmetric-group degeneracy. A displayed `×g` label is an
 exact multiplicity, not a marker weight.
 
-Only \(5+3+1=9\) block eigenvalues are stored and plotted, while their exact
-multiplicities represent all \(2^4=16\) Hilbert-space eigenvalues. The example
+Only $5+3+1=9$ block eigenvalues are stored and plotted, while their exact
+multiplicities represent all $2^4=16$ Hilbert-space eigenvalues. The example
 checks the multiplicity-weighted trace and the retained Hilbert dimension.
 It never requests `expanded=true`, so no exponentially large eigenvalue list
 is constructed. Rendering reuses the precomputed spectrum and performs no
@@ -102,20 +102,20 @@ density-spectrum conventions.
 
 ## Collective versus local decay
 
-Both generators use the one-qubit lowering matrix \(\sigma_-\), but define
+Both generators use the one-qubit lowering matrix $\sigma_-$, but define
 different Lindblad terms:
 
-\[
+```math
 \mathcal L_{\rm coll}\rho
 =0.2\,\mathcal D\!\left[\sum_i\sigma_-^{(i)}\right]\rho,
-\]
+```
 
 and
 
-\[
+```math
 \mathcal L_{\rm local}\rho
 =0.2\sum_i\mathcal D\!\left[\sigma_-^{(i)}\right]\rho.
-\]
+```
 
 The collective operator is block diagonal in the Schur label, so every active
 superoperator tile lies on the diagonal. The local channel is an unresolved
@@ -125,8 +125,8 @@ tile is therefore active.
 
 For superoperators, diagram rows label the output sector and columns label the
 input sector. A tile at `(row = lambda, column = nu)` measures the Frobenius
-norm of the map from the vectorized coefficient block \(C_\nu\) to
-\(C_\lambda\). It is a coupling-strength diagnostic, not a transition
+norm of the map from the vectorized coefficient block $C_\nu$ to
+$C_\lambda$. It is a coupling-strength diagnostic, not a transition
 probability or an eigenvalue. Young diagrams on the left and top axes give the
 corresponding output and input partition shapes; hover tooltips retain their
 exact tableau multiplicities.
@@ -141,7 +141,7 @@ compile(model; backend=:matrixfree)
 
 An exact Frobenius block norm can be accumulated by applying the matrix-free
 map to each PI coordinate vector. Here that means only
-\(25+9+1=35\) applications. No dense `35 × 35` Liouvillian is retained.
+$25+9+1=35$ applications. No dense `35 × 35` Liouvillian is retained.
 For a larger problem the same method needs one application per PI coordinate,
 so block visualization is a setup diagnostic to compute once and reuse, not
 an operation for every integration step. It never probes a `2^N` state or a
