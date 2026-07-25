@@ -193,6 +193,8 @@ Related workflows are:
   `PI system + HEOMBaths -> HEOMPlan -> HEOMWorkspace -> solve`.
 - Bosonic PI--HOPS:
   `PI Hamiltonian + HOPSBaths -> HOPSPlan -> HOPSWorkspace -> trajectories`.
+- Ideal hierarchy control:
+  `local/PI unitary or Platonic constructor -> HierarchyPulseSequence -> HEOM/HOPS`.
 
 Prefer `compile`, `solve_dynamics`, `stationary_state`,
 `liouvillian_spectrum`, `diagnostics`, and `recommend_solver` in research
@@ -263,7 +265,7 @@ pattern.
   `highlevel.jl`, `scans.jl`, and `convergence.jl`.
 - Non-Markovian and stochastic systems: `pseudomodes.jl`,
   `global_pseudomodes.jl`, `composite.jl`, `heom.jl`, `hops.jl`,
-  `trajectories.jl`,
+  `hierarchy_pulses.jl`, `trajectories.jl`,
   `composite_trajectories.jl`,
   `weak_pi_trajectories.jl`, `diffusive.jl`, `adaptive_ensembles.jl`, and
   `distributed_api.jl`.
@@ -814,6 +816,19 @@ irreps.
 - Linear-HOPS roots are unnormalized. The physical estimator averages
   `|psi_0><psi_0|` before any normalization. Never normalize individual roots
   or average amplitudes when reconstructing a density operator.
+- `PIUnitaryPulse` retains physical Schur blocks, never a PI-coordinate
+  Kronecker superoperator. `HierarchyPulseSequence` events use `(start,stop]`
+  semantics and act on every HEOM ADO or HOPS auxiliary while preserving
+  hierarchy and colored-noise memory. Pulse-aware drivers split a fixed step
+  at the exact event time. Never emulate a pulse by restarting from only the
+  HEOM root or HOPS root pseudo-ket.
+- `tetrahedral_pulse_sequence`, `octahedral_pulse_sequence`, and
+  `icosahedral_pulse_sequence` implement the published 24-, 48-, and
+  120-event Eulerian Cayley words with one equal free interval before every
+  pulse and the cyclic pulse at the final endpoint. Each schedule retains
+  references to only two immutable axis--angle pulses. These constructors
+  model instantaneous control; finite-pulse Eulerian robustness requires an
+  explicit time-dependent control Hamiltonian.
 - The built-in stationary complex Ornstein--Uhlenbeck path is valid only when
   every retained exponential coefficient is real and nonnegative. A general
   complex/signed decomposition requires an explicit deterministic noise

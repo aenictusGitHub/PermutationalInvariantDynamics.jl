@@ -11,6 +11,8 @@ const TEST_FILES=(
     (:lowering,"test_algebra_liouvillian.jl"),
     (:lowering,"test_collective_fastpaths.jl"),
     (:lowering,"test_fixed_gain_fusion.jl"),
+    (:lowering,"test_liouvillian_properties.jl"),
+    (:lowering,"test_physical_metamorphic.jl"),
     (:lowering,"test_threaded_apply.jl"),
     (:representation,"test_schur_construction.jl"),
     (:representation,"test_spin_conveniences.jl"),
@@ -29,6 +31,7 @@ const TEST_FILES=(
     (:dynamics,"test_evolution.jl"),
     (:nonmarkovian,"test_heom.jl"),
     (:nonmarkovian,"test_hops.jl"),
+    (:nonmarkovian,"test_hierarchy_pulses.jl"),
     (:nonmarkovian,"test_pseudomodes.jl"),
     (:nonmarkovian,"test_global_pseudomodes.jl"),
     (:nonmarkovian,"test_composite.jl"),
@@ -41,6 +44,7 @@ const TEST_FILES=(
     (:stochastic,"test_weak_pi_trajectories.jl"),
     (:stochastic,"test_diffusive.jl"),
     (:stochastic,"test_adaptive_ensembles.jl"),
+    (:stochastic,"test_stochastic_cross_route.jl"),
     (:dynamics,"test_streaming_output.jl"),
     (:nonmarkovian,"test_correlations.jl"),
     (:workflows,"test_research_utilities.jl"),
@@ -58,6 +62,7 @@ const TEST_FILES=(
     (:analysis,"test_information.jl"),
     (:analysis,"test_nonstabilizerness.jl"),
     (:analysis,"test_large_multiplicity_analysis.jl"),
+    (:analysis,"test_analysis_dense_oracles.jl"),
     (:visualization,"test_phase_space.jl"),
     (:visualization,"test_qudit_phase_space.jl"),
     (:representation,"test_scalar_generic.jl"),
@@ -72,6 +77,19 @@ const TEST_FILES=(
     (:visualization,"test_visualization.jl"),
     (:visualization,"test_spectral_visualization.jl"),
 )
+
+const LISTED_TEST_FILES=last.(TEST_FILES)
+const DISCOVERED_TEST_FILES=sort!(filter(
+    name->startswith(name,"test_")&&endswith(name,".jl"),
+    readdir(@__DIR__)))
+length(unique(LISTED_TEST_FILES))==length(LISTED_TEST_FILES)||
+    error("TEST_FILES contains duplicate entries")
+missing_test_files=setdiff(DISCOVERED_TEST_FILES,LISTED_TEST_FILES)
+stale_test_files=setdiff(LISTED_TEST_FILES,DISCOVERED_TEST_FILES)
+isempty(missing_test_files)||error(
+    "test files are not registered in TEST_FILES: $missing_test_files")
+isempty(stale_test_files)||error(
+    "TEST_FILES contains missing files: $stale_test_files")
 
 const AVAILABLE_TEST_GROUPS=sort!(unique(first.(TEST_FILES)))
 const REQUESTED_TEST_GROUPS=let raw=strip(get(ENV,"PID_TEST_GROUPS",""))

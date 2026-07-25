@@ -20,6 +20,7 @@ script. Then choose the closest workflow below.
 | Couple the ensemble to one shared cavity | [`global_pseudomode_cavity.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/global_pseudomode_cavity.jl) | Collective Tavis--Cummings dynamics, factor reductions, and a mode-cutoff diagnostic |
 | Add a finite-memory bath | [`pi_heom.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/pi_heom.jl) | Exactly scaled ADOs, depth convergence, fixed-capacity matrix-RHS actions, SciML construction, and a block-preconditioned steady solve |
 | Unravel one shared structured bath | [`pi_hops.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/pi_hops.jl) | Direct-sum Schur pure-state hierarchy, stationary colored noise, and an HEOM/analytic comparison |
+| Apply ideal pulses without losing bath memory | [`nonmarkovian_dynamical_decoupling.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/nonmarkovian_dynamical_decoupling.jl) | CPMG and UDD4 sequences acting on every HEOM ADO and HOPS auxiliary, with a full-line Lorentzian filter reference |
 | Use a non-Hermitian HOPS coupling | [`pi_hops_collective_emission.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/pi_hops_collective_emission.jl) | Exact one-excitation collective emission, hard-depth comparison, prescribed noise, and conditioned hierarchy application |
 | Start HOPS from a mixed state | [`pi_hops_mixed_multibath.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/pi_hops_mixed_multibath.jl) | Multiple shared baths, Schur spectral sampling, reusable batch workspaces, Monte Carlo errors, and pruning metadata |
 | Embed one truncated pseudomode per spin | [`all_to_all_xx_spin_local_pseudomodes.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/all_to_all_xx_spin_local_pseudomodes.jl) | Uniform-all-pair PI supersites, trajectory estimates, spin-only negativity, a strong-parity-reduced x-GHZ steady solve, and cutoff checks |
@@ -211,6 +212,31 @@ collective-dephasing coherence. Its shared bath is PI on every noise
 realization. Independent local colored noises are not replaced by a common
 noise and remain an HEOM or local-pseudomode problem. See
 [PI--HOPS](hops.md).
+
+`examples/nonmarkovian_dynamical_decoupling.jl` applies ideal CPMG and UDD4
+$\pi_x$ pulses to the same finite-memory pure-dephasing problem. A
+`PIUnitaryPulse` is lifted from one local matrix, and
+`HierarchyPulseSequence` makes the event convention explicit. Each event
+acts on every HEOM ADO or HOPS auxiliary, so neither the hierarchy nor the
+colored noise is restarted at a pulse. The script follows Colin Read's
+September 2023 report *Studying pure dephasing and dynamical decoupling:
+comparison of the HOPS method with exact analytical solutions* and targets
+its Figs. 8--9 qualitatively.
+
+The comparison deliberately uses the exact one-pole correlation
+$C(t)=c\exp[-(\kappa-i\omega_c)t]$. For the report's Lorentzian, that
+exponential follows from extending the frequency integral from the positive
+half-line to the whole real line. PI--HOPS and PI--HEOM therefore converge to
+the full-line filter reference, not to the distinct physical
+positive-frequency Lorentzian model. The latter is nevertheless plotted as
+an analytical comparison using two converged half-line quadrature orders; it
+is not attributed to either hierarchy. The executable uses ideal
+instantaneous pulses because the supplied report does not specify the
+Gaussian pulse width or bare qubit frequency needed to reproduce its
+finite-pulse HOPS calculation. Its same construction remains PI for $N>1$
+under one collective bath coupling $Q=2J_z$ and the global pulse
+$U_x^{\otimes N}$; this common-bath extension is not a model of independent
+local colored noises.
 
 Two additional scripts expose the specialized HOPS interfaces.
 `examples/pi_hops_collective_emission.jl` uses the non-Hermitian coupling

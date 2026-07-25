@@ -28,6 +28,9 @@ Initial public release candidate.
   scaled hierarchy coordinates, stationary Ornstein--Uhlenbeck noise,
   preallocated RK4 workspaces, and unnormalized density-ensemble
   reconstruction.
+- Hierarchy-preserving ideal control pulses for PI--HEOM and PI--HOPS,
+  including the published tetrahedral, octahedral, and icosahedral Eulerian
+  dynamical-decoupling sequences.
 - Exact paired PI supersites for identical systems with one or more
   finite-cutoff local pseudomodes, including automatic system-term lifting,
   matrix-free model construction, product states, and prepared mode tracing.

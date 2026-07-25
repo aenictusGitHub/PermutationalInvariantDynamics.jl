@@ -27,6 +27,54 @@ steady state by total-spin sector and physical Schur-block eigenvalue. Plotting
 therefore reuses the same checked numerical arrays rather than introducing a
 second calculation path.
 
+## Non-Markovian dynamical decoupling
+
+`examples/nonmarkovian_dynamical_decoupling.jl` follows Colin Read,
+*Studying pure dephasing and dynamical decoupling: comparison of the HOPS
+method with exact analytical solutions* (report, September 2023). The
+supplied report gives no journal venue or DOI, so this example is described as
+a literature-motivated validation rather than attributed to an unverified
+publication.
+
+The script targets the CPMG and UDD4 comparisons of Figs. 8--9 qualitatively.
+It uses the report's Eq. (15) parameters
+
+```math
+\omega_c=10,\qquad
+\kappa=1.5,\qquad
+g=\frac{1.6\,\omega_c^2}{\kappa},\qquad
+T_c=\frac{2}{7\omega_c},
+```
+
+and the associated one-pole correlation
+
+```math
+C_{\mathrm{full}}(t)=
+\frac{g\kappa}{2}\exp[-(\kappa-i\omega_c)t].
+```
+
+This correlation is the whole-real-line transform of the Lorentzian. It is
+not the exact positive-frequency transform of the physical zero-temperature
+spectral density. Both PI--HEOM and PI--HOPS are therefore checked against
+the exact ideal-pulse filter function for $C_{\mathrm{full}}$, not against the
+positive-frequency curve. The latter is plotted from a separate half-line
+Gauss--Legendre quadrature, with two quadrature orders compared as its
+deterministic convergence check. Hierarchy depth, time-step, and trajectory
+convergence cannot remove the model difference between these two curves.
+
+`PIUnitaryPulse` applies each ideal $\pi_x$ rotation to every HEOM ADO or HOPS
+auxiliary, and `HierarchyPulseSequence` defines the ordered event times.
+Consequently the comparison retains hierarchy memory and one continuous
+colored-noise realization across every pulse. The report's finite Gaussian
+pulse cannot be reproduced literally because its pulse width and bare qubit
+frequency are not specified; the example instead uses the instantaneous
+pulses of the analytical derivation in Eqs. (47)--(52).
+
+The checked default is the report's single qubit. A fully symmetric $N>1$
+extension remains exact in PI coordinates for one common bath coupled through
+$Q=2J_z$ and one collective pulse $U_x^{\otimes N}$. It is not a validation
+of independent local non-Markovian environments.
+
 ## Quantum-trajectory literature benchmarks
 
 `examples/quantum_trajectories.jl` turns independent spontaneous emission into

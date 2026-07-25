@@ -408,6 +408,57 @@ heom_evolve!(destination, plan, hierarchy0, (0.0, 0.5);
              steps=200, workspace=evolution_work)
 ```
 
+### Instantaneous PI pulses
+
+An ideal system unitary can be applied to every ADO without restarting the
+hierarchy:
+
+```julia
+pulse = PIUnitaryPulse(basis, exp(-im * pi * spin.jx))
+sequence = HierarchyPulseSequence(pulse_times, pulse)
+states = heom_time_evolution(
+    plan, rho0, times;
+    steps_per_interval=8, pulses=sequence)
+```
+
+For a local matrix, `PIUnitaryPulse` prepares the Schur blocks of
+$U^{\otimes N}$ directly; a compatible PI operator is also accepted. At an
+event, every ADO is mapped as
+$\rho_{\boldsymbol n}\mapsto U\rho_{\boldsymbol n}U^\dagger$. The root and
+all memory auxiliaries therefore receive the same physical system pulse.
+
+The fixed-step driver splits an interval exactly at each event and uses the
+half-open convention `(start, stop]`. A pulse at a saved endpoint is applied
+before that hierarchy state is saved and cannot be applied twice by adjacent
+intervals. `apply_hierarchy_pulse!` exposes the same in-place operation for a
+caller-managed `HEOMState` and task-owned `HEOMEvolutionWorkspace`.
+
+Published tetrahedral, octahedral, and icosahedral Eulerian sequences are
+available directly:
+
+```julia
+tau0 = 0.01
+tedd = tetrahedral_pulse_sequence(basis, tau0)
+oedd = octahedral_pulse_sequence(basis, tau0; cycles=2)
+iedd = icosahedral_pulse_sequence(
+    basis, tau0; start_time=0.5)
+```
+
+These constructors reproduce the TEDD, OEDD, and IEDD Cayley-graph words of
+24, 48, and 120 events from Read, Serrano-Ensástiga, and Martin,
+[*Quantum* **9**, 1661 (2025)](https://doi.org/10.22331/q-2025-03-12-1661).
+Only two immutable axis--angle pulses are prepared for each schedule and
+shared by reference across every event. The positive `tau0` is the free
+interval before each pulse, so one cycle ends after `24tau0`, `48tau0`, or
+`120tau0`, with the final cyclic pulse included at that endpoint.
+
+The constructors implement ideal global spin rotations for any local spin
+dimension. Their universal first-order single-spin ranges are respectively
+$d\leq3$, $d\leq4$, and $d\leq6$. Claims about cancellation of interacting
+spin Hamiltonians additionally require the anisotropy conditions stated in
+the paper. A purely global rotation cannot remove a nontrivial rotationally
+invariant interaction.
+
 The plan scalar type is promoted from the prepared system, couplings, both
 sets of bath coefficients, and frequencies. Sources, destinations, times, and step counts
 must be representable without narrowing; compiled matrix-free system scratch
@@ -559,6 +610,11 @@ The complete executable dephasing comparison is in
 [`examples/pi_heom.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/pi_heom.jl),
 with discussion in
 [`examples/pi_heom.md`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/pi_heom.md).
+The ideal-pulse extension in
+[`examples/nonmarkovian_dynamical_decoupling.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/nonmarkovian_dynamical_decoupling.jl)
+applies CPMG and UDD4 events to every ADO, compares the reduced state with
+PI--HOPS, and distinguishes the full-line one-pole Lorentzian correlation
+from the physical positive-frequency spectral-density integral.
 
 ## API
 

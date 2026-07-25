@@ -127,6 +127,56 @@ checks by default that its right correlation is the conjugate of its left
 correlation. A nonzero HEOM residue requires a separate Markovian unraveling
 and is therefore rejected by this linear colored-noise backend.
 
+## Instantaneous PI pulses
+
+An ideal control pulse must act on every hierarchy auxiliary; restarting
+`hops_trajectory` after a pulse would reset both the auxiliaries and their
+colored-noise memory and therefore solve a different problem. Prepare the
+Schur action once:
+
+```julia
+Ux = exp(-im * pi * spin.jx)
+pulse = PIUnitaryPulse(basis, Ux)
+sequence = HierarchyPulseSequence(pulse_times, pulse)
+
+result = hops_average(
+    plan, psi0, times, trajectories;
+    dt=0.005, pulses=sequence, return_info=true)
+```
+
+A local `d`-by-`d` matrix is lifted as $U^{\otimes N}$ without constructing
+that full-Hilbert matrix. A compatible `PIOperator` may be supplied instead.
+The pulse maps every auxiliary pseudo-ket as
+$\psi_{\boldsymbol n}\mapsto U\psi_{\boldsymbol n}$, while the OU state and
+the other hierarchy data remain continuous.
+
+Pulse times are finite, ordered events. The driver splits a nominal step
+exactly at every event. It applies events in `(start, stop]`, so a pulse at a
+saved time is applied before saving and is not applied again in the adjacent
+interval. Equal-time events are applied in input order. These are ideal
+instantaneous unitaries; a finite pulse shape requires a model and evolution
+route that explicitly represent its time-dependent Hamiltonian rather than
+interpreting its duration as zero.
+
+The published Platonic Eulerian sequences can be prepared without transcribing
+their Cayley-graph words:
+
+```julia
+tedd = tetrahedral_pulse_sequence(basis, tau0)
+oedd = octahedral_pulse_sequence(basis, tau0)
+iedd = icosahedral_pulse_sequence(basis, tau0)
+```
+
+They contain 24, 48, and 120 equally spaced ideal pulses per cycle. The
+constructors reuse their two immutable global rotation generators and return
+ordinary `HierarchyPulseSequence` objects, so the same schedules work with
+both PI--HOPS and PI--HEOM. See
+[Read, Serrano-Ensástiga, and Martin, *Quantum* **9**, 1661
+(2025)](https://doi.org/10.22331/q-2025-03-12-1661) for the decoupling and
+anisotropy conditions. The instantaneous hierarchy backend does not by itself
+simulate the finite-width control Hamiltonians considered in the robustness
+analysis.
+
 ## What “PI HOPS” means
 
 The exact reduced backend applies to a shared bath whose system coupling
@@ -303,7 +353,7 @@ derivation and are not inferred by the backend.
 
 ## Runnable examples
 
-The HOPS examples separate three complementary workflows:
+The HOPS examples separate four complementary workflows:
 
 - [`examples/pi_hops.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/pi_hops.jl)
   introduces a pure-state, one-bath collective-dephasing calculation and
@@ -318,14 +368,27 @@ The HOPS examples separate three complementary workflows:
   shared baths. It demonstrates `hops_initial_ensemble`,
   `HOPSBatchWorkspace`, `return_info=true`, Monte Carlo error contraction,
   and setup-only importance pruning.
+- [`examples/nonmarkovian_dynamical_decoupling.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/nonmarkovian_dynamical_decoupling.jl)
+  applies ideal CPMG and UDD4 pulses to every hierarchy auxiliary without
+  restarting the colored noise. It compares the HOPS ensemble with PI--HEOM
+  and the exact filter function for the same full-line one-pole Lorentzian
+  correlation, alongside a separately integrated positive-frequency
+  analytical curve.
 
-All three scripts retain numerical assertions when CairoMakie is unavailable.
+All four scripts retain numerical assertions when CairoMakie is unavailable.
 With the examples environment they also render the already validated arrays;
 plotting never triggers another HOPS solve.
 
 ## API
 
 ```@docs
+PIUnitaryPulse
+HierarchyPulseSequence
+platonic_pulse_sequence
+tetrahedral_pulse_sequence
+octahedral_pulse_sequence
+icosahedral_pulse_sequence
+apply_hierarchy_pulse!
 HOPSBath
 HOPSPlan
 HOPSWorkspace

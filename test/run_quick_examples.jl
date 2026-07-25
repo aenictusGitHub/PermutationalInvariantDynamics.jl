@@ -11,6 +11,7 @@ const QUICK_EXAMPLES = (
     "qubit_population_dynamics",
     "global_pseudomode_cavity",
     "pi_heom",
+    "nonmarkovian_dynamical_decoupling",
 )
 
 function _parse_shard(value::AbstractString)

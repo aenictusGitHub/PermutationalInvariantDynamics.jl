@@ -46,6 +46,7 @@ include("solver_algorithms.jl")
 include("krylov.jl")
 include("krylov_extensions.jl")
 include("symmetries.jl")
+include("hierarchy_pulses.jl")
 include("spectra.jl")
 include("evans.jl")
 include("local_factor_trace.jl")
@@ -172,6 +173,9 @@ export Partition, partitions, weight, length_nonzero, removable_corners,
        HOPSBath, HOPSPlan, HOPSWorkspace, HOPSBatchWorkspace,
        HOPSRootKet, HOPSTrajectory, HOPSEnsembleResult,
        HOPSInitialEnsemble, hops_initial_ensemble,
+       PIUnitaryPulse, HierarchyPulseSequence, apply_hierarchy_pulse!,
+       platonic_pulse_sequence, tetrahedral_pulse_sequence,
+       octahedral_pulse_sequence, icosahedral_pulse_sequence,
        hops_number_auxiliaries, hops_multiindices, hops_hierarchy_metadata,
        hops_auxiliary_importances, hops_coordinate_scale,
        hops_rhs!, hops_trajectory, hops_density, hops_average,

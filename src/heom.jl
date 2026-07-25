@@ -1331,6 +1331,43 @@ function _check_heom_evolution_aliases(work::HEOMEvolutionWorkspace,
     nothing
 end
 
+function _apply_heom_hierarchy_pulse_unchecked!(
+        data,plan::HEOMPlan,pulse::PIUnitaryPulse,
+        work::HEOMEvolutionWorkspace)
+    intermediate=work.k1
+    destination=work.temporary
+    npi=plan.npi
+    for ado in 1:heom_number_ados(plan)
+        base=(ado-1)*npi
+        for sector in eachindex(plan.basis.sectors)
+            dimension=length(plan.basis.patterns[sector])
+            first_coordinate=base+plan.basis.offsets[sector]
+            range=first_coordinate:first_coordinate+dimension^2-1
+            source_block=reshape(view(data,range),dimension,dimension)
+            intermediate_block=reshape(
+                view(intermediate,range),dimension,dimension)
+            destination_block=reshape(
+                view(destination,range),dimension,dimension)
+            unitary=pulse.blocks[sector]
+            mul!(intermediate_block,unitary,source_block)
+            mul!(destination_block,intermediate_block,adjoint(unitary))
+        end
+    end
+    copyto!(data,destination)
+    data
+end
+
+function _apply_heom_hierarchy_pulse!(
+        data::AbstractVector,plan::HEOMPlan,pulse::PIUnitaryPulse,
+        work::HEOMEvolutionWorkspace)
+    _check_hierarchy_pulse(pulse,plan.basis,plan.Ttype)
+    _check_heom_evolution_workspace(work,plan)
+    _check_heom_evolution_aliases(work,data)
+    length(data)==size(plan,1)||throw(DimensionMismatch(
+        "HEOM hierarchy pulse source has the wrong coordinate dimension"))
+    _apply_heom_hierarchy_pulse_unchecked!(data,plan,pulse,work)
+end
+
 function _heom_system_apply_batch!(destination,system,source,time,parameters,work)
     if work===nothing
         if system isa LiouvillianPlan
@@ -1922,6 +1959,24 @@ function show(io::IO,state::HEOMState)
 end
 
 """
+    apply_hierarchy_pulse!(state, pulse, workspace)
+
+Apply a prepared instantaneous system unitary to every ADO of `state`,
+in place, as `rho_n -> U*rho_n*U'`. The hierarchy scaling and every
+system--bath memory auxiliary are retained. `workspace` must be a task-owned
+[`HEOMEvolutionWorkspace`](@ref) for the same plan.
+"""
+function apply_hierarchy_pulse!(
+        state::HEOMState,pulse::PIUnitaryPulse,
+        workspace::HEOMEvolutionWorkspace)
+    state.plan===workspace.application.plan||throw(ArgumentError(
+        "HEOM state and pulse workspace use different plans"))
+    _apply_heom_hierarchy_pulse!(
+        state.data,state.plan,pulse,workspace)
+    state
+end
+
+"""
     heom_initial_state(plan, rho)
 
 Construct the standard factorized HEOM initial condition: the root ADO is
@@ -2075,19 +2130,41 @@ function _heom_checked_time(::Type{R},time,description) where R
     converted
 end
 
+function _heom_rk4_step!(destination,plan::HEOMPlan,time,endpoint,
+                         parameters,work::HEOMEvolutionWorkspace)
+    step=endpoint-time
+    midpoint=time+step/2
+    apply!(work.k1,plan,destination,time,parameters,work.application)
+    copyto!(work.k2,work.k1)
+    @. work.temporary=destination+(step/2)*work.k1
+    apply!(work.k1,plan,work.temporary,midpoint,parameters,work.application)
+    @. work.k2=work.k2+2work.k1
+    @. work.temporary=destination+(step/2)*work.k1
+    apply!(work.k1,plan,work.temporary,midpoint,parameters,work.application)
+    @. work.k2=work.k2+2work.k1
+    @. work.temporary=destination+step*work.k1
+    apply!(work.k1,plan,work.temporary,endpoint,parameters,work.application)
+    @. work.k2=work.k2+work.k1
+    @. destination=destination+(step/6)*work.k2
+    destination
+end
+
 """
     heom_evolve!(destination, plan, source, tspan;
-                 steps=256, parameters=nothing, workspace=nothing)
+                 steps=256, parameters=nothing, workspace=nothing,
+                 pulses=nothing)
 
 Propagate a hierarchy with preallocated, three-scratch fixed-step RK4.
 `destination` may alias `source`, but it must not alias workspace scratch; one
 `HEOMEvolutionWorkspace` may be reused sequentially. Increase `steps` and
 `plan.max_depth` independently to check integration and hierarchy truncation
-errors.
+errors. A [`HierarchyPulseSequence`](@ref) passed as `pulses` splits RK4
+steps exactly at every event in `(tspan[1], tspan[2]]`; events at the final
+time are applied before return.
 """
 function heom_evolve!(destination::AbstractVector,plan::HEOMPlan,
                       source::AbstractVector,tspan;steps::Integer=256,
-                      parameters=nothing,workspace=nothing)
+                      parameters=nothing,workspace=nothing,pulses=nothing)
     length(source)==size(plan,1)&&length(destination)==size(plan,1)||
         throw(DimensionMismatch("HEOM state vector has the wrong length"))
     steps>0||throw(ArgumentError("steps must be positive"))
@@ -2102,12 +2179,19 @@ function heom_evolve!(destination::AbstractVector,plan::HEOMPlan,
         throw(ArgumentError(
             "HEOM evolution permits exact in-place use but not partially overlapping source and destination storage"))
     length(tspan)==2||throw(ArgumentError("tspan must contain exactly two times"))
-    work=workspace===nothing ? HEOMEvolutionWorkspace(plan) :
-                              _check_heom_evolution_workspace(workspace,plan)
-    _check_heom_evolution_aliases(work,destination)
     R=_real_float_type(plan.Ttype)
     t0=_heom_checked_time(R,first(tspan),"initial time")
     t1=_heom_checked_time(R,last(tspan),"final time")
+    sequence=if pulses===nothing
+        nothing
+    else
+        pulses isa HierarchyPulseSequence||throw(ArgumentError(
+            "pulses must be a HierarchyPulseSequence or nothing"))
+        checked=_check_hierarchy_pulse_sequence(
+            pulses,plan.basis,plan.Ttype)
+        _hierarchy_pulse_event_range(checked,t0,t1)
+        checked
+    end
     step_count=Int(steps)
     step_count_R=_heom_checked_time(R,step_count,"step count")
     interval=t1-t0
@@ -2116,23 +2200,53 @@ function heom_evolve!(destination::AbstractVector,plan::HEOMPlan,
     step=interval/step_count_R
     !iszero(interval)&&iszero(step)&&throw(ArgumentError(
         "HEOM evolution step underflows in $R; use fewer steps or wider precision"))
+    work=workspace===nothing ? HEOMEvolutionWorkspace(plan) :
+                              _check_heom_evolution_workspace(workspace,plan)
+    _check_heom_evolution_aliases(work,destination)
     destination===source||copyto!(destination,source)
+    events=sequence===nothing ? nothing :
+        _hierarchy_pulse_event_range(sequence,t0,t1)
+    if events===nothing||isempty(events)
+        # Preserve the historical arithmetic order exactly when no pulse is
+        # active in this span. In particular, the nominal `step` is reused at
+        # the final RK stage instead of recomputing it from the endpoint.
+        for step_index in 0:step_count-1
+            time=t0+R(step_index)*step
+            midpoint=time+step/2
+            endpoint=step_index==step_count-1 ? t1 : time+step
+            apply!(work.k1,plan,destination,time,parameters,work.application)
+            copyto!(work.k2,work.k1)
+            @. work.temporary=destination+(step/2)*work.k1
+            apply!(work.k1,plan,work.temporary,midpoint,parameters,work.application)
+            @. work.k2=work.k2+2work.k1
+            @. work.temporary=destination+(step/2)*work.k1
+            apply!(work.k1,plan,work.temporary,midpoint,parameters,work.application)
+            @. work.k2=work.k2+2work.k1
+            @. work.temporary=destination+step*work.k1
+            apply!(work.k1,plan,work.temporary,endpoint,parameters,work.application)
+            @. work.k2=work.k2+work.k1
+            @. destination=destination+(step/6)*work.k2
+        end
+        return destination
+    end
+    event_index=first(events)
+    last_event=last(events)
     for step_index in 0:step_count-1
         time=t0+R(step_index)*step
-        midpoint=time+step/2
         endpoint=step_index==step_count-1 ? t1 : time+step
-        apply!(work.k1,plan,destination,time,parameters,work.application)
-        copyto!(work.k2,work.k1)
-        @. work.temporary=destination+(step/2)*work.k1
-        apply!(work.k1,plan,work.temporary,midpoint,parameters,work.application)
-        @. work.k2=work.k2+2work.k1
-        @. work.temporary=destination+(step/2)*work.k1
-        apply!(work.k1,plan,work.temporary,midpoint,parameters,work.application)
-        @. work.k2=work.k2+2work.k1
-        @. work.temporary=destination+step*work.k1
-        apply!(work.k1,plan,work.temporary,endpoint,parameters,work.application)
-        @. work.k2=work.k2+work.k1
-        @. destination=destination+(step/6)*work.k2
+        segment_start=time
+        while event_index<=last_event&&
+                sequence.times[event_index]<=endpoint
+            event_time=sequence.times[event_index]
+            event_time>segment_start&&_heom_rk4_step!(
+                destination,plan,segment_start,event_time,parameters,work)
+            _apply_heom_hierarchy_pulse_unchecked!(
+                destination,plan,sequence.pulses[event_index],work)
+            segment_start=event_time
+            event_index+=1
+        end
+        segment_start<endpoint&&_heom_rk4_step!(
+            destination,plan,segment_start,endpoint,parameters,work)
     end
     destination
 end
@@ -2159,13 +2273,17 @@ end
 
 """
     heom_time_evolution(plan, initial, times;
-                        steps_per_interval=64, parameters=nothing)
+                        steps_per_interval=64, parameters=nothing,
+                        pulses=nothing)
 
 Return saved hierarchy states at ordered `times`, reusing one RK4 workspace.
 `initial` may be a `PIState` (factorized hierarchy) or an `HEOMState`.
+Pulse-time states follow the post-pulse convention of
+[`HierarchyPulseSequence`](@ref).
 """
 function heom_time_evolution(plan::HEOMPlan,initial,times;
-                             steps_per_interval::Integer=64,parameters=nothing)
+                             steps_per_interval::Integer=64,parameters=nothing,
+                             pulses=nothing)
     steps_per_interval>0||throw(ArgumentError(
         "steps_per_interval must be positive"))
     state=initial isa PIState ? heom_initial_state(plan,initial) : copy(initial)
@@ -2182,7 +2300,7 @@ function heom_time_evolution(plan::HEOMPlan,initial,times;
     for index in 2:length(values)
         values[index]==values[index-1]||heom_evolve!(
             state,plan,state,(values[index-1],values[index]);
-            steps=steps_per_interval,parameters,workspace)
+            steps=steps_per_interval,parameters,workspace,pulses)
         push!(output,copy(state))
     end
     output

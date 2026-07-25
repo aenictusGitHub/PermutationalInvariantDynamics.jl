@@ -85,7 +85,12 @@ threading contracts.
   hierarchy, RK4, coupling, and colored-noise scratch and is task-local.
   Linear-HOPS roots are unnormalized; physical densities are averages of
   their unnormalized outer products. Independent local colored noises are
-  outside this exact PI path representation.
+  outside this exact PI path representation. `PIUnitaryPulse` and
+  `HierarchyPulseSequence` are prepared, read-only event data shared by the
+  HEOM and HOPS drivers; `tetrahedral_pulse_sequence`,
+  `octahedral_pulse_sequence`, and `icosahedral_pulse_sequence` prepare the
+  published Eulerian Platonic schedules from two shared generators.
+  Task-owned hierarchy workspaces perform the pulse applications.
 - `QuditHusimiPlan` retains dense coherent vectors for a fixed point/sector
   set and exact basis. Reuse it across states; setup can dominate for many
   large irreps. `ConvergenceStudyResult` retains every requested refinement

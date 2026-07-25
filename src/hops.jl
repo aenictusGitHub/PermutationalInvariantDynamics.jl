@@ -817,6 +817,42 @@ function _check_hops_workspace(work::HOPSWorkspace,plan::HOPSPlan)
     work
 end
 
+"""
+    apply_hierarchy_pulse!(workspace, pulse)
+
+Apply a prepared instantaneous system unitary to every HOPS auxiliary ket
+stored in `workspace.current`, in place. The colored-noise state and all
+hierarchy auxiliaries are retained; `workspace.stage` is reused as
+task-owned scratch.
+"""
+@inline function _apply_hops_hierarchy_pulse_unchecked!(
+        work::HOPSWorkspace,pulse::PIUnitaryPulse)
+    plan=work.plan
+    _hops_apply_blocks_batch!(
+        work.stage,pulse.blocks,work.current,plan.offsets,
+        one(plan.Ttype),zero(plan.Ttype))
+    copyto!(work.current,work.stage)
+    work
+end
+
+function apply_hierarchy_pulse!(
+        work::HOPSWorkspace,pulse::PIUnitaryPulse)
+    plan=work.plan
+    if _real_float_type(plan.Ttype)===BigFloat&&
+            (precision(BigFloat)!=plan.precision_bits||
+             rounding(BigFloat)!=plan.rounding_mode)
+        return _hops_with_precision(plan) do
+            apply_hierarchy_pulse!(work,pulse)
+        end
+    end
+    _check_hops_workspace(work,plan)
+    _check_hierarchy_pulse(
+        pulse,plan.basis,plan.Ttype;
+        precision_bits=plan.precision_bits,
+        rounding_mode=plan.rounding_mode)
+    _apply_hops_hierarchy_pulse_unchecked!(work,pulse)
+end
+
 function _hops_check_noise(plan::HOPSPlan,noise)
     length(noise)==length(plan.coupling_blocks)||throw(DimensionMismatch(
         "HOPS noise must contain one value per bath"))
@@ -1276,16 +1312,16 @@ end
 
 function _hops_integrate!(record!,plan::HOPSPlan,
         initial::WeakPIPseudoKet,times,dt,work::HOPSWorkspace,
-        rng::AbstractRNG,noise_provider)
+        rng::AbstractRNG,noise_provider,pulses)
     _check_hops_workspace(work,plan)
     _hops_validate_initial(plan,initial)
     _hops_integrate_data!(
-        record!,plan,initial.data,times,dt,work,rng,noise_provider)
+        record!,plan,initial.data,times,dt,work,rng,noise_provider,pulses)
 end
 
 function _hops_integrate_data!(record!,plan::HOPSPlan,
         initial_data::AbstractVector,times,dt,work::HOPSWorkspace,
-        rng::AbstractRNG,noise_provider)
+        rng::AbstractRNG,noise_provider,sequence)
     _check_hops_workspace(work,plan)
     length(initial_data)==plan.nweak||throw(DimensionMismatch(
         "HOPS initial root has the wrong direct-sum dimension"))
@@ -1303,17 +1339,23 @@ function _hops_integrate_data!(record!,plan::HOPSPlan,
         _hops_external_noise!(
             work.noise_start,noise_provider,times[1],plan)
     end
+    events=sequence===nothing ? (1:0) :
+        _hierarchy_pulse_event_range(sequence,first(times),last(times))
+    event_index=first(events)
+    last_event=last(events)
     record!(view(work.current,:,1),work.noise_start,1)
     time=times[1]
     for output_index in 2:length(times)
         target=times[output_index]
         while time<target
+            step_target=sequence!==nothing&&event_index<=last_event ?
+                min(target,sequence.times[event_index]) : target
             h,lands_on_target=_trajectory_step_to_target(
-                time,target,dt)
+                time,step_target,dt)
             h>zero(h)||throw(ErrorException(
                 "HOPS integration step did not advance time"))
             midpoint=time+h/2
-            endpoint=lands_on_target ? target : time+h
+            endpoint=lands_on_target ? step_target : time+h
             if builtin
                 _hops_advance_ou!(
                     work.ou_midpoint,work.ou_current,h/2,plan,rng)
@@ -1339,6 +1381,12 @@ function _hops_integrate_data!(record!,plan::HOPSPlan,
                 copyto!(work.ou_current,work.ou_endpoint)
             end
             time=endpoint
+            while sequence!==nothing&&event_index<=last_event&&
+                    sequence.times[event_index]==time
+                _apply_hops_hierarchy_pulse_unchecked!(
+                    work,sequence.pulses[event_index])
+                event_index+=1
+            end
         end
         # For a repeated output time the start buffer still contains its
         # current value. For an advanced interval, endpoint is the current
@@ -1352,7 +1400,7 @@ end
 
 """
     hops_trajectory(plan, initial, times; dt, rng=Random.default_rng(),
-                    noise=nothing, workspace=nothing,
+                    noise=nothing, workspace=nothing, pulses=nothing,
                     memory_budget=512MiB)
 
 Integrate one fixed-step linear PI-HOPS path. `initial` is a normalized
@@ -1367,12 +1415,14 @@ half step. Otherwise pass a deterministic provider supporting either
 provider must represent the covariance of the *total* bath correlation and
 must return the same value whenever queried at the same time. Adaptive
 integration is intentionally absent because rejected stochastic steps need a
-consistent OU/Brownian bridge.
+consistent OU/Brownian bridge. A [`HierarchyPulseSequence`](@ref) passed as
+`pulses` splits steps exactly at every event; roots saved at a pulse time are
+post-pulse.
 """
 function hops_trajectory(plan::HOPSPlan,
         initial::WeakPIPseudoKet{R},times;dt::Real,
         rng::AbstractRNG=Random.default_rng(),noise=nothing,
-        workspace=nothing,
+        workspace=nothing,pulses=nothing,
         memory_budget=_DEFAULT_HIGHLEVEL_MEMORY_BUDGET) where
         R<:AbstractFloat
     if R===BigFloat&&
@@ -1380,11 +1430,22 @@ function hops_trajectory(plan::HOPSPlan,
              rounding(BigFloat)!=plan.rounding_mode)
         return _hops_with_precision(plan) do
             hops_trajectory(
-                plan,initial,times;dt,rng,noise,workspace,memory_budget)
+                plan,initial,times;
+                dt,rng,noise,workspace,pulses,memory_budget)
         end
     end
     ts,step=_hops_times(times,R,dt)
     _hops_validate_initial(plan,initial)
+    sequence=if pulses===nothing
+        nothing
+    else
+        pulses isa HierarchyPulseSequence||throw(ArgumentError(
+            "pulses must be a HierarchyPulseSequence or nothing"))
+        _check_hierarchy_pulse_sequence(
+            pulses,plan.basis,plan.Ttype;
+            precision_bits=plan.precision_bits,
+            rounding_mode=plan.rounding_mode)
+    end
     output_entries=BigInt(plan.nweak)*BigInt(length(ts))+
                    BigInt(length(plan.coupling_blocks))*BigInt(length(ts))
     estimate=_hops_workspace_bytes(plan)+
@@ -1411,7 +1472,8 @@ function hops_trajectory(plan::HOPSPlan,
         copyto!(view(noise_history,:,index),current_noise)
         nothing
     end
-    _hops_integrate!(record!,plan,initial,ts,step,work,rng,noise)
+    _hops_integrate!(
+        record!,plan,initial,ts,step,work,rng,noise,sequence)
     HOPSTrajectory(ts,states,noise_history)
 end
 
@@ -1681,23 +1743,25 @@ end
 
 function _hops_path_accumulate!(
         recorder::_HOPSStateAccumulatorRecorder,
-        plan,initial,times,dt,work,rng)
-    _hops_integrate!(recorder,plan,initial,times,dt,work,rng,nothing)
+        plan,initial,times,dt,work,rng,pulses)
+    _hops_integrate!(
+        recorder,plan,initial,times,dt,work,rng,nothing,pulses)
     nothing
 end
 
 function _hops_path_accumulate!(recorder::_HOPSStateAccumulatorRecorder,
-        plan,initial::HOPSInitialEnsemble,times,dt,work,rng)
+        plan,initial::HOPSInitialEnsemble,times,dt,work,rng,pulses)
     _hops_sample_initial!(work.root_buffer,initial,plan.offsets,rng)
     _hops_integrate_data!(
-        recorder,plan,work.root_buffer,times,dt,work,rng,nothing)
+        recorder,plan,work.root_buffer,times,dt,work,rng,nothing,pulses)
     nothing
 end
 
 """
     hops_average(plan, initial, times, trajectories;
                  dt, seed=0, threaded=false, workspace=nothing,
-                 return_info=false, memory_budget=512MiB)
+                 return_info=false, pulses=nothing,
+                 memory_budget=512MiB)
     hops_average(plan, rho::PIState, times, trajectories; ...)
 
 Average independent linear PI-HOPS paths without retaining their hierarchy or
@@ -1727,7 +1791,7 @@ function hops_average(plan::HOPSPlan,
         initial::Union{WeakPIPseudoKet{R},HOPSInitialEnsemble{R}},
         times,trajectories::Integer;
         dt::Real,seed::Integer=0,threaded::Bool=false,workspace=nothing,
-        return_info::Bool=false,
+        return_info::Bool=false,pulses=nothing,
         memory_budget=_DEFAULT_HIGHLEVEL_MEMORY_BUDGET) where
         R<:AbstractFloat
     if R===BigFloat&&
@@ -1736,7 +1800,7 @@ function hops_average(plan::HOPSPlan,
         return _hops_with_precision(plan) do
             hops_average(
                 plan,initial,times,trajectories;
-                dt,seed,threaded,workspace,return_info,memory_budget)
+                dt,seed,threaded,workspace,return_info,pulses,memory_budget)
         end
     end
     trajectories isa Bool&&throw(ArgumentError(
@@ -1747,6 +1811,16 @@ function hops_average(plan::HOPSPlan,
         "HOPS trajectory count exceeds Int indexing"))
     count=Int(trajectories)
     ts,step=_hops_times(times,R,dt)
+    sequence=if pulses===nothing
+        nothing
+    else
+        pulses isa HierarchyPulseSequence||throw(ArgumentError(
+            "pulses must be a HierarchyPulseSequence or nothing"))
+        _check_hierarchy_pulse_sequence(
+            pulses,plan.basis,plan.Ttype;
+            precision_bits=plan.precision_bits,
+            rounding_mode=plan.rounding_mode)
+    end
     if initial isa WeakPIPseudoKet
         _hops_validate_initial(plan,initial)
     else
@@ -1829,7 +1903,7 @@ function hops_average(plan::HOPSPlan,
         for trajectory in 1:count
             Random.seed!(rng,seeds[trajectory])
             _hops_path_accumulate!(
-                recorder,plan,initial,ts,step,work,rng)
+                recorder,plan,initial,ts,step,work,rng,sequence)
         end
     else
         @sync for worker_index in 1:available_workers
@@ -1844,7 +1918,7 @@ function hops_average(plan::HOPSPlan,
                             worker_index:available_workers:count
                         Random.seed!(rng,seeds[trajectory])
                         _hops_path_accumulate!(
-                            recorder,plan,initial,ts,step,work,rng)
+                            recorder,plan,initial,ts,step,work,rng,sequence)
                     end
                 end
             end

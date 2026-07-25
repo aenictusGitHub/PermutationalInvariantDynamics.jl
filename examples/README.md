@@ -92,6 +92,7 @@ snapshot.
 | `parameter_scan.jl` | [Prepared parameter scans](parameter_scan.md) | Compiled scalar-rate families, recycled GMRES continuation, restart, streaming diagnostics, and batched sensitivities |
 | `pi_heom.jl` | [PI--HEOM](pi_heom.md) | Exactly scaled hierarchy, analytic dephasing, depth comparisons, fixed-capacity matrix-RHS actions, SciML construction, and block-preconditioned GMRES |
 | `pi_hops.jl` | [PI--HOPS collective dephasing](pi_hops.md) | Direct-sum Schur pure-state hierarchy, stationary colored-noise ensemble, analytic coherence, and deterministic PI--HEOM comparison |
+| `nonmarkovian_dynamical_decoupling.jl` | [Non-Markovian dynamical decoupling](nonmarkovian_dynamical_decoupling.md) | Ideal CPMG and UDD4 pulses applied to every HOPS auxiliary and HEOM ADO, compared with full-line and positive-frequency Lorentzian filter curves |
 | `pi_hops_collective_emission.jl` | [PI--HOPS collective emission](pi_hops_collective_emission.md) | Non-Hermitian shared-bath coupling, exact one-excitation hierarchy closure, prescribed-noise paths, and conditioned `hops_rhs!` |
 | `pi_hops_mixed_multibath.jl` | [Mixed-state, multi-bath PI--HOPS](pi_hops_mixed_multibath.md) | Schur spectral initialization, reusable batch workspaces, Monte Carlo diagnostics, hierarchy metadata, and importance pruning |
 | `interacting_boundary_time_crystal.jl` | [Interacting boundary time crystal](interacting_boundary_time_crystal.md) | Nonlinear collective-spin slow modes |
@@ -137,7 +138,7 @@ Use `--project=examples` for the Makie-enabled literature scripts: the
 literature examples in the table, including the correlated-superradiance and
 dissipative-collective-spin-pairing validations,
 `quantum_trajectories.jl`, `meanfield_time_crystal.jl`, `pi_heom.jl`,
-the three `pi_hops*.jl` scripts, and
+`nonmarkovian_dynamical_decoupling.jl`, the three `pi_hops*.jl` scripts, and
 `qudit_coherent_state_q_distribution.jl`. The local-pseudomode example is the permutation-invariant
 uniform-all-pair specialization of the manuscript's nearest-neighbour model,
 not a reproduction of its spatial chain. Each paired guide describes its
