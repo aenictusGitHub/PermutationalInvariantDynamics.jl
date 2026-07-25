@@ -12,7 +12,12 @@ L = liouvillian(m; representation=:matrixfree)
 rho = iid_pure_state(b, ComplexF64[0,1]); y = similar(rho.data)
 w = EvolutionWorkspace(rho)
 sx = ComplexF64[0 1;1 0]
-SUITE["matrix-free apply N=20 d=2"] = @benchmarkable mul!($y,$L,$rho.data)
+SUITE["compatibility matrix-free mul! N=20 d=2"] =
+    @benchmarkable mul!($y,$L,$rho.data)
+prepared_model=compile(m;backend=:matrixfree)
+prepared_work=LiouvillianWorkspace(prepared_model)
+SUITE["prepared matrix-free apply N=20 d=2"] = @benchmarkable apply!(
+    $y,$prepared_model,$rho.data,0.0,nothing,$prepared_work)
 
 # The sole `(N,0)` sector has a dedicated occupation-number collective lift.
 # Keep its reusable plan setup, sparse-first assembly, fixed sparse/matrix-free
@@ -146,14 +151,56 @@ projector_work=SymmetryProjectorWorkspace(projector)
 SUITE["symmetry projector workspace N=20 d=2"] = @benchmarkable apply!(
     $y,$projector,$rho.data,$projector_work)
 SUITE["low-storage RK4 step N=20 d=2"] = @benchmarkable evolve!($y,$L,$rho.data,(0.0,0.01);steps=1,workspace=$w)
+floquet_period=0.2
+floquet_h_rate=let period=floquet_period
+    (time,parameters)->0.07sin(2pi*time/period)
+end
+floquet_jump_rate=let period=floquet_period
+    (time,parameters)->0.2+0.03cos(2pi*time/period)
+end
+floquet_model=PIModel(b,(
+    LocalHamiltonian(sx;rate=floquet_h_rate),
+    LocalJump(sm;rate=floquet_jump_rate)))
+SUITE["matrix-free FloquetMap setup N=20 steps=16"] =
+    @benchmarkable floquet_map(
+        $floquet_model,$floquet_period;steps=16)
+prepared_floquet=floquet_map(
+    floquet_model,floquet_period;steps=16)
+floquet_work=FloquetWorkspace(prepared_floquet)
+floquet_input=copy(rho.data)
+floquet_output=similar(floquet_input)
+SUITE["preallocated Floquet period N=20 steps=16"] =
+    @benchmarkable apply!(
+        $floquet_output,$prepared_floquet,$floquet_input,$floquet_work)
+floquet_batch_input=hcat(
+    floquet_input,0.5floquet_input,complex.(reverse(floquet_input)))
+floquet_batch_output=similar(floquet_batch_input)
+floquet_batch_work=FloquetBatchWorkspace(
+    prepared_floquet,3;mode=:forward)
+SUITE["preallocated Floquet batch width=3 N=20 steps=16"] =
+    @benchmarkable apply!(
+        $floquet_batch_output,$prepared_floquet,
+        $floquet_batch_input,$floquet_batch_work)
 SUITE["collective moments N=20 d=2"] = @benchmarkable collective_moments($rho,$sx)
 SUITE["QFI N=20 d=2"] = @benchmarkable qfi($rho,$sx)
 SUITE["entropy N=20 d=2"] = @benchmarkable von_neumann_entropy($rho)
+analysis_observable=CollectiveObservablePlan(b,sx)
+SUITE["prepared collective moments N=20 d=2"] =
+    @benchmarkable collective_moments($rho,$analysis_observable)
+SUITE["prepared QFI N=20 d=2"] =
+    @benchmarkable qfi($rho,$analysis_observable)
 negativity_basis=PIBasis(10,2)
 negativity_state=maximally_mixed_state(negativity_basis)
-SUITE["cached direct qubit negativity N=10 k=5"] = @benchmarkable PermutationalInvariantDynamics._qubit_negativity(
+negativity_plan=ReductionPlan(negativity_basis,5)
+negativity_work=ReductionWorkspace(
+    negativity_plan,negativity_state;mode=:negativity)
+SUITE["public prepared qubit negativity N=10 k=5"] =
+    @benchmarkable negativity(
+        $negativity_state,5;
+        plan=$negativity_plan,workspace=$negativity_work)
+SUITE["internal cached qubit negativity oracle N=10 k=5"] = @benchmarkable PermutationalInvariantDynamics._qubit_negativity(
     $negativity_state,5)
-SUITE["uncached direct qubit negativity oracle N=10 k=5"] = @benchmarkable PermutationalInvariantDynamics._qubit_negativity(
+SUITE["internal uncached qubit negativity oracle N=10 k=5"] = @benchmarkable PermutationalInvariantDynamics._qubit_negativity(
     $negativity_state,5,nothing)
 bt = PIBasis(6,2); rt = iid_pure_state(bt,ComplexF64[0,1]); mt = PIModel(bt,[LocalJump(sm)])
 SUITE["100 PI trajectories N=6 d=2"] = @benchmarkable quantum_trajectories($mt,$rt,[0.0,0.2],100;dt=0.01,seed=1)
@@ -162,8 +209,107 @@ trajectory_batch=TrajectoryBatchWorkspace(trajectory_plan,rt;workers=1)
 SUITE["100 reused-plan PI trajectories N=6 d=2"] = @benchmarkable quantum_trajectories(
     $trajectory_plan,$rt,[0.0,0.2],100;dt=0.01,seed=1,workspace=$trajectory_batch)
 
+# Composite deterministic and stochastic paths keep every factor action
+# matrix-free.  Explicit matrix-RHS and trajectory workspaces expose the
+# reusable hot paths separately from their setup.
+composite_factor=FiniteOperatorBasis(3;label=:benchmark_auxiliary)
+composite_basis=CompositePIBasis(bt,composite_factor)
+composite_system=compile(mt;backend=:matrixfree)
+composite_term=local_superoperator_term(
+    composite_basis,1,composite_system)
+SUITE["composite superoperator setup N=6 auxiliary=3"] =
+    @benchmarkable CompositeSuperoperator(
+        $composite_basis,$composite_term)
+composite_operator=CompositeSuperoperator(
+    composite_basis,composite_term)
+composite_source=randn(
+    MersenneTwister(0x434f4d50),ComplexF64,length(composite_basis))
+composite_output=similar(composite_source)
+composite_work=CompositeSuperoperatorWorkspace(
+    composite_operator,composite_source)
+SUITE["composite prepared apply N=6 auxiliary=3"] =
+    @benchmarkable apply!(
+        $composite_output,$composite_operator,$composite_source,
+        0.0,nothing,$composite_work)
+composite_batch_source=hcat(
+    composite_source,0.5composite_source,
+    complex.(reverse(composite_source)))
+composite_batch_output=similar(composite_batch_source)
+composite_batch_work=CompositeSuperoperatorBatchWorkspace(
+    composite_operator;capacity=3)
+SUITE["composite prepared batch width=3 N=6 auxiliary=3"] =
+    @benchmarkable apply!(
+        $composite_batch_output,$composite_operator,
+        $composite_batch_source,0.0,nothing,$composite_batch_work)
+SUITE["composite prepared adjoint batch width=3 N=6 auxiliary=3"] =
+    @benchmarkable apply_adjoint!(
+        $composite_batch_output,$composite_operator,
+        $composite_batch_source,0.0,nothing,$composite_batch_work)
+composite_mode_state=zeros(ComplexF64,3,3)
+composite_mode_state[1,1]=1
+composite_state=composite_tensor_state(
+    composite_basis,rt,composite_mode_state)
+composite_mode_lowering=ComplexF64[
+    0 1 0
+    0 0 sqrt(2)
+    0 0 0
+]
+composite_jump=CompositeJumpChannel(
+    composite_basis,
+    1=>collective_operator(bt,sm),
+    2=>composite_mode_lowering;
+    rate=0.03)
+SUITE["composite trajectory plan N=6 auxiliary=3"] =
+    @benchmarkable CompositeTrajectoryPlan(
+        $composite_basis,$composite_jump)
+composite_trajectory_plan=CompositeTrajectoryPlan(
+    composite_basis,composite_jump)
+composite_trajectory_batch=CompositeTrajectoryBatchWorkspace(
+    composite_trajectory_plan,composite_state;workers=1)
+SUITE["16 reused composite trajectories N=6 auxiliary=3"] =
+    @benchmarkable quantum_trajectories(
+        $composite_trajectory_plan,$composite_state,[0.0,0.02],16;
+        dt=0.005,seed=0x434f4d50,
+        workspace=$composite_trajectory_batch)
+
 bq = PIBasis(8,3); rhoq = maximally_mixed_state(bq)
-SUITE["qudit reduced state N=8 d=3"] = @benchmarkable reduced_state($rhoq,4)
+SUITE["setup-inclusive qudit reduced state N=8 d=3"] =
+    @benchmarkable reduced_state($rhoq,4)
+prepared_reduction_basis=PIBasis(3,3)
+prepared_reduction_local=ComplexF64[
+    0.50 0.06+0.02im 0.03-0.01im
+    0.06-0.02im 0.30 0.04+0.01im
+    0.03+0.01im 0.04-0.01im 0.20
+]
+prepared_reduction_state=iid_state(
+    prepared_reduction_basis,prepared_reduction_local)
+SUITE["packed qudit reduction plan N=3 d=3 k=2"] =
+    @benchmarkable ReductionPlan($prepared_reduction_basis,2)
+prepared_reduction_plan=ReductionPlan(prepared_reduction_basis,2)
+prepared_reduction_work=ReductionWorkspace(
+    prepared_reduction_plan,prepared_reduction_state;mode=:reduction)
+prepared_reduction_output=PIState(
+    prepared_reduction_plan.output_basis)
+SUITE["packed qudit reduced_state! N=3 d=3 k=2"] =
+    @benchmarkable reduced_state!(
+        $prepared_reduction_output,$prepared_reduction_state,
+        $prepared_reduction_plan,$prepared_reduction_work;check=false)
+local_factor_basis=PIBasis(3,4)
+local_factor_ket=ComplexF64[
+    sqrt(0.6),0,0,exp(0.3im)*sqrt(0.4)]
+local_factor_state=iid_pure_state(
+    local_factor_basis,local_factor_ket)
+SUITE["local-factor trace plan N=3 dims=(2,2)"] =
+    @benchmarkable LocalFactorTracePlan(
+        $local_factor_state,(2,2);traced_factor=2)
+local_factor_plan=LocalFactorTracePlan(
+    local_factor_state,(2,2);traced_factor=2)
+local_factor_work=LocalFactorTraceWorkspace(local_factor_plan)
+local_factor_output=PIState(local_factor_plan.output_basis)
+SUITE["local-factor prepared trace N=3 dims=(2,2)"] =
+    @benchmarkable local_factor_trace!(
+        $local_factor_output,$local_factor_state,
+        $local_factor_plan,$local_factor_work;check=false)
 
 # A basis-owned coefficient cache amortizes exact-rational one-box CG setup
 # across several one-body and Appendix-D geometries.  The uncached entries
@@ -181,6 +327,35 @@ SUITE["p-body geometry uncached N=6 d=3 p=3"] = @benchmarkable PBodyGeometry(
     $coefficient_basis,3;T=Float64)
 SUITE["p-body geometry cached N=6 d=3 p=3"] = @benchmarkable PBodyGeometry(
     $coefficient_basis,3;T=Float64,coefficient_cache=$coefficient_cache)
+
+# A nontrivial qutrit Appendix-D model keeps packed geometry in the actual
+# compiled kernels.  Setup and warmed forward/adjoint actions are separate
+# from the primitive geometry benchmarks above.
+qutrit_pbody_basis=PIBasis(3,3)
+qutrit_lowering=ComplexF64[0 1 0;0 0 1;0 0 0]
+qutrit_x=qutrit_lowering+adjoint(qutrit_lowering)
+qutrit_pair_hamiltonian=kron(qutrit_x,qutrit_x)
+qutrit_pair_jump=kron(qutrit_lowering,qutrit_lowering)
+qutrit_pbody_model=PIModel(qutrit_pbody_basis,(
+    PBodyHamiltonian(qutrit_pair_hamiltonian,2;rate=0.08),
+    LocalPBodyJump(qutrit_pair_jump,2;rate=0.05)))
+SUITE["packed qutrit p-body plan N=3 d=3 p=2"] =
+    @benchmarkable compile(
+        $qutrit_pbody_model;backend=:matrixfree,memory_budget=Inf)
+qutrit_pbody_prepared=compile(
+    qutrit_pbody_model;backend=:matrixfree,memory_budget=Inf)
+qutrit_pbody_work=LiouvillianWorkspace(qutrit_pbody_prepared)
+qutrit_pbody_input=randn(
+    MersenneTwister(0x5032),ComplexF64,length(qutrit_pbody_basis))
+qutrit_pbody_output=similar(qutrit_pbody_input)
+SUITE["packed qutrit p-body apply N=3 d=3 p=2"] =
+    @benchmarkable apply!(
+        $qutrit_pbody_output,$qutrit_pbody_prepared,$qutrit_pbody_input,
+        0.0,nothing,$qutrit_pbody_work)
+SUITE["packed qutrit p-body adjoint N=3 d=3 p=2"] =
+    @benchmarkable apply_adjoint!(
+        $qutrit_pbody_output,$qutrit_pbody_prepared,
+        $qutrit_pbody_input,0.0,nothing,$qutrit_pbody_work)
 
 # A certified Cartesian parity block lowers the common fixed Schur kernels
 # once. Hot response/Krylov applications then use only reduced scratch.
@@ -213,25 +388,140 @@ heom_bath=HEOMBath(heom_coupling,[0.18,0.07],[1.1,1.1];
 heom_plan=HEOMPlan(heom_model,heom_bath;max_depth=3,scaling=:scaled)
 heom_rng=MersenneTwister(0x6e10)
 heom_source=randn(heom_rng,ComplexF64,size(heom_plan,1))
-heom_destination=similar(heom_source);heom_work=HEOMWorkspace(heom_plan)
+heom_destination=similar(heom_source)
+heom_ados=heom_number_ados(heom_plan)
+SUITE["PI-HEOM plan setup N=6 poles=2 depth=3"] =
+    @benchmarkable HEOMPlan(
+        $heom_model,$heom_bath;max_depth=3,scaling=:scaled)
+SUITE["PI-HEOM workspace setup N=6 poles=2 depth=3"] =
+    @benchmarkable HEOMWorkspace($heom_plan;batch_columns=3)
+heom_work=HEOMWorkspace(heom_plan;batch_columns=3)
 apply!(heom_destination,heom_plan,heom_source,heom_work)
-SUITE["packed PI-HEOM apply N=6 K=2 D=3"] = @benchmarkable apply!(
+SUITE["packed PI-HEOM apply N=6 poles=2 depth=3 ados=$heom_ados"] = @benchmarkable apply!(
     $heom_destination,$heom_plan,$heom_source,$heom_work)
-SUITE["guarded Schur-shift HEOM preconditioner setup N=6 K=2 D=3"] =
+SUITE["packed PI-HEOM adjoint N=6 poles=2 depth=3 ados=$heom_ados"] =
+    @benchmarkable apply_adjoint!(
+        $heom_destination,$heom_plan,$heom_source,$heom_work)
+heom_batch_source=hcat(
+    heom_source,0.5heom_source,complex.(reverse(heom_source)))
+heom_batch_destination=similar(heom_batch_source)
+SUITE["packed PI-HEOM batch width=3 N=6 poles=2 depth=3"] =
+    @benchmarkable apply!(
+        $heom_batch_destination,$heom_plan,$heom_batch_source,$heom_work)
+SUITE["guarded Schur-shift HEOM preconditioner setup N=6 poles=2 depth=3"] =
     @benchmarkable heom_block_preconditioner($heom_plan;
         operator_scale=1.0,expected_reuses=20,warn_unamortized=false)
 heom_preconditioner=heom_block_preconditioner(heom_plan;
     operator_scale=1.0,expected_reuses=20,warn_unamortized=false)
 heom_preconditioned=similar(heom_source)
-SUITE["guarded Schur-shift HEOM preconditioner apply N=6 K=2 D=3"] =
+SUITE["guarded Schur-shift HEOM preconditioner apply N=6 poles=2 depth=3"] =
     @benchmarkable ldiv!(
         $heom_preconditioned,$heom_preconditioner,$heom_source)
 heom_lu_preconditioner=heom_block_preconditioner(heom_plan;
     operator_scale=1.0,shift_backend=:lu,expected_reuses=20,
     warn_unamortized=false)
-SUITE["duplicate-aware LU HEOM preconditioner apply N=6 K=2 D=3"] =
+SUITE["duplicate-aware LU HEOM preconditioner apply N=6 poles=2 depth=3"] =
     @benchmarkable ldiv!(
         $heom_preconditioned,$heom_lu_preconditioner,$heom_source)
+
+# Local and shared pseudomodes use distinct PI representations.  Keep model
+# construction, prepared generator application, and factor trace separate so
+# cutoff/setup costs are not attributed to repeated dynamics or observables.
+local_mode=BosonicPseudomode(
+    1;frequency=0.73,damping=0.31,label=:local_benchmark)
+local_coupling=PseudomodeCoupling(
+    sm;mode=:local_benchmark,strength=0.16)
+SUITE["local pseudomode supersite N=3 nmax=1"] =
+    @benchmarkable pseudomode_supersite(3,2,$local_mode)
+local_site=pseudomode_supersite(3,2,local_mode)
+local_zero_hamiltonian=zeros(ComplexF64,2,2)
+SUITE["local pseudomode model N=3 nmax=1"] =
+    @benchmarkable pseudomode_model(
+        $local_site,$local_zero_hamiltonian;couplings=$local_coupling)
+local_embedding=pseudomode_model(
+    local_site,local_zero_hamiltonian;couplings=local_coupling)
+SUITE["local pseudomode matrix-free compile N=3 nmax=1"] =
+    @benchmarkable compile(
+        $local_embedding.model;backend=:matrixfree,memory_budget=Inf)
+local_prepared=compile(
+    local_embedding.model;backend=:matrixfree,memory_budget=Inf)
+local_state=pseudomode_product_state(
+    local_embedding.supersite,ComplexF64[0,1])
+local_output=similar(local_state.data)
+local_work=LiouvillianWorkspace(local_prepared)
+SUITE["local pseudomode prepared apply N=3 nmax=1"] =
+    @benchmarkable apply!(
+        $local_output,$local_prepared,$local_state.data,
+        0.0,nothing,$local_work)
+SUITE["local pseudomode trace plan N=3 nmax=1"] =
+    @benchmarkable pseudomode_trace_plan($local_embedding.supersite)
+local_trace_plan=pseudomode_trace_plan(local_embedding.supersite)
+local_trace_work=LocalFactorTraceWorkspace(local_trace_plan)
+local_trace_output=PIState(local_trace_plan.output_basis)
+SUITE["local pseudomode prepared trace N=3 nmax=1"] =
+    @benchmarkable trace_pseudomodes!(
+        $local_trace_output,$local_state,$local_embedding.supersite,
+        $local_trace_plan,$local_trace_work;check=false)
+
+global_mode=BosonicPseudomode(
+    2;frequency=0.73,damping=0.31,label=:shared_benchmark)
+global_coupling=PseudomodeCoupling(
+    sm;mode=:shared_benchmark,strength=0.16)
+global_system=PIModel(PIBasis(6,2),(
+    LocalJump(sm;rate=0.04),))
+SUITE["global pseudomode model N=6 nmax=2"] =
+    @benchmarkable global_pseudomode_model(
+        $global_system,$global_mode;couplings=$global_coupling)
+global_embedding=global_pseudomode_model(
+    global_system,global_mode;couplings=global_coupling)
+global_state=pseudomode_product_state(
+    global_embedding,ComplexF64[0,1])
+global_output=similar(global_state.data)
+global_work=global_pseudomode_workspace(global_embedding)
+SUITE["global pseudomode prepared apply N=6 nmax=2"] =
+    @benchmarkable apply!(
+        $global_output,$global_embedding,$global_state.data,$global_work)
+SUITE["global pseudomode prepared adjoint N=6 nmax=2"] =
+    @benchmarkable apply_adjoint!(
+        $global_output,$global_embedding,$global_state.data,$global_work)
+global_system_output=PIState(global_embedding.system_basis)
+global_mode_output=zeros(
+    ComplexF64,global_mode.levels,global_mode.levels)
+SUITE["global pseudomode system trace N=6 nmax=2"] =
+    @benchmarkable trace_pseudomodes!(
+        $global_system_output,$global_state,$global_embedding)
+SUITE["global pseudomode mode trace N=6 nmax=2"] =
+    @benchmarkable global_pseudomode_state!(
+        $global_mode_output,$global_state,$global_embedding)
+
+# HOPS propagates one direct-sum Schur pseudo-ket per hierarchy node.  The
+# conditioned RHS is the hot deterministic kernel; the short ensemble entry
+# additionally exposes path/workspace reuse without claiming convergence.
+hops_hamiltonian=collective_operator(heom_basis,0.11 .* heom_spin.jx)
+hops_coupling=collective_operator(heom_basis,heom_spin.jz)
+hops_bath=HOPSBath(
+    hops_coupling,[0.18,0.05],[1.1,1.7])
+SUITE["PI-HOPS plan setup N=6 poles=2 depth=3"] =
+    @benchmarkable HOPSPlan(
+        $hops_hamiltonian,$hops_bath;max_depth=3,scaling=:scaled)
+hops_plan=HOPSPlan(
+    hops_hamiltonian,hops_bath;max_depth=3,scaling=:scaled)
+hops_work=HOPSWorkspace(hops_plan)
+hops_source=randn(
+    MersenneTwister(0x484f5053),ComplexF64,size(hops_plan,1))
+hops_destination=similar(hops_source)
+hops_noise=ComplexF64[0.03-0.01im]
+SUITE["PI-HOPS conditioned RHS N=6 poles=2 depth=3 auxiliaries=$(hops_number_auxiliaries(hops_plan))"] =
+    @benchmarkable hops_rhs!(
+        $hops_destination,$hops_plan,$hops_source,$hops_noise,$hops_work)
+hops_initial=weak_pi_pseudoket(
+    iid_pure_state(heom_basis,ComplexF64[1,1]/sqrt(2)))
+hops_batch=HOPSBatchWorkspace(hops_plan;workers=1)
+hops_times=[0.0,0.01,0.02]
+SUITE["PI-HOPS reused 32-path ensemble N=6 depth=3"] =
+    @benchmarkable hops_average(
+        $hops_plan,$hops_initial,$hops_times,32;
+        dt=0.005,seed=0x484f5053,threaded=false,workspace=$hops_batch)
 
 # Parameter-family specialization measures the intended scan setup path:
 # fixed Schur geometry is prepared once and only scalar rates are rebound.

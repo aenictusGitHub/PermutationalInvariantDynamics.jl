@@ -1199,3 +1199,42 @@ application on Julia 1.10. In a Floquet RK4 graph that became four allocations
 per step despite fully preallocated numerical buffers. Splitting the short
 sector loop restores the allocation-free warmed forward and adjoint kernels
 without changing operation order or arithmetic.
+
+## Prepared scalar and solver precision guards (2026-07-24)
+
+Liouvillian lowering now prepares every scalar rate through one checked
+precision contract. Fixed floating rates and Hamiltonian `hbar` values promote
+the immutable plan type; exact integer/rational data keep the native
+working-type route after checked conversion or exact quotient cancellation.
+Callable rates are tied to the prepared geometry precision and reject wider,
+nonfinite, complex, overflowing, or nonzero-underflowing results. Compiled
+families carry the prototype rate type into their shared scalar schedules and
+validate each specialization before allocating a backend, including through
+the nested checked-rate wrapper used by correlated reservoirs. When a fixed
+floating scalar widens the plan precision, dense p-body/direct-PI blocks,
+losses, and rectangular contractions are converted once at preparation;
+sparse one-body support is retained. This avoids mixed dense `mul!` packing
+allocations in forward, adjoint, and batched application. In-place operator
+prototypes and callbacks, as well as fixed built-in operators, reject
+nonfinite coefficients before Schur lowering, and
+matrix-free Liouvillian application rejects aliased input/output storage
+before clearing the destination. Mean-field lowering follows the same
+finite-real rate and finite-operator rules.
+
+Weak-unitary symmetry projectors retain `ComplexF32` when constructed from
+Float32 data, including Schur lifting, masks, workspaces, joint intersections,
+and residual probes. Mixed Float32/Float64 joint specifications are promoted
+once before lifting. LAPACK-unsupported scalar types raise with explicit
+conversion guidance instead of narrowing. Working-precision roundoff floors
+are included in unitary, charge, commutation, rank, and exact/probed residual
+checks, with mixed joint projectors retaining the least-precise source floor.
+Exact in-place projection is supported through a sector copy; other
+overlapping views are rejected.
+
+Factorizing steady-state routes keep their intentional `ComplexF64` sparse-LU
+minimum but validate shifts and initial vectors before materialization.
+Unsupported prepared precision raises for an explicit factorizing method;
+`:auto` with basic diagnostics selects the matrix-free Krylov route instead.
+Neither a BigFloat shift nor a wider floating initial state is silently
+converted to Float64. Exact integer/rational components use checked conversion
+and reject overflow or nonzero underflow.

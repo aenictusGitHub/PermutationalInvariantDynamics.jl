@@ -229,11 +229,46 @@
     @test_throws ArgumentError apply!(output,nonhermitian_plan,input,time,nothing,
                                       LiouvillianWorkspace(nonhermitian_plan))
 
+    nonfinite_jump=InPlaceTimeOperator(sm,(destination,t,p)->begin
+        destination[1,1]=ComplexF64(NaN)
+        nothing
+    end)
+    nonfinite_jump_plan=LiouvillianPlan(PIModel(basis,[
+        LocalJump(nonfinite_jump)]))
+    nonfinite_jump_workspace=LiouvillianWorkspace(nonfinite_jump_plan)
+    @test_throws ArgumentError apply!(
+        output,nonfinite_jump_plan,input,time,nothing,
+        nonfinite_jump_workspace)
+    @test_throws ArgumentError apply_adjoint!(
+        output,nonfinite_jump_plan,input,time,nothing,
+        nonfinite_jump_workspace)
+
+    nonfinite_hamiltonian=InPlaceTimeOperator(sx,(destination,t,p)->begin
+        destination[1,1]=ComplexF64(Inf)
+        nothing
+    end)
+    nonfinite_hamiltonian_plan=LiouvillianPlan(PIModel(basis,[
+        LocalHamiltonian(nonfinite_hamiltonian)]))
+    @test_throws ArgumentError apply!(
+        output,nonfinite_hamiltonian_plan,input,time,nothing,
+        LiouvillianWorkspace(nonfinite_hamiltonian_plan))
+
+    fixed_nonfinite=copy(sm)
+    fixed_nonfinite[1,1]=ComplexF64(NaN)
+    @test_throws ArgumentError LiouvillianPlan(PIModel(basis,[
+        LocalJump(fixed_nonfinite)]))
+    nonfinite_prototype=InPlaceTimeOperator(
+        fixed_nonfinite,(destination,t,p)->nothing)
+    @test_throws ArgumentError LiouvillianPlan(PIModel(basis,[
+        LocalJump(nonfinite_prototype)]))
+    direct_nonfinite=identity_operator(basis)
+    direct_nonfinite.data[1]=ComplexF64(Inf)
+    @test_throws ArgumentError LiouvillianPlan(PIModel(basis,[
+        DirectPIJump(direct_nonfinite)]))
+
     complex_rate_model=PIModel(basis,[LocalJump(sm;rate=1im)])
     @test_throws ArgumentError liouvillian(complex_rate_model;representation=:sparse)
-    complex_plan=LiouvillianPlan(complex_rate_model)
-    @test_throws ArgumentError apply!(output,complex_plan,input,time,nothing,
-                                      LiouvillianWorkspace(complex_plan))
+    @test_throws ArgumentError LiouvillianPlan(complex_rate_model)
     dynamic_complex=PIModel(basis,[CollectiveJump(schedules[4];rate=(t,p)->1im)])
     dynamic_complex_plan=LiouvillianPlan(dynamic_complex)
     @test_throws ArgumentError apply!(output,dynamic_complex_plan,input,time,parameters,

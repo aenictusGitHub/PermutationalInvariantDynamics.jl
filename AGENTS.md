@@ -285,6 +285,18 @@ pattern.
   collective-only models retain a private diagonal-only `OneBodyGeometry`
   containing `(sector,sector)` contractions. Local gains and conservative
   custom terms retain the complete sector-changing geometry.
+- Fixed floating rates and `hbar` values participate in the immutable plan
+  precision; exact rates retain the checked native-type path. Callable rates
+  are tied to the prepared precision and must reject nonfinite, complex,
+  wider, overflowing, or nonzero-underflowing evaluations. Fixed operators,
+  in-place prototypes, and evaluated schedules must reject nonfinite
+  coefficients before Schur lowering.
+  If a fixed scalar widens a dense kernel, widen its blocks, loss matrices,
+  and rectangular contractions once during preparation; do not leave mixed
+  dense `mul!` calls to allocate packing buffers at application time. Preserve
+  exact sparse support rather than widening sparse one-body kernels.
+  `apply!` and `apply_adjoint!` require non-aliasing source and destination
+  arrays, including partially overlapping views.
 - Fixed collective one-body Schur blocks are assembled directly on exact CSC
   support in every sector; do not allocate a dense block and sparsify it
   afterwards. Fixed collective `K'K` blocks use sparse Gram products and remove
@@ -431,7 +443,8 @@ evaluated matrix, factor, residual, effective-operator, block, and gain scratch
 in the workspace and validate finiteness, Hermiticity, and PSD at every
 evaluation. Preserve every strictly positive pivot except at explicit user
 tolerance or arithmetic roundoff. The common scalar rate is independent of
-the Kossakowski matrix.
+the Kossakowski matrix. Checked correlated-rate wrappers must forward the
+prototype precision used by compiled parameter families.
 
 ## Observables, information, entanglement, and reductions
 
@@ -587,7 +600,9 @@ tensor powers. This is not exact finite PI dynamics once correlations form.
 - Product collective moments omit connected correlations.
 - `MeanFieldPlan` owns copied read-only operators.
   `MeanFieldWorkspace` owns contractions and integrator stages. Reject
-  incompatible precision rather than narrow.
+  incompatible precision rather than narrow. Fixed and evaluated rates must
+  be finite and real; fixed operators and Hamiltonian `hbar` values must also
+  be finite, and `hbar` must be nonzero.
 - Fixed-point relaxation is basin-dependent and autonomous-only. Never return
   an unconverged default state. Stability lives on the real traceless-
   Hermitian tangent space.
@@ -621,6 +636,13 @@ extension and remains a selected-order approximation.
 - All iterative workspaces derive storage precision from the operator and
   storage-bearing inputs. Recompile a prepared matrix-free model at wider
   precision instead of borrowing wider solver scratch.
+- Sparse/dense steady-state factorizations keep their documented
+  `ComplexF64` backend minimum and must reject wider floating shifts, initial
+  vectors, or prepared scalar types rather than narrow them. Exact
+  integer/rational components may use checked conversion, but overflow and
+  nonzero underflow must raise. With basic diagnostics, `method=:auto` selects
+  matrix-free Krylov before materialization when that factorization precision
+  is unsupported.
 - `KrylovWorkspace` stores real Givens rotations in the real component type
   of its Krylov scalar, never unconditionally in `Float64`; preserve this for
   both lower-precision speed and wider-precision reliability.
@@ -678,6 +700,12 @@ Krylov dimension, and finite-size scaling are separate claims.
 
 - Weak unitary symmetry projectors are complex-linear conjugation-charge
   projectors. Antiunitary covariance alone does not define such a block.
+- LAPACK-backed symmetry projectors preserve `ComplexF32` or `ComplexF64`
+  throughout lifting, masks, workspaces, and residual probes. Unsupported
+  scalar types raise with explicit conversion guidance. Exact in-place
+  projection is allowed; distinct overlapping views are not. Mixed-precision
+  joint construction and exact/probed residual certification retain the
+  least-precise source and working-dimension roundoff floors.
 - `diagonal_symmetry_restriction` certifies separate strong ket/bra charges by
   exhaustive leakage checks. Compatible fixed prepared kernels lower directly
   into reduced Cartesian coordinates; unsupported kernels and non-Cartesian

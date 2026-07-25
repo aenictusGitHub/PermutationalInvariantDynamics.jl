@@ -13,6 +13,21 @@ between the supplied local operators is preserved. Vector, adjoint, and
 batched applications all reuse this workspace; a batch evaluates the schedule
 once and contracts all right-hand sides with matrix--matrix kernels.
 
+Fixed floating rates and `hbar` participate in the prepared plan's scalar
+precision; they are never first narrowed to the operator prototype type.
+When this widens a dense fixed kernel, its blocks and contractions are
+converted once during preparation so preallocated application does not create
+mixed-precision packing buffers; sparse one-body support remains sparse.
+Callable scalar rates must evaluate to finite real values representable by the
+precision selected when the plan was compiled. A wider value, or a nonzero
+value that would underflow, raises with guidance to recompile at wider
+precision. Negative rates remain valid for deterministic time-local
+generators, although such a generator need not define a completely positive
+map. Fixed operators, in-place prototypes, and every evaluated in-place
+operator must contain only finite coefficients. `apply!` and `apply_adjoint!`
+require non-aliasing source and destination arrays, including overlapping
+views.
+
 For repeated small-system representation setup, a basis-owned
 `OneBoxCGCache` may be supplied through `coefficient_cache` to
 `LiouvillianPlan`, `compile`, `liouvillian`, `steady_state`, or

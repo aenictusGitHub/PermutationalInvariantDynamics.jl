@@ -41,8 +41,14 @@ function _performance_source_action_bytes(source::SpecializedPIModel,
         _performance_liouvillian_fallback_bytes(source.plan)
 end
 
-struct _FamilyRate{I} <: Function end
-@inline (::_FamilyRate{I})(time,parameters) where I=parameters[I]
+struct _FamilyRate{I,T} <: Function end
+@inline (::_FamilyRate{I,T})(time,parameters) where {I,T}=parameters[I]
+
+function _rate_schedule_precision(::_FamilyRate{I,T},::Type{R}) where
+        {I,T,R<:AbstractFloat}
+    (T <: Integer || T <: Rational) ? R :
+        promote_type(R,_real_float_type(T))
+end
 
 function _family_rate_indices(model::PIModel,rate_indices)
     nterms=length(model.terms)
@@ -79,7 +85,10 @@ function _family_replace_rates(model::PIModel,indices,rates)
 end
 
 function _family_parameterized_model(model::PIModel,indices)
-    rates=ntuple(position->_FamilyRate{position}(),length(indices))
+    rates=ntuple(length(indices)) do position
+        rate_type=typeof(term_rate(model.terms[indices[position]]))
+        _FamilyRate{position,rate_type}()
+    end
     _family_replace_rates(model,indices,rates)
 end
 
@@ -131,7 +140,8 @@ differ only in selected scalar term rates. `rate_indices=nothing` varies every
 term rate; otherwise it is a nonempty collection of one-based term indices.
 Call [`specialize`](@ref) for each numerical parameter point.
 
-The input model must be autonomous and every selected rate must be numeric.
+The input model must be autonomous and every selected rate must be finite and
+real.
 Operators, body order, Kossakowski matrices, and the retained PI basis remain
 fixed. This strict contract is what makes specialization independent of Schur
 geometry construction. Negative time-local rates are preserved.
@@ -151,6 +161,8 @@ function compile_family(model::PIModel;rate_indices=nothing,
                      length(indices))
     all(rate->rate isa Number,defaults)||throw(ArgumentError(
         "every selected family rate must be numeric in the prototype"))
+    all(rate->rate isa Real&&isfinite(rate),defaults)||throw(ArgumentError(
+        "every selected family rate must be real and finite in the prototype"))
     parameterized=_family_parameterized_model(model,indices)
     plan=LiouvillianPlan(parameterized;coefficient_cache)
     plan.kernels===nothing&&throw(ArgumentError(
@@ -171,9 +183,9 @@ function _family_rates(family::CompiledPIModelFamily,rates)
     length(values)==count||throw(DimensionMismatch(
         "expected $count family rates, got $(length(values))"))
     for (position,value) in pairs(values)
-        value isa Number||throw(ArgumentError(
-            "family rate $position must be numeric"))
-        isfinite(real(value))&&isfinite(imag(value))||throw(ArgumentError(
+        value isa Real||throw(ArgumentError(
+            "family rate $position must be a real number"))
+        isfinite(value)||throw(ArgumentError(
             "family rate $position must be finite"))
     end
     values
@@ -198,6 +210,13 @@ _family_kernel_scale(kernel::Union{DissipatorPIKernel,LocalJumpPIKernel,
         FactorizedLocalJumpPIKernel,FactorizedLocalPBodyJumpPIKernel},rates)=
     _evaluated_dissipative_rate(kernel.scale,0.0,rates)
 _family_kernel_scale(::FusedStaticPIKernel,rates)=1
+
+_validate_family_kernel_rates(::Tuple{},rates)=nothing
+function _validate_family_kernel_rates(kernels::Tuple{K,Vararg{Any}},
+        rates) where K
+    _family_kernel_scale(first(kernels),rates)
+    _validate_family_kernel_rates(Base.tail(kernels),rates)
+end
 
 _family_add_kernel_matrices(matrix,plan,::Tuple{},rates)=matrix
 function _family_add_kernel_matrices(matrix,plan,
@@ -259,6 +278,7 @@ function specialize(family::CompiledPIModelFamily,
         estimated_peak,memory_budget;guidance=
         "Use backend=:matrixfree or increase the family specialization budget.")
     bound=_family_rates(family,rates)
+    _validate_family_kernel_rates(family.plan.kernels,bound)
     model=_family_replace_rates(family.model,family.rate_indices,bound)
     compatibility_workspace = chosen===:matrixfree ?
         (workspace===nothing ? LiouvillianWorkspace(family.plan) : workspace) :

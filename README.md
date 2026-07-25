@@ -275,8 +275,9 @@ test groups, and the complete contributor workflow.
 
 ```sh
 julia --project=. -e 'using Pkg; Pkg.test()'
-julia --project=. benchmark/performance_regression.jl
-julia --project=. benchmark/performance_audit.jl
+julia --startup-file=no --project=benchmark -e 'using Pkg; Pkg.develop(path=pwd()); Pkg.instantiate()'
+julia --startup-file=no --project=benchmark benchmark/performance_regression.jl
+julia --startup-file=no --project=benchmark benchmark/performance_audit.jl
 julia --project=docs -e 'using Pkg; Pkg.develop(path=pwd()); Pkg.instantiate(); include("docs/make.jl")'
 julia --project=quality -e 'using Pkg; Pkg.develop(path=pwd()); Pkg.instantiate()'
 julia --project=quality quality/quality.jl

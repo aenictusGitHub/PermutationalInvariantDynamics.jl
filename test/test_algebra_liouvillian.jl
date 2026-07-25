@@ -120,6 +120,110 @@ end
                                         zeros(ComplexF32,n-1,2))
     @test_throws DimensionMismatch apply_adjoint!(zeros(ComplexF32,n,2),custom,
                                                    zeros(ComplexF32,n,3),0,nothing)
+
+    # Invalid or wider shift-invert inputs are rejected before probing a
+    # matrix-free source for explicit materialization.
+    callback_counts=(forward_calls[],batched_calls[])
+    @test_throws ArgumentError steady_state(custom;method=:shiftinvert,
+        shift=big"-0.001",memory_budget=Inf)
+    @test (forward_calls[],batched_calls[])==callback_counts
+end
+
+@testset "Liouvillian application ownership" begin
+    basis=PIBasis(2,2)
+    spin=spin_matrices()
+    plan=LiouvillianPlan(PIModel(basis,(
+        LocalHamiltonian(spin.jx;rate=0.2),
+        LocalJump(spin.jm;rate=0.4),
+    )))
+    workspace=LiouvillianWorkspace(plan)
+    vector=ones(ComplexF64,length(basis))
+    @test_throws ArgumentError apply!(
+        vector,plan,vector,0.0,nothing,workspace)
+    @test_throws ArgumentError apply_adjoint!(
+        vector,plan,vector,0.0,nothing,workspace)
+
+    matrix=ones(ComplexF64,length(basis),2)
+    @test_throws ArgumentError apply!(
+        matrix,plan,matrix,0.0,nothing,workspace)
+    @test_throws ArgumentError apply_adjoint!(
+        matrix,plan,matrix,0.0,nothing,workspace)
+
+    storage=ones(ComplexF64,length(basis)+1)
+    source=@view storage[1:length(basis)]
+    destination=@view storage[2:length(basis)+1]
+    @test Base.mightalias(source,destination)
+    @test_throws ArgumentError apply!(
+        destination,plan,source,0.0,nothing,workspace)
+    @test_throws ArgumentError apply_adjoint!(
+        destination,plan,source,0.0,nothing,workspace)
+
+    # The same contract applies before invoking a raw operator-valued fallback.
+    fallback=LiouvillianPlan(PIModel(basis,(
+        LocalJump((t,p)->spin.jm;rate=0.4),)))
+    @test fallback.kernels===nothing
+    @test_throws ArgumentError apply!(
+        vector,fallback,vector,0.0,nothing,LiouvillianWorkspace(fallback))
+end
+
+@testset "Prepared dense-kernel precision" begin
+    basis=PIBasis(2,2)
+    spin32=spin_matrices(2;T=Float32)
+    pair32=kron(spin32.jx,spin32.jx)
+    direct32=PIOperator(basis,ComplexF32.(
+        collective_operator(basis,spin32.jx).data))
+    pair64=ComplexF64.(pair32)
+    direct64=PIOperator(basis,ComplexF64.(direct32.data))
+    terms32=(
+        PBodyHamiltonian(pair32,2;rate=1.0),
+        LocalPBodyJump(pair32,2;rate=1.0),
+        CollectivePBodyJump(pair32,2;rate=1.0),
+        DirectPIHamiltonian(direct32;rate=1.0),
+        DirectPIJump(direct32;rate=1.0),
+    )
+    terms64=(
+        PBodyHamiltonian(pair64,2;rate=1.0),
+        LocalPBodyJump(pair64,2;rate=1.0),
+        CollectivePBodyJump(pair64,2;rate=1.0),
+        DirectPIHamiltonian(direct64;rate=1.0),
+        DirectPIJump(direct64;rate=1.0),
+    )
+    source=ComplexF64.(1:length(basis))./(length(basis)+1)
+    batch=hcat(source,2source)
+
+    for (term32,term64) in zip(terms32,terms64)
+        plan=LiouvillianPlan(
+            PIModel(basis,(term32,));fuse_static=Val(false))
+        @test eltype(plan)===ComplexF64
+        workspace=LiouvillianWorkspace(plan)
+        destination=similar(source)
+        batch_destination=similar(batch)
+        reference=liouvillian(
+            PIModel(basis,(term64,));representation=:sparse)
+
+        apply!(destination,plan,source,0.0,nothing,workspace)
+        @test destination≈reference*source atol=2e-6 rtol=2e-6
+        @test (@allocated apply!(
+            destination,plan,source,0.0,nothing,workspace))<=1024
+
+        apply_adjoint!(destination,plan,source,0.0,nothing,workspace)
+        @test destination≈adjoint(reference)*source atol=2e-6 rtol=2e-6
+        @test (@allocated apply_adjoint!(
+            destination,plan,source,0.0,nothing,workspace))<=1024
+
+        # The first batch call grows the explicit fixed-capacity scratch.
+        # Subsequent forward and adjoint actions must not repack mixed-precision
+        # dense operators in hidden temporary arrays.
+        apply!(batch_destination,plan,batch,0.0,nothing,workspace)
+        @test batch_destination≈reference*batch atol=2e-6 rtol=2e-6
+        @test (@allocated apply!(
+            batch_destination,plan,batch,0.0,nothing,workspace))<=1024
+        apply_adjoint!(
+            batch_destination,plan,batch,0.0,nothing,workspace)
+        @test batch_destination≈adjoint(reference)*batch atol=2e-6 rtol=2e-6
+        @test (@allocated apply_adjoint!(
+            batch_destination,plan,batch,0.0,nothing,workspace))<=1024
+    end
 end
 
 # An external term lowers through documented dispatch only.  In particular,
@@ -203,6 +307,10 @@ struct IncompleteToyTerm <: AbstractPITerm end
     @test Matrix(toy_sparse)≈Matrix(reference_sparse) atol=2e-12
     @test toy_matrixfree*rho.data≈reference_sparse*rho.data atol=2e-12
     @test adjoint(toy_matrixfree)*rho.data≈adjoint(reference_sparse)*rho.data atol=2e-12
+    nonfinite_toy_operator=copy(sm)
+    nonfinite_toy_operator[1,1]=Inf
+    @test_throws ArgumentError LiouvillianPlan(PIModel(b,(
+        ToyCollectiveJump(nonfinite_toy_operator,0.1),)))
     driven_toy=PIModel(b,[ToyCollectiveJump(sm,(t,p)->p.rate*(1+t))])
     frozen_toy=freeze(driven_toy;time=0.25,parameters=(rate=0.4,),representation=:sparse)
     @test Matrix(frozen_toy)≈Matrix(liouvillian(PIModel(b,[CollectiveJump(sm;rate=0.5)]);
@@ -227,8 +335,65 @@ struct IncompleteToyTerm <: AbstractPITerm end
     si=steady_state(m;method=:shiftinvert,shift=-1e-3,maxiter=80,atol=1e-12,rtol=1e-10,return_info=true)
     @test si.state≈ss.state atol=2e-8
     @test si.method===:shiftinvert && si.iterations<=80 && si.converged
+    exact_shift=-big(1)//big(1000)
+    exact_component=big(1)//big(3)
+    exact_zero=big(0)//big(1)
+    exact_initial=fill(complex(exact_zero,exact_zero),length(b))
+    trace_coordinate=findfirst(!iszero,PermutationalInvariantDynamics._trace_vector(b))
+    exact_initial[trace_coordinate]=complex(big(1)//big(1),exact_component)
+    exact_si=steady_state(m;method=:shiftinvert,shift=exact_shift,
+        initial_state=exact_initial,maxiter=80,atol=1e-12,rtol=1e-10,
+        return_info=true)
+    @test exact_si.state≈ss.state atol=2e-8
+    exact_complex_si=steady_state(m;method=:shiftinvert,
+        shift=complex(exact_shift,big(1)//big(10)^6),maxiter=80,
+        atol=1e-12,rtol=1e-10,return_info=true)
+    @test exact_complex_si.state≈ss.state atol=2e-8
+    si32=steady_state(m;method=:shiftinvert,shift=-1f-3,
+        initial_state=ComplexF32.(ss.state),maxiter=80,atol=1e-12,
+        rtol=1e-10,return_info=true)
+    @test si32.state≈ss.state atol=2e-8
     @test steady_state(m;method=:krylov,shift=-2e-3,atol=1e-12,rtol=1e-10)≈ss.state atol=2e-8
     @test_throws ArgumentError steady_state(m;method=:shiftinvert,shift=0)
+    @test_throws ArgumentError steady_state(m;method=:shiftinvert,
+        shift=Inf)
+    @test_throws ArgumentError steady_state(m;method=:shiftinvert,
+        shift=complex(-1e-3,Inf))
+    @test_throws ArgumentError steady_state(m;method=:shiftinvert,
+        shift=big"-0.001")
+    @test_throws ArgumentError steady_state(m;method=:shiftinvert,
+        shift=-1e-3,initial_state=Complex{BigFloat}.(ss.state))
+    underflowing_exact=big(1)//big(10)^1000
+    @test_throws ArgumentError steady_state(m;method=:shiftinvert,
+        shift=complex(exact_shift,underflowing_exact))
+    underflowing_initial=copy(exact_initial)
+    underflowing_initial[trace_coordinate]=
+        complex(big(1)//big(1),underflowing_exact)
+    @test_throws ArgumentError steady_state(m;method=:shiftinvert,
+        shift=-1e-3,initial_state=underflowing_initial)
+    nonfinite_initial=copy(ss.state);nonfinite_initial[1]=complex(NaN,0)
+    @test_throws ArgumentError steady_state(m;method=:shiftinvert,
+        shift=-1e-3,initial_state=nonfinite_initial)
+
+    # Julia's factorizing backends do not support arbitrary-precision sparse
+    # LU/SVD. Automatic basic solving must select the exact matrix-free Krylov
+    # route rather than narrowing or materializing a Float64 surrogate.
+    big_generator=Complex{BigFloat}[-1 1;1 -1]
+    big_trace=Complex{BigFloat}[1,1]
+    big_auto=steady_state(big_generator;trace_vector=big_trace,method=:auto,
+        krylovdim=2,maxiter=20,atol=big"1e-40",rtol=big"1e-30",
+        return_info=true,memory_budget=Inf)
+    @test big_auto.method===:krylov
+    @test big_auto.state≈Complex{BigFloat}[0.5,0.5] atol=big"1e-35"
+    @test big_auto.residual<=big"1e-35"
+    @test_throws ArgumentError steady_state(big_generator;
+        trace_vector=big_trace,method=:direct,memory_budget=Inf)
+    @test_throws ArgumentError steady_state(big_generator;
+        trace_vector=big_trace,method=:shiftinvert,shift=big"-0.001",
+        memory_budget=Inf)
+    @test_throws ArgumentError steady_state(big_generator;
+        trace_vector=big_trace,method=:auto,diagnostics=:nullity,
+        memory_budget=Inf)
 
     z=steady_state(spzeros(ComplexF64,length(b),length(b));basis=b,
                    method=:svd,return_info=true)

@@ -588,15 +588,11 @@ end
             PIModel(b32,(LocalJump(sm32;rate=-1f0),)))
         @test_throws ArgumentError weak_pi_quantum_trajectory(
             negative,psi32,Float32[0,0.01];dt=0.005f0)
-        nonfinite=WeakPITrajectoryPlan(
+        @test_throws ArgumentError WeakPITrajectoryPlan(
             PIModel(b32,(LocalJump(sm32;rate=Float32(Inf)),)))
-        @test_throws ArgumentError weak_pi_quantum_trajectory(
-            nonfinite,psi32,Float32[0,0.01];dt=0.005f0)
-        complex_hamiltonian=WeakPITrajectoryPlan(
+        @test_throws ArgumentError WeakPITrajectoryPlan(
             PIModel(b32,(LocalHamiltonian(ComplexF32[0 1;1 0];
                                             rate=1f0+0f0im),)))
-        @test_throws ArgumentError weak_pi_quantum_trajectory(
-            complex_hamiltonian,psi32,Float32[0,0.01];dt=0.005f0)
 
         pair=kron(sm,sm)
         @test_throws ArgumentError WeakPITrajectoryPlan(

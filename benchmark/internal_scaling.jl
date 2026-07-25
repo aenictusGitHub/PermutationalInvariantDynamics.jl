@@ -69,7 +69,7 @@ const MISSING_BENCHMARK_STATS = (
 function usage(io=stdout)
     println(io, """
 Usage:
-  julia --project=benchmark benchmark/internal_scaling.jl [options]
+  julia --startup-file=no --project=benchmark benchmark/internal_scaling.jl [options]
 
 Options:
   --mode quick|full                  Scaling matrix (default: quick)

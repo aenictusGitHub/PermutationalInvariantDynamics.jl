@@ -68,6 +68,15 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+      - name: Enforce tracked-manifest policy
+        shell: bash
+        run: |
+          tracked_manifests="$(git ls-files ':(glob)**/Manifest.toml')"
+          if [[ "${tracked_manifests}" != "docs/Manifest.toml" ]]; then
+            echo "Only docs/Manifest.toml may be tracked; found:"
+            echo "${tracked_manifests}"
+            exit 1
+          fi
       - uses: julia-actions/setup-julia@v3
         with:
           version: '1.12'
@@ -115,6 +124,11 @@ jobs:
       - uses: julia-actions/cache@v3
         with:
           delete-old-caches: 'false'
-      - uses: julia-actions/julia-buildpkg@v1
+      - name: Instantiate benchmark environment
+        run: >-
+          julia --startup-file=no --project=benchmark -e 'using Pkg;
+          Pkg.develop(path=pwd()); Pkg.instantiate()'
       - name: Thread-safety and allocation gates
-        run: julia --project=. benchmark/performance_regression.jl
+        run: >-
+          julia --startup-file=no --project=benchmark
+          benchmark/performance_regression.jl

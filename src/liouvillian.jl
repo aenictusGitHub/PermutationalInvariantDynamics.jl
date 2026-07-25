@@ -326,6 +326,60 @@ function _local_gain_branches(b,cache::OneBodyGeometry{T}) where T
 end
 
 _exact_real(x)=x isa Integer||x isa Rational
+_exact_number(x)=_exact_real(x)
+_exact_number(x::Complex)=_exact_real(real(x))&&_exact_real(imag(x))
+
+function _check_finite_real(value,name::AbstractString;nonzero::Bool=false)
+    value isa Real||throw(ArgumentError(
+        "$name must be a real number, got $(typeof(value))"))
+    isfinite(value)||throw(ArgumentError("$name must be finite"))
+    nonzero&&iszero(value)&&throw(ArgumentError("$name must be nonzero"))
+    value
+end
+
+function _checked_prepared_real(value,::Type{R},name::AbstractString;
+        nonzero::Bool=false) where R<:AbstractFloat
+    _check_finite_real(value,name;nonzero)
+    # Integer and rational data intentionally use the checked conversion below:
+    # their value may fit R even when Julia's generic promotion chooses
+    # BigFloat. Floating schedules, however, must not silently narrow the
+    # precision selected when the plan was prepared.
+    !_exact_real(value)&&promote_type(R,typeof(value))!==R&&
+        throw(ArgumentError(
+            "$name type $(typeof(value)) is wider than prepared precision $R; " *
+            "compile the model at the wider precision"))
+    converted=try
+        R(value)
+    catch
+        throw(ArgumentError(
+            "$name is not representable in prepared precision $R; " *
+            "compile the model at a wider precision"))
+    end
+    isfinite(converted)||throw(ArgumentError(
+        "$name is not finite in prepared precision $R; " *
+        "compile the model at a wider precision"))
+    !iszero(value)&&iszero(converted)&&throw(ArgumentError(
+        "$name is nonzero but underflows in prepared precision $R; " *
+        "compile the model at a wider precision"))
+    converted
+end
+
+function _prepared_rate_precision(::Type{R},values...) where R<:AbstractFloat
+    T=R
+    for value in values
+        value isa Number&&!_exact_real(value)&&
+            (T=promote_type(T,_real_float_type(typeof(value))))
+    end
+    T
+end
+
+# Scalar schedules normally inherit the operator-geometry precision. Prepared
+# family schedules extend this trait with the prototype rate type below, after
+# compiled_families.jl has introduced that private schedule.
+_rate_schedule_precision(rate,::Type{R}) where R<:AbstractFloat=R
+_rate_schedule_precision(
+    ::_CheckedCorrelatedRate{S,P},::Type{R}) where
+        {S,P,R<:AbstractFloat}=promote_type(P,R)
 
 # Divide two exact real values without converting either potentially enormous
 # operand separately. Ordinary floating rates retain the direct converted
@@ -363,17 +417,72 @@ function _checked_exact_rate_quotient(rate,c,::Type{R}) where R<:AbstractFloat
     quotient<0 ? -magnitude : magnitude
 end
 
+function _checked_rate_quotient(rate,c,::Type{R}) where R<:AbstractFloat
+    _check_finite_real(rate,"Hamiltonian rate")
+    _check_finite_real(c,"Hamiltonian hbar";nonzero=true)
+    _exact_real(rate)&&_exact_real(c)&&
+        return _checked_exact_rate_quotient(rate,c,R)
+    converted_rate=_checked_prepared_real(
+        rate,R,"Hamiltonian rate")
+    converted_hbar=_checked_prepared_real(
+        c,R,"Hamiltonian hbar";nonzero=true)
+    quotient=converted_rate/converted_hbar
+    isfinite(quotient)||throw(ArgumentError(
+        "Hamiltonian rate/hbar quotient is not finite in prepared precision $R; " *
+        "compile the model at a wider precision"))
+    !iszero(converted_rate)&&iszero(quotient)&&throw(ArgumentError(
+        "Hamiltonian rate/hbar quotient underflows in prepared precision $R; " *
+        "compile the model at a wider precision"))
+    quotient
+end
+
+struct _CheckedHamiltonianRate{S,H,R<:AbstractFloat} <: Function
+    schedule::S
+    hbar::H
+    real_type::Type{R}
+end
+@inline function (scale::_CheckedHamiltonianRate{S,H,R})(time,parameters) where
+        {S,H,R}
+    _checked_rate_quotient(
+        value_at(scale.schedule,time,parameters),scale.hbar,R)
+end
+
+struct _CheckedDissipativeRate{S,R<:AbstractFloat} <: Function
+    schedule::S
+    real_type::Type{R}
+end
+@inline function (rate::_CheckedDissipativeRate{S,R})(time,parameters) where
+        {S,R}
+    _checked_prepared_real(
+        value_at(rate.schedule,time,parameters),R,"dissipative rate")
+end
+
+_rate_schedule_precision(
+    ::_CheckedHamiltonianRate{S,H,P},::Type{R}) where {S,H,P,R<:AbstractFloat} =
+    promote_type(P,R)
+_rate_schedule_precision(
+    ::_CheckedDissipativeRate{S,P},::Type{R}) where {S,P,R<:AbstractFloat} =
+    promote_type(P,R)
+
 function _scaled_rate(rate,c,::Type{R}) where R<:AbstractFloat
-    iszero(c)&&throw(ArgumentError("Hamiltonian hbar must be nonzero"))
     if rate isa Number
-        return _exact_real(rate)&&_exact_real(c) ?
-            _checked_exact_rate_quotient(rate,c,R) : R(rate)/R(c)
+        P=_prepared_rate_precision(R,rate,c)
+        return _checked_rate_quotient(rate,c,P)
     end
-    (t,p)->begin
-        evaluated=value_at(rate,t,p)
-        _exact_real(evaluated)&&_exact_real(c) ?
-            _checked_exact_rate_quotient(evaluated,c,R) : R(evaluated)/R(c)
-    end
+    _check_finite_real(c,"Hamiltonian hbar";nonzero=true)
+    P=_prepared_rate_precision(_rate_schedule_precision(rate,R),c)
+    _CheckedHamiltonianRate(rate,c,P)
+end
+
+function _prepared_dissipative_rate(rate::Number,::Type{R}) where
+        R<:AbstractFloat
+    _check_finite_real(rate,"dissipative rate")
+    P=_prepared_rate_precision(R,rate)
+    _checked_prepared_real(rate,P,"dissipative rate")
+end
+function _prepared_dissipative_rate(rate,::Type{R}) where R<:AbstractFloat
+    P=_rate_schedule_precision(rate,R)
+    _CheckedDissipativeRate(rate,P)
 end
 abstract type AbstractStaticPIKernel end
 struct HamiltonianPIKernel{B,S} <: AbstractStaticPIKernel
@@ -1156,23 +1265,46 @@ _prepare_collective_action(
     blocks::AbstractVector{<:SparseMatrixCSC})=blocks
 _prepare_collective_action(blocks)=[sparse(block) for block in blocks]
 
+_prepare_fixed_kernel_blocks(
+    blocks::AbstractVector{<:SparseMatrixCSC},::Type)=blocks
+_prepare_fixed_kernel_blocks(
+    blocks::AbstractVector{<:AbstractMatrix{T}},::Type{T}) where T=blocks
+function _prepare_fixed_kernel_blocks(
+        blocks::AbstractVector{<:AbstractMatrix},::Type{T}) where T
+    [Matrix{T}(block) for block in blocks]
+end
+
+function _check_operator_prototype_finite(operator)
+    prototype=_operator_prototype(operator)
+    finite = prototype isa AbstractMatrix ? all(isfinite,prototype) :
+             prototype isa AbstractPIOperator ?
+                 all(isfinite,prototype.data) : true
+    finite||throw(ArgumentError(
+        "fixed and in-place operator prototypes must contain only finite coefficients"))
+    operator
+end
+
 function _compile_hamiltonian(term,context,blocks)
     R=_real_float_type(eltype(first(blocks)))
-    HamiltonianPIKernel(blocks,_scaled_rate(term_rate(term),term_hbar(term),R))
+    scale=_scaled_rate(term_rate(term),term_hbar(term),R)
+    T=_scale_promoted_type(eltype(first(blocks)),scale)
+    HamiltonianPIKernel(_prepare_fixed_kernel_blocks(blocks,T),scale)
 end
 function _compile_collective_hamiltonian(term,context,blocks)
     _compile_hamiltonian(term,context,_prepare_collective_action(blocks))
 end
 function compile_term(t::Union{LocalHamiltonian,CollectiveHamiltonian},
                       context::TermCompileContext)
-    operator=term_operator(t);R=context.geometry_type
+    operator=_check_operator_prototype_finite(term_operator(t))
+    R=context.geometry_type
     operator isa InPlaceTimeOperator && return InPlaceHamiltonianPIKernel(
         operator,_dynamic_builder(context,t),_scaled_rate(term_rate(t),term_hbar(t),R))
     _compile_collective_hamiltonian(
         t,context,_sparse_collective_blocks(operator,context))
 end
 function compile_term(t::DirectPIHamiltonian,context::TermCompileContext)
-    operator=term_operator(t);R=context.geometry_type
+    operator=_check_operator_prototype_finite(term_operator(t))
+    R=context.geometry_type
     if operator isa InPlaceTimeOperator
         scale=_scaled_rate(term_rate(t),term_hbar(t),R)
         block_type=_real_float_type(_scale_promoted_type(Complex{R},scale))
@@ -1183,7 +1315,11 @@ function compile_term(t::DirectPIHamiltonian,context::TermCompileContext)
 end
 
 function _compile_dissipator(term,blocks)
-    DissipatorPIKernel(blocks,[K'*K for K in blocks],term_rate(term))
+    R=_real_float_type(eltype(first(blocks)))
+    scale=_prepared_dissipative_rate(term_rate(term),R)
+    T=_scale_promoted_type(eltype(first(blocks)),scale)
+    prepared=_prepare_fixed_kernel_blocks(blocks,T)
+    DissipatorPIKernel(prepared,[K'*K for K in prepared],scale)
 end
 function _compile_collective_dissipator(term,blocks,context)
     # Fixed collective blocks already retain exact CSC support.  Sparse Gram
@@ -1197,19 +1333,23 @@ function _compile_collective_dissipator(term,blocks,context)
     end
     blocks=_prepare_collective_action(blocks)
     qblocks=_prepare_collective_action(qblocks)
-    DissipatorPIKernel(blocks,qblocks,term_rate(term))
+    scale=_prepared_dissipative_rate(
+        term_rate(term),context.geometry_type)
+    DissipatorPIKernel(blocks,qblocks,scale)
 end
 function compile_term(t::CollectiveJump,context::TermCompileContext)
-    operator=term_operator(t)
+    operator=_check_operator_prototype_finite(term_operator(t))
+    scale=_prepared_dissipative_rate(term_rate(t),context.geometry_type)
     operator isa InPlaceTimeOperator && return InPlaceDissipatorPIKernel(
-        operator,_dynamic_builder(context,t),term_rate(t))
+        operator,_dynamic_builder(context,t),scale)
     _compile_collective_dissipator(
         t,_sparse_collective_blocks(operator,context),context)
 end
 function compile_term(t::DirectPIJump,context::TermCompileContext)
-    operator=term_operator(t)
+    operator=_check_operator_prototype_finite(term_operator(t))
     if operator isa InPlaceTimeOperator
-        scale=term_rate(t);R=context.geometry_type
+        R=context.geometry_type
+        scale=_prepared_dissipative_rate(term_rate(t),R)
         block_type=_real_float_type(_scale_promoted_type(Complex{R},scale))
         return InPlaceDissipatorPIKernel(
             operator,_direct_pi_block_builder(context,block_type),scale)
@@ -1218,11 +1358,12 @@ function compile_term(t::DirectPIJump,context::TermCompileContext)
 end
 
 function compile_term(t::LocalJump,context::TermCompileContext)
-    operator=term_operator(t)
+    operator=_check_operator_prototype_finite(term_operator(t))
+    scale=_prepared_dissipative_rate(term_rate(t),context.geometry_type)
     if operator isa InPlaceTimeOperator
         _dynamic_onebody_builder(context)
         branches=_local_gain_branches(context.basis,context.onebody)
-        return InPlaceLocalJumpPIKernel(operator,context.onebody,term_rate(t),
+        return InPlaceLocalJumpPIKernel(operator,context.onebody,scale,
             branches)
     end
     Q=_sparse_collective_blocks(operator'*operator,context)
@@ -1232,7 +1373,7 @@ function compile_term(t::LocalJump,context::TermCompileContext)
     _fill_local_gain_contractions!(contractions,prepared_branches,operator)
     branches=_static_local_gain_branches(prepared_branches)
     static_contractions=_static_onebody_contractions(contractions)
-    FactorizedLocalJumpPIKernel(Q,branches,static_contractions,term_rate(t))
+    FactorizedLocalJumpPIKernel(Q,branches,static_contractions,scale)
 end
 
 function _effective_correlated_operator(coefficients,operators,
@@ -1294,30 +1435,36 @@ function _pbody_blocks(term,context,operator=term_operator(term))
 end
 
 function compile_term(t::PBodyHamiltonian,context::TermCompileContext)
-    operator=term_operator(t);R=context.geometry_type
+    operator=_check_operator_prototype_finite(term_operator(t))
+    R=context.geometry_type
     operator isa InPlaceTimeOperator && return InPlaceHamiltonianPIKernel(
         operator,_dynamic_builder(context,t),_scaled_rate(term_rate(t),term_hbar(t),R))
     _compile_hamiltonian(t,context,_pbody_blocks(t,context))
 end
 function compile_term(t::CollectivePBodyJump,context::TermCompileContext)
-    operator=term_operator(t)
+    operator=_check_operator_prototype_finite(term_operator(t))
+    scale=_prepared_dissipative_rate(term_rate(t),context.geometry_type)
     operator isa InPlaceTimeOperator && return InPlaceDissipatorPIKernel(
-        operator,_dynamic_builder(context,t),term_rate(t))
+        operator,_dynamic_builder(context,t),scale)
     _compile_dissipator(t,_pbody_blocks(t,context))
 end
 
 function compile_term(t::LocalPBodyJump,context::TermCompileContext)
-    operator=term_operator(t)
+    operator=_check_operator_prototype_finite(term_operator(t))
+    scale=_prepared_dissipative_rate(term_rate(t),context.geometry_type)
     if operator isa InPlaceTimeOperator
         builder=_pbody_block_builder(context,t)
         structure=_pbody_gain_factorization(builder)
-        return InPlaceLocalPBodyJumpPIKernel(operator,builder,term_rate(t),
+        return InPlaceLocalPBodyJumpPIKernel(operator,builder,scale,
             structure.groups,structure.left_isometries,
             structure.right_isometries,structure.pair_scales)
     end
     geometry=_pbody_geometry!(context,body_order(t));Qop=operator'*operator
     _check_pbody_operator(geometry,Qop)
     Q=[pbody_collective_block(geometry,Qop,p;check=false) for p in context.basis.sectors]
+    T=_scale_promoted_type(
+        promote_type(eltype(first(Q)),eltype(operator)),scale)
+    Q=_prepare_fixed_kernel_blocks(Q,T)
     # The factorized fixed path deliberately retains the guarded triplet
     # implementation as an oracle/fallback for exceptionally large path
     # scales.  In that regime runtime accumulation through native rectangular
@@ -1326,20 +1473,19 @@ function compile_term(t::LocalPBodyJump,context::TermCompileContext)
     builder=_pbody_block_builder(context,t)
     if builder.cancellation_risk
         return LocalJumpPIKernel(Q,
-            pbody_kernel_triplets(geometry,operator,operator),term_rate(t))
+            pbody_kernel_triplets(geometry,operator,operator),scale)
     end
     structure=_pbody_gain_factorization_data(builder)
     if any(scale->!scale.direct,structure.pair_scales)
         return LocalJumpPIKernel(Q,
-            pbody_kernel_triplets(geometry,operator,operator),term_rate(t))
+            pbody_kernel_triplets(geometry,operator,operator),scale)
     end
-    T=promote_type(eltype(first(Q)),eltype(operator))
     contractions=Matrix{T}[
-        _path_contractions(structure.left_isometries[index],
-                           structure.right_isometries[index],operator)
+        Matrix{T}(_path_contractions(structure.left_isometries[index],
+                                    structure.right_isometries[index],operator))
         for index in eachindex(structure.pair_scales)]
     FactorizedLocalPBodyJumpPIKernel(Q,structure.groups,contractions,
-                                    structure.pair_scales,term_rate(t))
+                                    structure.pair_scales,scale)
 end
 
 _compiled_kernel_tuple(kernel::Tuple)=kernel
@@ -1638,6 +1784,10 @@ struct LiouvillianPlan{B,K,V,M,T}
 end
 
 _scale_promoted_type(::Type{T},scale::S) where {T,S<:Number}=promote_type(T,S)
+_scale_promoted_type(::Type{T},::_CheckedHamiltonianRate{S,H,R}) where
+    {T,S,H,R}=promote_type(T,R)
+_scale_promoted_type(::Type{T},::_CheckedDissipativeRate{S,R}) where
+    {T,S,R}=promote_type(T,R)
 _scale_promoted_type(::Type{T},scale) where T=T
 _kernel_scalar_type(kernel::HamiltonianPIKernel)=_scale_promoted_type(eltype(first(kernel.blocks)),kernel.scale)
 _kernel_scalar_type(kernel::DissipatorPIKernel)=_scale_promoted_type(eltype(first(kernel.blocks)),kernel.scale)
@@ -2165,6 +2315,13 @@ _prepare_kernel!(::Union{FactorizedLocalJumpPIKernel,
                          FactorizedLocalPBodyJumpPIKernel,
                          FusedStaticPIKernel},
                  ::StaticFactorizedGainKernelWorkspace,b,t,p)=nothing
+_dynamic_isfinite(operator::AbstractMatrix)=all(isfinite,operator)
+_dynamic_isfinite(operator::AbstractPIOperator)=all(isfinite,operator.data)
+function _check_dynamic_operator_finite(operator)
+    _dynamic_isfinite(operator)||throw(ArgumentError(
+        "an in-place operator callback produced a non-finite coefficient"))
+    operator
+end
 _dynamic_ishermitian(operator::AbstractMatrix)=ishermitian(operator)
 function _dynamic_ishermitian(operator::AbstractPIOperator)
     for sector in operator.basis.sectors
@@ -2178,6 +2335,7 @@ end
 function _prepare_kernel!(kernel::InPlaceHamiltonianPIKernel,
                           work::InPlaceHamiltonianKernelWorkspace,b,t,p)
     _evaluate_time_operator!(work.operator,kernel.schedule,t,p)
+    _check_dynamic_operator_finite(work.operator)
     _check_dynamic_pbody_operator(kernel.builder,work.operator)
     _dynamic_ishermitian(work.operator)||throw(ArgumentError(
         "an in-place Hamiltonian callback produced a non-Hermitian operator"))
@@ -2189,6 +2347,7 @@ end
 function _prepare_kernel!(kernel::InPlaceDissipatorPIKernel,
                           work::InPlaceDissipatorKernelWorkspace,b,t,p)
     _evaluate_time_operator!(work.operator,kernel.schedule,t,p)
+    _check_dynamic_operator_finite(work.operator)
     _check_dynamic_pbody_operator(kernel.builder,work.operator)
     _fill_dynamic_blocks!(
         work.blocks,kernel.builder,work.operator,
@@ -2201,6 +2360,7 @@ end
 function _prepare_kernel!(kernel::InPlaceLocalPBodyJumpPIKernel,
                           work::InPlaceLocalPBodyJumpKernelWorkspace,b,t,p)
     _evaluate_time_operator!(work.operator,kernel.schedule,t,p)
+    _check_dynamic_operator_finite(work.operator)
     _check_dynamic_pbody_operator(kernel.builder,work.operator)
     mul!(work.qoperator,adjoint(work.operator),work.operator)
     _fill_dynamic_blocks!(
@@ -2231,6 +2391,7 @@ end
 function _prepare_kernel!(kernel::InPlaceLocalJumpPIKernel,
                           work::InPlaceLocalJumpKernelWorkspace,b,t,p)
     _evaluate_time_operator!(work.operator,kernel.schedule,t,p)
+    _check_dynamic_operator_finite(work.operator)
     mul!(work.qoperator,adjoint(work.operator),work.operator)
     _fill_dynamic_blocks!(work.qblocks,
         CollectiveOneBodyBlockBuilder(kernel.geometry),work.qoperator)
@@ -3070,6 +3231,8 @@ function apply!(y::AbstractVector,plan::LiouvillianPlan,x::AbstractVector,t,p,
                 work::LiouvillianWorkspace)
     n=length(plan.basis)
     length(x)==n&&length(y)==n||throw(DimensionMismatch("Liouvillian vector has the wrong length"))
+    Base.mightalias(y,x)&&throw(ArgumentError(
+        "Liouvillian source and destination must not alias"))
     _check_liouvillian_workspace(work,plan)
     _check_liouvillian_apply_types(y,x,plan)
     if plan.kernels===nothing
@@ -3086,6 +3249,8 @@ function apply!(Y::AbstractMatrix,plan::LiouvillianPlan,X::AbstractMatrix,t,p,
     n=length(plan.basis)
     size(X,1)==n||throw(DimensionMismatch("matrix input has the wrong leading dimension"))
     size(Y)==(n,size(X,2))||throw(DimensionMismatch("matrix output has the wrong dimensions"))
+    Base.mightalias(Y,X)&&throw(ArgumentError(
+        "Liouvillian source and destination must not alias"))
     _check_liouvillian_workspace(work,plan)
     _check_liouvillian_apply_types(Y,X,plan)
     if plan.kernels===nothing
@@ -3126,6 +3291,8 @@ function apply_adjoint!(y::AbstractVector,plan::LiouvillianPlan,x::AbstractVecto
                         t,p,work::LiouvillianWorkspace)
     n=length(plan.basis)
     length(x)==n&&length(y)==n||throw(DimensionMismatch("Liouvillian vector has the wrong length"))
+    Base.mightalias(y,x)&&throw(ArgumentError(
+        "Liouvillian source and destination must not alias"))
     _check_liouvillian_workspace(work,plan)
     _check_liouvillian_apply_types(y,x,plan)
     if plan.kernels===nothing
@@ -3145,6 +3312,8 @@ function apply_adjoint!(Y::AbstractMatrix,plan::LiouvillianPlan,X::AbstractMatri
     n=length(plan.basis)
     size(X,1)==n||throw(DimensionMismatch("matrix input has the wrong leading dimension"))
     size(Y)==(n,size(X,2))||throw(DimensionMismatch("matrix output has the wrong dimensions"))
+    Base.mightalias(Y,X)&&throw(ArgumentError(
+        "Liouvillian source and destination must not alias"))
     _check_liouvillian_workspace(work,plan)
     _check_liouvillian_apply_types(Y,X,plan)
     if plan.kernels===nothing
@@ -3824,7 +3993,13 @@ function _model_preparation_bytes(model::PIModel;
         bigfloat_precision::Integer=precision(BigFloat),
         coefficient_cache=nothing)
     n=length(model.basis);R=_model_geometry_type(model)
-    T=Complex{R}
+    P=R
+    for term in model.terms
+        P=_prepared_rate_precision(P,term_rate(term))
+        term isa _HamiltonianPITerm&&
+            (P=_prepared_rate_precision(P,term_hbar(term)))
+    end
+    T=Complex{P}
     requirements=_model_onebox_requirements(model,R)
     geometry=_estimate_model_geometry(
         model;bigfloat_precision).setup_bytes
@@ -4248,6 +4423,91 @@ function _trace_vector(b::PIBasis,::Type{T}=ComplexF64) where T
     t
 end
 
+@inline _stationary_factorization_supported(::Type{T}) where T =
+    T === ComplexF64
+
+function _stationary_factorization_error(::Type{T},method) where T
+    ArgumentError(
+        "steady-state method=:$method requires a sparse/dense factorization, " *
+        "which is not supported for prepared scalar type $T without narrowing; " *
+        "use method=:krylov for a matrix-free solve, or explicitly convert the " *
+        "operator and trace data to Float64/ComplexF64")
+end
+
+function _checked_shiftinvert_scalar(value,::Type{T},name::AbstractString;
+                                     nonzero::Bool=false) where T
+    value isa Number||throw(ArgumentError("$name must be a finite number"))
+    !_exact_number(value)&&promote_type(T,typeof(value))!==T&&throw(ArgumentError(
+        "$name cannot be represented in sparse shift-invert factorization " *
+        "precision $T without narrowing; use method=:krylov or explicitly " *
+        "convert $name to $T"))
+    converted = try
+        convert(T,value)
+    catch
+        throw(ArgumentError(
+            "$name cannot be represented in sparse shift-invert factorization " *
+            "precision $T"))
+    end
+    isfinite(real(converted))&&isfinite(imag(converted))||throw(ArgumentError(
+        "$name must be finite"))
+    !iszero(real(value))&&iszero(real(converted))&&throw(ArgumentError(
+        "the real component of $name underflows in sparse shift-invert " *
+        "factorization precision $T; use method=:krylov"))
+    !iszero(imag(value))&&iszero(imag(converted))&&throw(ArgumentError(
+        "the imaginary component of $name underflows in sparse shift-invert " *
+        "factorization precision $T; use method=:krylov"))
+    if nonzero
+        iszero(converted)&&throw(ArgumentError(
+            "shift-invert requires a nonzero $name near the stationary eigenvalue"))
+    end
+    converted
+end
+
+_shiftinvert_initial_data(initial_state::PIState)=initial_state.data
+_shiftinvert_initial_data(initial_state)=initial_state
+
+function _check_shiftinvert_initial(initial_state,::Type{T},n::Integer) where T
+    initial_state===nothing&&return nothing
+    data=_shiftinvert_initial_data(initial_state)
+    data isa AbstractVector||throw(ArgumentError(
+        "initial_state must be a vector or PIState"))
+    length(data)==n||throw(DimensionMismatch("initial_state has wrong length"))
+    for value in data
+        value isa Number||throw(ArgumentError(
+            "initial_state entries must be finite numbers"))
+        !_exact_number(value)&&promote_type(T,typeof(value))!==T&&
+            throw(ArgumentError(
+                "initial_state cannot be represented in sparse shift-invert " *
+                "factorization precision $T without narrowing; use " *
+                "method=:krylov or explicitly convert it to $T"))
+        converted = try
+            convert(T,value)
+        catch
+            throw(ArgumentError(
+                "initial_state cannot be represented in sparse shift-invert " *
+                "factorization precision $T"))
+        end
+        isfinite(real(converted))&&isfinite(imag(converted))||
+            throw(ArgumentError("initial_state entries must be finite"))
+        !iszero(real(value))&&iszero(real(converted))&&throw(ArgumentError(
+            "a real initial_state component underflows in sparse " *
+            "shift-invert factorization precision $T; use method=:krylov"))
+        !iszero(imag(value))&&iszero(imag(converted))&&throw(ArgumentError(
+            "an imaginary initial_state component underflows in sparse " *
+            "shift-invert factorization precision $T; use method=:krylov"))
+    end
+    data
+end
+
+function _copy_shiftinvert_initial(data,::Type{T}) where T
+    result=Vector{T}(undef,length(data))
+    for (destination_index,source_index) in zip(eachindex(result),
+                                                 eachindex(data))
+        result[destination_index]=convert(T,data[source_index])
+    end
+    result
+end
+
 function _materialize(L)
     L isa AbstractMatrix && return L
     L isa MatrixFreeLiouvillian && _require_autonomous(L, "materialization")
@@ -4278,7 +4538,13 @@ manifold; `:eigen` selects the dense eigenvector closest to zero; and
 constraint and never assembles the Liouvillian. Set `recycle_dim>0` to retain
 an augmentation space in a compatible `RecycledGMRESWorkspace` across a
 sequence of related solves.
-`:auto` validates the direct solve before falling back to SVD.
+`:auto` validates the direct solve before falling back to SVD. When the
+prepared scalar precision is unsupported by Julia's sparse/dense
+factorizations, `:auto` with basic diagnostics selects matrix-free Krylov
+before materializing the operator. An explicitly requested factorizing method
+instead raises with guidance; no wider input is silently narrowed to
+`ComplexF64`. Exact integer/rational shift and initial-state components use
+checked conversion and raise on overflow or nonzero underflow.
 `diagnostics=:basic` reports residual and trace checks without an extra dense
 factorization. Request `diagnostics=:nullity` only when the numerical
 stationary-space dimension is needed; this performs an SVD for methods that
@@ -4313,7 +4579,26 @@ function steady_state(L; basis=nothing, trace_vector=nothing, method=:auto,
     L isa MatrixFreeLiouvillian && _require_autonomous(L, "steady_state")
     n=size(L,1);size(L,2)==n||throw(DimensionMismatch("L must be square"))
     source_type=_complex_float_type(eltype(L))
-    dense_scalar=promote_type(source_type,ComplexF64)
+    factor_trace_type=trace_vector!==nothing ? eltype(trace_vector) :
+        L isa MatrixFreeLiouvillian ? eltype(L.tracevec) : source_type
+    dense_scalar=promote_type(source_type,factor_trace_type,ComplexF64)
+    shift_initial = method===:shiftinvert ?
+        _check_shiftinvert_initial(initial_state,dense_scalar,n) : nothing
+    if method===:shiftinvert&&shift!==nothing
+        _checked_shiftinvert_scalar(shift,dense_scalar,"shift";nonzero=true)
+    end
+    factorization_supported=_stationary_factorization_supported(dense_scalar)
+    if method===:auto&&!factorization_supported
+        diagnostics===:basic||throw(ArgumentError(
+            "diagnostics=:nullity requires a factorization that is not " *
+            "supported for prepared scalar type $dense_scalar without " *
+            "narrowing; explicitly convert the operator and trace data to " *
+            "Float64/ComplexF64, since matrix-free Krylov reports only basic " *
+            "diagnostics"))
+        method=:krylov
+    elseif method!==:krylov&&!factorization_supported
+        throw(_stationary_factorization_error(dense_scalar,method))
+    end
     dense_arrays=diagnostics===:nullity ? 10 :
         method in (:svd,:eigen,:auto) ? 8 : 6
     dense_estimate=_performance_array_bytes(n,dense_scalar,dense_arrays;
@@ -4395,15 +4680,29 @@ function steady_state(L; basis=nothing, trace_vector=nothing, method=:auto,
     scale=max(opnorm(Mc,Inf),1); tol=atol+rtol*scale
     chosen=method; x=nothing;iterations=0;eigenvalue=nothing;converged=false
     if method===:shiftinvert
-        σ=shift===nothing ? -max(sqrt(eps(Float64))*scale,atol) : ComplexF64(shift)
-        iszero(σ)&&throw(ArgumentError("shift-invert requires a nonzero shift near the stationary eigenvalue"))
+        isfinite(scale)||throw(ArgumentError(
+            "shift-invert requires a Liouvillian with finite entries"))
+        RT=_real_float_type(CT)
+        σ = if shift===nothing
+            default_shift=-max(sqrt(eps(RT))*scale,atol)
+            _checked_shiftinvert_scalar(default_shift,CT,"automatic shift";
+                                        nonzero=true)
+        else
+            _checked_shiftinvert_scalar(shift,CT,"shift";nonzero=true)
+        end
         A=sparse(Mc)-σ*I;fac=lu(A)
-        x = initial_state isa PIState ? ComplexF64.(initial_state.data) :
-            initial_state===nothing ? tc/dot(tc,tc) : ComplexF64.(initial_state)
-        length(x)==n||throw(DimensionMismatch("initial_state has wrong length"));z=dot(tc,x)
-        abs(z)>tol||throw(ArgumentError("initial_state must have nonzero physical trace"));x./=z
+        x = shift_initial===nothing ? tc/dot(tc,tc) :
+            _copy_shiftinvert_initial(shift_initial,CT)
+        z=dot(tc,x)
+        isfinite(real(z))&&isfinite(imag(z))&&abs(z)>tol||throw(ArgumentError(
+            "initial_state must have finite nonzero physical trace"))
+        x./=z
         for it in 1:maxiter
-            y=fac\x;z=dot(tc,y);abs(z)>eps(Float64)||throw(ArgumentError("shift-invert iterate has numerically zero trace"));y./=z
+            y=fac\x;z=dot(tc,y)
+            isfinite(real(z))&&isfinite(imag(z))&&abs(z)>eps(RT)||
+                throw(ArgumentError(
+                    "shift-invert iterate has nonfinite or numerically zero trace"))
+            y./=z
             x=y;iterations=it;res=norm(Mc*x);converged=res<=tol*max(norm(x),1)
             converged&&break
         end

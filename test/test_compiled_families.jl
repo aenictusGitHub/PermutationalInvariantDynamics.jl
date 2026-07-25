@@ -97,8 +97,13 @@
     @test specialize(family).rates==family.default_rates
     @test_throws DimensionMismatch specialize(family,(1.0,2.0))
     @test_throws ArgumentError specialize(family,(1.0,2.0,Inf))
+    @test_throws ArgumentError specialize(family,(1.0,2.0,1.0im))
     @test_throws ArgumentError compile_family(PIModel(basis,(
         LocalJump(spin.jm;rate=(time,parameters)->one(time)),)))
+    @test_throws ArgumentError compile_family(PIModel(basis,(
+        LocalJump(spin.jm;rate=Inf),)))
+    @test_throws ArgumentError compile_family(PIModel(basis,(
+        LocalJump(spin.jm;rate=1.0im),)))
     @test_throws ArgumentError compile_family(prototype;rate_indices=Int[])
     @test_throws ArgumentError compile_family(prototype;rate_indices=(1,1))
     @test_throws BoundsError compile_family(prototype;rate_indices=(4,))
@@ -106,6 +111,36 @@
     one_rate=compile_family(prototype;rate_indices=(3,))
     @test specialize(one_rate,0.31).rates==(0.31,)
     @test_throws ArgumentError specialize(family,0.31)
+
+    # The prototype rate participates in the immutable family plan precision.
+    # This keeps an ordinary Float64 parameter family finite even when its
+    # operator seeds are Float32, while still rejecting later wider values.
+    family32=compile_family(PIModel(basis,(
+        LocalJump(ComplexF32.(spin.jm);rate=1.0),)))
+    @test eltype(family32.plan)===ComplexF64
+    specialized32=specialize(family32,(1.0e-50,))
+    @test all(isfinite,specialized32*ones(ComplexF64,length(basis)))
+    @test_throws ArgumentError specialize(family32,(big"0.1",))
+
+    # Correlated channels add a checked wrapper around the family schedule.
+    # Its prototype precision must propagate through both wrappers so the
+    # Float64 family default is not narrowed to Float32 operator geometry.
+    correlated_matrix=reshape(Float32[1],1,1)
+    correlated_operator=(ComplexF32.(spin.jm),)
+    for constructor in (CorrelatedLocalJumps,CorrelatedCollectiveJumps)
+        correlated_term=constructor(
+            correlated_operator,correlated_matrix;rate=1.0)
+        correlated_family=compile_family(
+            PIModel(basis,(correlated_term,)))
+        @test eltype(correlated_family.plan)===ComplexF64
+        correlated_default=specialize(correlated_family)
+        correlated_reference=liouvillian(
+            PIModel(basis,(correlated_term,));representation=:sparse)
+        @test correlated_default*vector≈correlated_reference*vector atol=1e-6 rtol=1e-6
+        correlated_tiny=specialize(correlated_family,1.0e-50)
+        @test any(!iszero,correlated_tiny*vector)
+    end
+
     @test_throws ArgumentError ParameterScanPlan([0.2],family;
         specialize_options=(backend=:matrixfree,memory_budget=1024,))
 

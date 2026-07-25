@@ -557,10 +557,65 @@ end
     @test_throws ArgumentError PID._scaled_rate(huge_rate,1,Float64)
     @test_throws ArgumentError PID._scaled_rate(1,0,Float64)
     @test_throws ArgumentError PID._scaled_rate(1.0,0.0,Float64)
+    @test_throws ArgumentError PID._scaled_rate(1.0,Inf,Float64)
+    @test_throws ArgumentError PID._scaled_rate(NaN,1.0,Float64)
     exact_plan=LiouvillianPlan(PIModel(b,[
         LocalHamiltonian(sx32;rate=huge_rate,hbar=huge_rate)]))
     @test eltype(exact_plan)===ComplexF32
     @test only(exact_plan.kernels).scale==1f0
+
+    # Fixed floating data participate in preparation precision instead of
+    # being silently rounded to zero or infinity by the operator prototype.
+    tiny_rate=1.0e-50
+    large_rate=1.0e40
+    tiny_hplan=LiouvillianPlan(PIModel(b,[
+        LocalHamiltonian(sx32;rate=tiny_rate)]);fuse_static=Val(false))
+    large_jplan=LiouvillianPlan(PIModel(b,[
+        LocalJump(sx32;rate=large_rate)]);fuse_static=Val(false))
+    @test eltype(tiny_hplan)===ComplexF64
+    @test only(tiny_hplan.kernels).scale==tiny_rate
+    @test eltype(large_jplan)===ComplexF64
+    @test only(large_jplan.kernels).scale==large_rate
+    preparation32=PIModel(b,(
+        PBodyHamiltonian(pair32,2;rate=1f0,hbar=1),))
+    preparation_rate64=PIModel(b,(
+        PBodyHamiltonian(pair32,2;rate=1.0,hbar=1),))
+    preparation_hbar64=PIModel(b,(
+        PBodyHamiltonian(pair32,2;rate=1f0,hbar=1.0),))
+    @test PID._model_geometry_type(preparation32)===Float32
+    @test PID._model_geometry_type(preparation_rate64)===Float32
+    @test PID._estimate_model_geometry(preparation32).setup_bytes==
+          PID._estimate_model_geometry(preparation_rate64).setup_bytes
+    preparation_bytes32=PID._model_preparation_bytes(preparation32)
+    preparation_bytes64=PID._model_preparation_bytes(preparation_rate64)
+    @test preparation_bytes64==PID._model_preparation_bytes(
+        preparation_hbar64)
+    @test preparation_bytes64>preparation_bytes32
+    @test preparation_bytes64-preparation_bytes32==
+          PID._performance_array_bytes(
+              length(b),ComplexF64,0;linear_arrays=16)-
+          PID._performance_array_bytes(
+              length(b),ComplexF32,0;linear_arrays=16)
+    rational_jplan=LiouvillianPlan(PIModel(b,[
+        LocalJump(sx32;rate=1//3)]);fuse_static=Val(false))
+    @test eltype(rational_jplan)===ComplexF32
+    @test only(rational_jplan.kernels).scale≈1f0/3
+    @test_throws ArgumentError LiouvillianPlan(PIModel(b,[
+        LocalJump(sx32;rate=huge_rate)]))
+    for invalid_rate in (Inf,-Inf,NaN,1.0im)
+        @test_throws ArgumentError LiouvillianPlan(PIModel(b,[
+            LocalJump(sx32;rate=invalid_rate)]))
+    end
+
+    # A callable plan has only the operator prototype with which to choose its
+    # scratch precision. Wider evaluated values must therefore fail with
+    # explicit recompilation guidance instead of narrowing.
+    callable_plan=LiouvillianPlan(PIModel(b,[
+        LocalJump(sx32;rate=(t,p)->tiny_rate)]))
+    callable_input=ones(ComplexF32,length(b))
+    @test_throws ArgumentError apply!(
+        similar(callable_input),callable_plan,callable_input,0f0,nothing,
+        LiouvillianWorkspace(callable_plan))
 
     # In the N=18 singlet sector each multiplicity fits in Float16, but the
     # old product f_lambda*f_nu overflowed before its square root was taken.

@@ -336,10 +336,12 @@ For repeated observable, covariance-matrix, or scalar-QFI calls on the same basi
 `cache=OneBodyGeometry(rho.basis)` once and pass `cache=cache`; this avoids
 rebuilding representation geometry without changing the contraction.
 
-Run `julia --project=. benchmark/performance_audit.jl` for the global warmed
-time/allocation report and its sparse-versus-matrix-free precision guards. The
-BenchmarkTools workloads in `benchmark/benchmarks.jl` cover longer statistical
-measurements and larger scaling studies.
+Run
+`julia --startup-file=no --project=benchmark benchmark/performance_audit.jl`
+for the global warmed time/allocation report and its
+sparse-versus-matrix-free precision guards. The BenchmarkTools workloads in
+`benchmark/benchmarks.jl` cover longer statistical measurements and larger
+scaling studies.
 
 ## Information, metrology, and response
 

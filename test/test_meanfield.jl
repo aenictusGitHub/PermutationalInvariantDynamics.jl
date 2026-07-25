@@ -406,6 +406,28 @@ end
     operator_driven = LocalJump((t, p) -> sm; rate=1.0)
     @test_throws ArgumentError MeanFieldPlan(PIModel(finite_model.basis,
                                                      [operator_driven]))
+    for invalid_rate in (Inf,-Inf,NaN,1.0im)
+        @test_throws ArgumentError MeanFieldPlan(
+            N,2,[LocalJump(sm;rate=invalid_rate)])
+    end
+    nonfinite_operator=copy(sm)
+    nonfinite_operator[1,1]=NaN
+    @test_throws ArgumentError MeanFieldPlan(
+        N,2,[LocalJump(nonfinite_operator;rate=1.0)])
+    @test_throws ArgumentError MeanFieldPlan(
+        N,2,[LocalHamiltonian(sx;hbar=0.0)])
+    @test_throws ArgumentError MeanFieldPlan(
+        N,2,[LocalHamiltonian(sx;hbar=Inf)])
+
+    nonfinite_driven=MeanFieldPlan(
+        N,2,[LocalJump(sm;rate=(t,p)->Inf)])
+    complex_driven=MeanFieldPlan(
+        N,2,[LocalJump(sm;rate=(t,p)->1.0im)])
+    @test_throws ArgumentError meanfield_rhs(
+        nonfinite_driven,sigma;time=0.2)
+    @test_throws ArgumentError meanfield_rhs(
+        complex_driven,sigma;time=0.2)
+
     @test !isautonomous(MeanFieldPlan(PIModel(finite_model.basis,
                                               [LocalJump(sm; rate=(t,p)->1.0)])))
     @test_throws ArgumentError meanfield_stationary_state(

@@ -11,8 +11,11 @@ Before changing the public version:
 1. Run the full test suite on Julia 1.10 and current stable Julia from a clean
    checkout, plus the threaded performance gates, Aqua/JET, documentation,
    and representative examples.
-2. Confirm that no root `Manifest.toml`, `quality/Manifest.toml`, generated
-   figure, token, or deploy key is tracked. Keep `docs/Manifest.toml`.
+2. Confirm that `docs/Manifest.toml` is the only tracked `Manifest.toml`.
+   Root, quality, example, benchmark, comparison, optional-test, and notebook
+   manifests are generated locally and must remain untracked. Also confirm
+   that no generated figure, token, private key, or deploy credential is
+   tracked.
 3. Review every public API change, numerical convention, convergence claim,
    and literature comparison. Update `CHANGELOG.md`, `Project.toml`, and the
    version in `CITATION.cff` together.
@@ -20,6 +23,35 @@ Before changing the public version:
    documentation, and citation URLs agree.
 5. Require green GitHub CI and documentation checks on the exact commit that
    will be registered.
+
+## Documentation deployment
+
+Documenter publishes generated pages to the `gh-pages` branch. In repository
+**Settings → Pages**, select **Deploy from a branch**, then choose
+`gh-pages` and `/(root)`. The branch is generated deployment output: do not
+merge it into `main` or edit it as package source.
+
+The documentation workflow currently deploys with the job-scoped
+`GITHUB_TOKEN`. The repository also uses an SSH deploy key for TagBot and
+CompatHelper. Generate that key pair with DocumenterTools for this repository,
+then install it as follows:
+
+1. Add the public key under **Settings → Deploy keys**, enable write access,
+   and give it a repository-specific name.
+2. Add the corresponding private value under
+   **Settings → Secrets and variables → Actions** as `DOCUMENTER_KEY`.
+3. Never paste either private key material or the secret value into a tracked
+   file, issue, workflow log, or pull request.
+
+After the first deployment, verify that the `gh-pages` branch exists and that
+the Pages source still points to its root. To recover a missing or stale site,
+run the **Documentation** workflow manually from `main` using
+`workflow_dispatch`. If the deployment cannot push, verify the workflow's
+`contents: write` permission and the repository Actions policy. If TagBot or
+CompatHelper reports SSH authentication failures, replace the deploy-key pair
+and update `DOCUMENTER_KEY`, then rerun the failed workflow. A successful
+manual deployment should recreate or update `gh-pages`; it must not require a
+generated documentation commit on `main`.
 
 ## Registering
 

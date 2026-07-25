@@ -76,7 +76,23 @@ end
 function _mf_check_rate(rate)
     rate isa Union{Number,Function} ||
         throw(ArgumentError("mean-field term rates must be numbers or scalar time-dependent functions"))
+    if rate isa Number
+        rate isa Real ||
+            throw(ArgumentError("fixed mean-field term rates must be real numbers"))
+        isfinite(rate) ||
+            throw(ArgumentError("fixed mean-field term rates must be finite"))
+    end
     rate
+end
+
+function _mf_check_hbar(hbar)
+    hbar isa Real ||
+        throw(ArgumentError("mean-field Hamiltonian hbar must be a real number"))
+    isfinite(hbar) ||
+        throw(ArgumentError("mean-field Hamiltonian hbar must be finite"))
+    iszero(hbar) &&
+        throw(ArgumentError("mean-field Hamiltonian hbar must be nonzero"))
+    hbar
 end
 
 function _mf_check_operator(operator, d::Int, p::Int, name::AbstractString;
@@ -88,6 +104,8 @@ function _mf_check_operator(operator, d::Int, p::Int, name::AbstractString;
         throw(ArgumentError("$name must be a fixed matrix"))
     D=d^p
     size(operator)==(D,D) || throw(DimensionMismatch("$name must be $D×$D"))
+    all(isfinite,operator) ||
+        throw(ArgumentError("$name must contain only finite entries"))
     hermitian && !ishermitian(operator) &&
         throw(ArgumentError("mean-field Hamiltonians must be Hermitian"))
     if symmetric && p>1
@@ -152,13 +170,15 @@ function _mf_lower(term,N,d,limit)
     rate=_mf_check_rate(term_rate(term))
     if term isa Union{LocalHamiltonian,CollectiveHamiltonian}
         H=_mf_check_operator(term_operator(term),d,1,"one-particle Hamiltonian";hermitian=true)
-        return _MFHamiltonianRule(H,rate,term.hbar,1,_mf_numeric_count(1,H,rate,term.hbar))
+        hbar=_mf_check_hbar(term.hbar)
+        return _MFHamiltonianRule(H,rate,hbar,1,_mf_numeric_count(1,H,rate,hbar))
     elseif term isa PBodyHamiltonian
         1<=term.p<=N || throw(ArgumentError("term body order $(term.p) must satisfy 1 ≤ p ≤ N=$N"))
         H=_mf_check_operator(term_operator(term),d,term.p,"$(term.p)-particle Hamiltonian";
                              hermitian=true,symmetric=true)
-        count=_mf_numeric_count(_mf_subset_count(N,term.p,Val(limit)),H,rate,term.hbar)
-        return _MFHamiltonianRule(H,rate,term.hbar,term.p,count)
+        hbar=_mf_check_hbar(term.hbar)
+        count=_mf_numeric_count(_mf_subset_count(N,term.p,Val(limit)),H,rate,hbar)
+        return _MFHamiltonianRule(H,rate,hbar,term.p,count)
     elseif term isa LocalJump
         L=_mf_check_operator(term_operator(term),d,1,"one-particle jump")
         return _MFLocalJumpRule(L,copy(adjoint(L)*L),copy(adjoint(L)),rate,1,
@@ -298,7 +318,10 @@ end
 
 @inline function _mf_rate(rule,t,parameters,work)
     rate=value_at(rule.rate,t,parameters)
-    rate isa Number || throw(ArgumentError("a mean-field term rate must evaluate to a scalar number"))
+    rate isa Real ||
+        throw(ArgumentError("a mean-field term rate must evaluate to a real number"))
+    isfinite(rate) ||
+        throw(ArgumentError("a mean-field term rate must evaluate to a finite real number"))
     T=eltype(work.stage)
     promote_type(typeof(rate),T)===T || throw(ArgumentError(
         "evaluated rate type $(typeof(rate)) cannot be represented by mean-field workspace type $T; construct the plan/state at the required precision"))

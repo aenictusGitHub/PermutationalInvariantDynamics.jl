@@ -13,6 +13,8 @@ function measure(label,f; samples=3)
 end
 
 println("PermutationalInvariantDynamics performance audit")
+println("Julia $(VERSION); Julia threads=$(Threads.nthreads()); " *
+        "BLAS threads=$(BLAS.get_num_threads())")
 println("operation                                time          allocated")
 println("----------------------------------------------------------------")
 
@@ -146,8 +148,9 @@ diffusive_model=PIModel(b,(CollectiveJump(sm;rate=0.05),))
 diffusive_plan=measure("diffusive trajectory plan",()->DiffusivePlan(
     diffusive_model,homodyne_monitor(sqrt(0.05)*sm;efficiency=0.8));samples=1)
 diffusive_work=DiffusiveWorkspace(diffusive_plan,rho)
+diffusive_rng=MersenneTwister(103)
 measure("prepared diffusive path",()->diffusive_trajectory(
-    diffusive_plan,rho,[0.0,0.002];dt=0.001,rng=MersenneTwister(103),
+    diffusive_plan,rho,[0.0,0.002];dt=0.001,rng=diffusive_rng,
     workspace=diffusive_work,save_states=false);samples=1)
 
 # Composite application is genuinely tensor-mode matrix-free: this audit uses
@@ -162,6 +165,17 @@ composite_y=similar(composite_x)
 composite_work=CompositeSuperoperatorWorkspace(composite_map,composite_x)
 measure("composite workspace application",()->apply!(
     composite_y,composite_map,composite_x,0.0,nothing,composite_work))
+composite_matrix_source=hcat(
+    composite_x,0.5composite_x,complex.(reverse(composite_x)))
+composite_matrix_output=similar(composite_matrix_source)
+composite_matrix_work=CompositeSuperoperatorBatchWorkspace(
+    composite_map;capacity=3)
+measure("composite matrix-RHS application",()->apply!(
+    composite_matrix_output,composite_map,composite_matrix_source,
+    0.0,nothing,composite_matrix_work))
+measure("composite matrix-RHS adjoint",()->apply_adjoint!(
+    composite_matrix_output,composite_map,composite_matrix_source,
+    0.0,nothing,composite_matrix_work))
 
 composite_state=composite_tensor_state(
     composite_basis,rho,ComplexF64[0 0;0 1])
@@ -190,6 +204,159 @@ measure("composite trajectory batch",()->quantum_trajectories(
     composite_trajectory_plan,composite_state,[0.0,0.02],8;
     dt=0.005,seed=105,workspace=composite_batch);samples=1)
 
+# Non-Markovian workflows use three different prepared representations:
+# identical local modes enlarge each PI supersite, one shared mode is a
+# composite factor, and HEOM/HOPS attach hierarchy nodes to PI coordinates or
+# Schur pseudo-kets.  Audit setup, retained workspace, hot action, and
+# reductions separately.
+local_mode=BosonicPseudomode(
+    1;frequency=0.73,damping=0.31,label=:audit_local)
+local_coupling=PseudomodeCoupling(
+    sm;mode=:audit_local,strength=0.16)
+local_site=measure("local pseudomode supersite",()->
+    pseudomode_supersite(3,2,local_mode);samples=1)
+local_zero=zeros(ComplexF64,2,2)
+local_embedding=measure("local pseudomode model",()->
+    pseudomode_model(
+        local_site,local_zero;couplings=local_coupling);samples=1)
+local_prepared=measure("local pseudomode compile",()->
+    compile(
+        local_embedding.model;backend=:matrixfree,
+        memory_budget=Inf);samples=1)
+local_state=pseudomode_product_state(
+    local_embedding.supersite,ComplexF64[0,1])
+local_output=similar(local_state.data)
+local_work=LiouvillianWorkspace(local_prepared)
+measure("local pseudomode apply",()->apply!(
+    local_output,local_prepared,local_state.data,
+    0.0,nothing,local_work))
+local_trace_plan=measure("local pseudomode trace plan",()->
+    pseudomode_trace_plan(local_embedding.supersite);samples=1)
+local_trace_work=LocalFactorTraceWorkspace(local_trace_plan)
+local_trace_output=PIState(local_trace_plan.output_basis)
+measure("local pseudomode trace",()->trace_pseudomodes!(
+    local_trace_output,local_state,local_embedding.supersite,
+    local_trace_plan,local_trace_work;check=false))
+local_expected=iid_pure_state(
+    local_trace_plan.output_basis,ComplexF64[0,1])
+isapprox(
+    local_trace_output.data,local_expected.data;
+    atol=3e-11,rtol=3e-11)||error(
+    "precision guard failed: local pseudomode trace differs")
+@printf("  Local pseudomode: d=%d, PI coordinates=%d, trace-plan retained %.3f MiB\n",
+        local_embedding.basis.d,length(local_embedding.basis),
+        Float64(local_trace_plan.estimates.retained_bytes)/2.0^20)
+
+global_mode=BosonicPseudomode(
+    2;frequency=0.73,damping=0.31,label=:audit_shared)
+global_coupling=PseudomodeCoupling(
+    sm;mode=:audit_shared,strength=0.16)
+global_system=PIModel(PIBasis(4,2),(
+    LocalJump(sm;rate=0.04),))
+global_embedding=measure("global pseudomode model",()->
+    global_pseudomode_model(
+        global_system,global_mode;
+        couplings=global_coupling);samples=1)
+global_work=measure("global pseudomode workspace",()->
+    global_pseudomode_workspace(global_embedding);samples=1)
+global_state=pseudomode_product_state(
+    global_embedding,ComplexF64[0,1])
+global_output=similar(global_state.data)
+measure("global pseudomode apply",()->apply!(
+    global_output,global_embedding,global_state.data,global_work))
+global_adjoint=similar(global_output)
+measure("global pseudomode adjoint",()->apply_adjoint!(
+    global_adjoint,global_embedding,global_state.data,global_work))
+abs(dot(global_embedding.trace_vector,global_output))<=3e-11||error(
+    "precision guard failed: global pseudomode action changes trace")
+global_system_output=PIState(global_embedding.system_basis)
+global_mode_output=zeros(
+    ComplexF64,global_mode.levels,global_mode.levels)
+measure("global pseudomode system trace",()->trace_pseudomodes!(
+    global_system_output,global_state,global_embedding))
+measure("global pseudomode mode trace",()->global_pseudomode_state!(
+    global_mode_output,global_state,global_embedding))
+@printf("  Global pseudomode: composite coordinates=%d, workspace %.3f MiB\n",
+        length(global_embedding.basis),
+        Base.summarysize(global_work)/2.0^20)
+
+hierarchy_basis=PIBasis(6,2)
+hierarchy_spin=spin_matrices()
+hierarchy_model=qubit_ensemble_model(
+    hierarchy_basis;emission=0.04)
+hierarchy_coupling=collective_operator(
+    hierarchy_basis,hierarchy_spin.jz)
+hierarchy_bath=HEOMBath(
+    hierarchy_coupling,[0.18,0.05],[1.1,1.7];
+    right_coefficients=[0.18,0.05])
+heom_plan=measure("PI-HEOM plan (K=2, depth=2)",()->
+    HEOMPlan(
+        hierarchy_model,hierarchy_bath;
+        max_depth=2,scaling=:scaled);samples=1)
+heom_work=measure("PI-HEOM batch workspace",()->
+    HEOMWorkspace(heom_plan;batch_columns=3);samples=1)
+heom_source=randn(
+    MersenneTwister(0x48454f4d),ComplexF64,size(heom_plan,1))
+heom_output=similar(heom_source)
+measure("PI-HEOM prepared apply",()->apply!(
+    heom_output,heom_plan,heom_source,heom_work))
+abs(dot(heom_plan.tracevec,heom_output))<=5e-10||error(
+    "precision guard failed: PI-HEOM root trace changes")
+heom_adjoint=similar(heom_source)
+measure("PI-HEOM prepared adjoint",()->apply_adjoint!(
+    heom_adjoint,heom_plan,heom_source,heom_work))
+heom_batch_source=hcat(
+    heom_source,0.5heom_source,complex.(reverse(heom_source)))
+heom_batch_output=similar(heom_batch_source)
+measure("PI-HEOM batch width=3",()->apply!(
+    heom_batch_output,heom_plan,heom_batch_source,heom_work))
+heom_probe=randn(
+    MersenneTwister(0x48454f4e),ComplexF64,size(heom_plan,1))
+heom_probe_adjoint=similar(heom_probe)
+apply_adjoint!(
+    heom_probe_adjoint,heom_plan,heom_probe,heom_work)
+isapprox(
+    dot(heom_probe,heom_output),
+    dot(heom_probe_adjoint,heom_source);
+    atol=5e-10,rtol=5e-10)||error(
+    "precision guard failed: PI-HEOM adjoint duality differs")
+@printf("  PI-HEOM: ADOs=%d, coordinates=%d, workspace %.3f MiB\n",
+        heom_number_ados(heom_plan),size(heom_plan,1),
+        Base.summarysize(heom_work)/2.0^20)
+
+hops_hamiltonian=collective_operator(
+    hierarchy_basis,0.11 .* hierarchy_spin.jx)
+hops_bath=HOPSBath(
+    hierarchy_coupling,[0.18,0.05],[1.1,1.7])
+hops_plan=measure("PI-HOPS plan (K=2, depth=2)",()->
+    HOPSPlan(
+        hops_hamiltonian,hops_bath;
+        max_depth=2,scaling=:scaled);samples=1)
+hops_work=measure("PI-HOPS workspace",()->
+    HOPSWorkspace(hops_plan);samples=1)
+hops_source=randn(
+    MersenneTwister(0x484f5053),ComplexF64,size(hops_plan,1))
+hops_output=similar(hops_source)
+hops_noise=ComplexF64[0.03-0.01im]
+measure("PI-HOPS conditioned RHS",()->hops_rhs!(
+    hops_output,hops_plan,hops_source,hops_noise,hops_work))
+hops_repeated=similar(hops_output)
+hops_rhs!(
+    hops_repeated,hops_plan,hops_source,hops_noise,hops_work)
+hops_repeated==hops_output||error(
+    "precision guard failed: PI-HOPS conditioned action is not repeatable")
+hops_initial=weak_pi_pseudoket(iid_pure_state(
+    hierarchy_basis,ComplexF64[1,1]/sqrt(2)))
+hops_batch=HOPSBatchWorkspace(hops_plan;workers=1)
+hops_times=[0.0,0.01,0.02]
+measure("PI-HOPS reused 16-path mean",()->hops_average(
+    hops_plan,hops_initial,hops_times,16;
+    dt=0.005,seed=0x484f5053,threaded=false,
+    workspace=hops_batch);samples=1)
+@printf("  PI-HOPS: auxiliaries=%d, coordinates=%d, workspace %.3f MiB\n",
+        hops_number_auxiliaries(hops_plan),size(hops_plan,1),
+        Base.summarysize(hops_work)/2.0^20)
+
 identity_map=identity_channel(b);channel_output=PIState(b)
 measure("in-place PI channel",()->apply_channel!(
     channel_output,identity_map,rho))
@@ -209,12 +376,42 @@ measure("prepared two-time correlation",()->two_time_correlation!(
     correlation_output,correlation_plan,rho,correlation_delays;
     steps_per_interval=2,workspace=correlation_work))
 
-floquet_map=Matrix{ComplexF64}(I,length(b),length(b))
-floquet_map[1,2]=0.001
+floquet_period=0.2
+floquet_h_rate=let period=floquet_period
+    (time,parameters)->0.07sin(2pi*time/period)
+end
+floquet_jump_rate=let period=floquet_period
+    (time,parameters)->0.2+0.03cos(2pi*time/period)
+end
+floquet_model=PIModel(b,(
+    LocalHamiltonian(sx;rate=floquet_h_rate),
+    LocalJump(sm;rate=floquet_jump_rate)))
+prepared_floquet=measure("matrix-free FloquetMap setup",()->
+    floquet_map(
+        floquet_model,floquet_period;steps=16);samples=1)
+floquet_work=FloquetWorkspace(prepared_floquet)
+floquet_input=copy(rho.data)
+floquet_output=similar(floquet_input)
+measure("preallocated Floquet period",()->apply!(
+    floquet_output,prepared_floquet,floquet_input,floquet_work))
+floquet_batch_input=hcat(
+    floquet_input,0.5floquet_input,complex.(reverse(floquet_input)))
+floquet_batch_output=similar(floquet_batch_input)
+floquet_batch_work=FloquetBatchWorkspace(
+    prepared_floquet,3;mode=:forward)
+measure("preallocated Floquet batch",()->apply!(
+    floquet_batch_output,prepared_floquet,
+    floquet_batch_input,floquet_batch_work))
+isapprox(
+    view(floquet_batch_output,:,1),floquet_output;
+    atol=5e-11,rtol=5e-11)||error(
+    "precision guard failed: Floquet vector and batch actions differ")
+abs(trace(PIState(b,floquet_output))-trace(rho))<=5e-11||error(
+    "precision guard failed: Floquet period changes trace")
 measure("Floquet repeated-vector evolution",()->floquet_evolve(
-    rho,floquet_map,8))
+    rho,prepared_floquet,8))
 measure("stroboscopic saved evolution",()->stroboscopic_evolution(
-    rho,floquet_map,8))
+    rho,prepared_floquet,8))
 spin=spin_matrices()
 population_model=qubit_ensemble_model(b;
     hamiltonian=spin.jz,emission=0.4,dephasing=0.1,pumping=0.07,
@@ -262,6 +459,34 @@ qutrit_reduction_plan=measure("packed qutrit reduction plan (N=2)",()->
         string(qutrit_reduction_plan.estimates.retained_entries),
         string(qutrit_reduction_plan.estimates.dense_entries),
         Float64(qutrit_reduction_plan.estimates.retained_bytes)/2.0^10)
+prepared_qutrit_basis=PIBasis(3,3)
+prepared_qutrit_local=ComplexF64[
+    0.50 0.06+0.02im 0.03-0.01im
+    0.06-0.02im 0.30 0.04+0.01im
+    0.03+0.01im 0.04-0.01im 0.20
+]
+prepared_qutrit_state=iid_state(
+    prepared_qutrit_basis,prepared_qutrit_local)
+prepared_qutrit_plan=measure("packed qutrit reduction plan (N=3)",()->
+    ReductionPlan(prepared_qutrit_basis,2);samples=1)
+prepared_qutrit_work=ReductionWorkspace(
+    prepared_qutrit_plan,prepared_qutrit_state;mode=:reduction)
+prepared_qutrit_output=PIState(
+    prepared_qutrit_plan.output_basis)
+measure("packed qutrit reduced_state!",()->reduced_state!(
+    prepared_qutrit_output,prepared_qutrit_state,
+    prepared_qutrit_plan,prepared_qutrit_work;check=false))
+prepared_qutrit_expected=iid_state(
+    prepared_qutrit_plan.output_basis,prepared_qutrit_local)
+isapprox(
+    prepared_qutrit_output.data,prepared_qutrit_expected.data;
+    atol=5e-10,rtol=5e-10)||error(
+    "precision guard failed: packed qutrit reduction differs")
+@printf("  Prepared qutrit LR support: %s / %s entries, plan %.3f MiB, workspace %.3f MiB\n",
+        string(prepared_qutrit_plan.estimates.retained_entries),
+        string(prepared_qutrit_plan.estimates.dense_entries),
+        Base.summarysize(prepared_qutrit_plan)/2.0^20,
+        Base.summarysize(prepared_qutrit_work)/2.0^20)
 measure("reduced state (prepared)",()->reduced_state(rho,5;plan=reduction_plan))
 reduction_work=ReductionWorkspace(reduction_plan,rho)
 reduction_only_work=ReductionWorkspace(reduction_plan,rho;mode=:reduction)
@@ -332,6 +557,46 @@ bp=PIBasis(6,2);pair=kron(sm,sm);mp=PIModel(bp,[LocalPBodyJump(pair,2)])
 Lmp=measure("p-body matrix-free construction",()->liouvillian(mp;representation=:matrixfree);samples=1)
 rhop=iid_pure_state(bp,ComplexF64[0,1]);yp=similar(rhop.data)
 measure("p-body matrix-free application",()->mul!(yp,Lmp,rhop.data))
+qutrit_pbody_basis=PIBasis(3,3)
+qutrit_lowering=ComplexF64[0 1 0;0 0 1;0 0 0]
+qutrit_x=qutrit_lowering+adjoint(qutrit_lowering)
+qutrit_pbody_model=PIModel(qutrit_pbody_basis,(
+    PBodyHamiltonian(kron(qutrit_x,qutrit_x),2;rate=0.08),
+    LocalPBodyJump(
+        kron(qutrit_lowering,qutrit_lowering),2;rate=0.05)))
+qutrit_pbody_sparse=measure("qutrit p-body sparse compile",()->
+    compile(
+        qutrit_pbody_model;backend=:sparse,
+        memory_budget=Inf);samples=1)
+qutrit_pbody_prepared=measure("qutrit p-body matrix-free compile",()->
+    compile(
+        qutrit_pbody_model;backend=:matrixfree,
+        memory_budget=Inf);samples=1)
+qutrit_pbody_work=LiouvillianWorkspace(qutrit_pbody_prepared)
+qutrit_pbody_input=randn(
+    MersenneTwister(0x5032),ComplexF64,length(qutrit_pbody_basis))
+qutrit_pbody_output=similar(qutrit_pbody_input)
+qutrit_pbody_reference=similar(qutrit_pbody_input)
+measure("qutrit p-body prepared apply",()->apply!(
+    qutrit_pbody_output,qutrit_pbody_prepared,
+    qutrit_pbody_input,0.0,nothing,qutrit_pbody_work))
+mul!(
+    qutrit_pbody_reference,qutrit_pbody_sparse,
+    qutrit_pbody_input)
+isapprox(
+    qutrit_pbody_output,qutrit_pbody_reference;
+    atol=5e-11,rtol=5e-11)||error(
+    "precision guard failed: qutrit p-body actions differ")
+measure("qutrit p-body prepared adjoint",()->apply_adjoint!(
+    qutrit_pbody_output,qutrit_pbody_prepared,
+    qutrit_pbody_input,0.0,nothing,qutrit_pbody_work))
+apply_adjoint!(
+    qutrit_pbody_reference,qutrit_pbody_sparse,
+    qutrit_pbody_input)
+isapprox(
+    qutrit_pbody_output,qutrit_pbody_reference;
+    atol=5e-11,rtol=5e-11)||error(
+    "precision guard failed: qutrit p-body adjoints differ")
 pbody_setup_basis=PIBasis(6,3)
 coefficient_cache=measure("one-box CG cache d=3 depth=3",()->
     OneBoxCGCache(pbody_setup_basis;max_depth=3,T=Float64);samples=1)

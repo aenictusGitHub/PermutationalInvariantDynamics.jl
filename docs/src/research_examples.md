@@ -118,7 +118,7 @@ shifted-GMRES and exponential-action arrays across `resolvent_norm`,
 matrix-free resolvent is a converged power/GMRES estimate rather than a
 rigorous upper bound; every shifted solve must converge. Trace-fixed Poisson
 and tangent solves report their physical residual and trace error. See
-[Matrix-free Krylov solvers](matrix_free_krylov.md#matrix-free-response-and-adjoint-analysis).
+[Matrix-free Krylov solvers](matrix_free_krylov.md#Matrix-free-response-and-adjoint-analysis).
 
 ## Several PI ensembles and finite auxiliaries
 

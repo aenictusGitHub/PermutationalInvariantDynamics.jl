@@ -70,6 +70,54 @@ function _working_tree_sha256(root)
     end
 end
 
+function _file_sha256(path)
+    path === nothing && return "absent"
+    isfile(path) || return "absent"
+    try
+        open(path, "r") do io
+            bytes2hex(sha256(io))
+        end
+    catch
+        "unavailable"
+    end
+end
+
+function _active_environment_metadata()
+    project = try
+        Base.active_project()
+    catch
+        nothing
+    end
+    project_path = project === nothing ? nothing : abspath(project)
+    manifest = if project_path === nothing
+        nothing
+    else
+        try
+            Base.project_file_manifest_path(project_path)
+        catch
+            nothing
+        end
+    end
+    manifest_path = manifest === nothing ? nothing : abspath(manifest)
+    (;
+        project_path=project_path === nothing ? "absent" : project_path,
+        project_sha256=_file_sha256(project_path),
+        manifest_path=manifest_path === nothing ? "absent" : manifest_path,
+        manifest_sha256=_file_sha256(manifest_path),
+    )
+end
+
+function _startup_file_disabled()
+    setting = try
+        Base.JLOptions().startupfile
+    catch
+        return "unknown"
+    end
+    setting == 2 && return "true"
+    setting in (0, 1) && return "false"
+    "unknown"
+end
+
 """Return ordered, machine-readable metadata for a benchmark run."""
 function benchmark_metadata(; mode, requested_samples, seconds, warmups,
                             output, repository_root=pwd(),
@@ -77,11 +125,17 @@ function benchmark_metadata(; mode, requested_samples, seconds, warmups,
     root = abspath(repository_root)
     status = _command_output(`git -C $root status --porcelain`)
     dirty = status == "unavailable" ? "unknown" : string(!isempty(status))
+    environment = _active_environment_metadata()
     entries = Pair{String,String}[
-        "schema_version" => "1",
+        "schema_version" => "2",
         "generated_utc" => string(now(UTC)),
         "julia_version" => string(VERSION),
         "benchmarktools_version" => string(Base.pkgversion(BenchmarkTools)),
+        "active_project_path" => environment.project_path,
+        "active_project_sha256" => environment.project_sha256,
+        "active_manifest_path" => environment.manifest_path,
+        "active_manifest_sha256" => environment.manifest_sha256,
+        "startup_file_disabled" => _startup_file_disabled(),
         "os" => string(Sys.KERNEL),
         "arch" => string(Sys.ARCH),
         "cpu_name" => string(Sys.CPU_NAME),

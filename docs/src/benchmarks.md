@@ -7,11 +7,17 @@ versions, solver choices, thread settings, and hardware. A result is useful
 only together with that context and the numerical checks performed on the
 same case.
 
-There are two complementary tracks:
+There are four complementary internal suites and one cross-package track:
 
-1. the internal scaling suite measures preparation, retained memory, and
-   matrix-free application throughout the PI implementation; and
-2. the cross-package suite compares a deliberately small common operation
+1. `performance_regression.jl` supplies deterministic CI correctness,
+   equivalence, retained-storage, and hot-allocation gates without
+   machine-dependent timing thresholds;
+2. `performance_audit.jl` is a broad warmed, human-readable survey;
+3. `benchmarks.jl` is the longer `BenchmarkTools` collection for targeted
+   optimization;
+4. `internal_scaling.jl` retains a stable four-family schema for core PI
+   preparation and application scaling; and
+5. the cross-package runner compares a deliberately small common operation
    with general-purpose Julia quantum-dynamics packages where the underlying
    representations can be matched or clearly identified.
 
@@ -23,26 +29,53 @@ Generated timing tables and local manifests are intentionally ignored rather
 than committed. This avoids presenting one developer machine's measurements
 as package-wide results.
 
+## Internal workflow coverage
+
+The regression, audit, and detailed suites exercise current prepared APIs over
+a broader surface than the fixed internal-scaling runner:
+
+| Workflow | Regression gate | Human-readable audit | Detailed `BenchmarkTools` suite | Internal scaling |
+|---|---|---|---|---|
+| Prepared PI core | sparse/matrix-free equivalence, forward/adjoint batch action, threading, allocation | setup, retained storage, scalar and batch action | separate setup, sparse, matrix-free, driven, threaded, and observable workloads | four fixed qubit/qutrit families |
+| Time evolution and Floquet | low-storage RK4 and adaptive-expv storage checks | RK4, matrix-free Floquet-map setup, period/batch action, and stroboscopic evolution | prepared RK4 and Floquet setup/period/batch workloads | driven one-period action is not included |
+| Appendix-D p-body and reductions | packed-support and allocation checks | p-body geometry/application, qudit reduction, local-factor trace | cached/uncached p-body setup and prepared reduction hot paths | not included |
+| Identical local pseudomodes | supersite compile/application and spin-factor trace checks | prepared supersite construction, action, and reduction | reusable local-pseudomode setup and hot action | not included |
+| Shared/global pseudomodes | matrix-free composite action and subsystem reduction checks | global-mode setup, action, and reduction | prepared global-pseudomode setup and hot action | not included |
+| PI--HEOM | packed hierarchy forward/adjoint/batch checks | hierarchy setup and forward/adjoint/batch action | setup, prepared forward/adjoint/batch action, and preconditioner workloads | not included |
+| PI--HOPS | conditioned hierarchy action and reused-ensemble checks | plan/workspace, conditioned action, and ensemble survey | plan, conditioned action, and reused-ensemble workloads | not included |
+| Composite and stochastic systems | composite scalar/batch/adjoint action plus density, weak-PI, and composite trajectory gates | deterministic composite, batched, diffusive, density, weak-PI, and composite trajectory survey | reusable composite/batch and trajectory workloads | not included |
+| Stationary and spectral solvers | adaptive-expv storage and symmetry-restricted workspace checks | GMRES, Arnoldi, harmonic Arnoldi, symmetry restriction, and preconditioner survey | reusable Krylov, preconditioned, recycled, and multi-shift workloads | not included |
+
+This is a code-path inventory, not a claim that every suite uses the same
+problem size or accuracy target. Regression uses deliberately small
+deterministic stochastic and non-Markovian cases; the audit and detailed suite
+are where their cutoffs, ensemble sizes, or Krylov dimensions should be
+increased.
+
 ## Internal PI scaling suite
 
 From the repository root, prepare the isolated benchmark environment once:
 
 ```sh
-julia --project=benchmark -e 'using Pkg; Pkg.develop(path=pwd()); Pkg.instantiate()'
+julia --startup-file=no --project=benchmark -e \
+  'using Pkg; Pkg.develop(path=pwd()); Pkg.instantiate()'
 ```
 
 Run either the short development grid or the larger research grid:
 
 ```sh
-julia --project=benchmark benchmark/internal_scaling.jl --mode quick
-julia --project=benchmark benchmark/internal_scaling.jl --mode full
+julia --startup-file=no --project=benchmark \
+  benchmark/internal_scaling.jl --mode quick
+julia --startup-file=no --project=benchmark \
+  benchmark/internal_scaling.jl --mode full
 ```
 
 The runner also accepts explicit sample, timing, warm-up, validation-size, and
 output controls. Consult `benchmark/README.md` rather than copying defaults
 into long-lived automation.
 
-The suite contains four families:
+The runner remains the internal-scaling schema-version-2 suite with exactly
+four families:
 
 - all-Schur-sector qubits with local and collective terms;
 - all-Schur-sector qutrits with local and collective terms;
@@ -57,7 +90,10 @@ The current grids are explicit:
 | `full` | `N = 2, 4, 8, 12, 16, 20, 24` | `N = 2, 3, 4, 5, 6` | `N = 4, 8, 16, 32, 48, 64, 96` | `N = 2, 4, 8, 12` |
 
 All current cases use `ComplexF64`. The source script is authoritative for the
-term coefficients and any future grid changes.
+term coefficients and any future grid changes. Pseudomodes, HEOM, HOPS,
+composite dynamics, trajectories, p-body reductions, and solver
+time-to-solution are covered by the broader suites above rather than added to
+this scaling schema.
 
 Every case separates the following phases:
 
@@ -92,16 +128,21 @@ records the same version and the sparse, driven, and automatic-probe policies.
 
 The runner uses `BenchmarkTools`, performs warm-up passes, sets one evaluation
 per sample, and forces BLAS to one thread. Its metadata sidecar records the
-mode and controls, Julia/package and Git information, thread settings, and
-machine details. The default output is
+mode and controls, Julia/package and Git information, thread settings, machine
+details, active project and selected manifest SHA-256 hashes, and whether the
+startup file was disabled. The default output is
 `benchmark/results/internal_scaling_<mode>.tsv` with a sibling
 `.metadata.tsv`; neither is a source artifact.
 
-The older audit and regression entry points serve different purposes:
+The audit, regression, and detailed entry points serve different purposes:
 
 ```sh
-julia --project=. benchmark/performance_audit.jl
-JULIA_NUM_THREADS=4 julia --project=. benchmark/performance_regression.jl
+julia --startup-file=no --project=benchmark \
+  benchmark/performance_audit.jl
+JULIA_NUM_THREADS=4 julia --startup-file=no --project=benchmark \
+  benchmark/performance_regression.jl
+julia --startup-file=no --project=benchmark -e \
+  'include("benchmark/benchmarks.jl"); display(run(SUITE; verbose=true))'
 ```
 
 `performance_audit.jl` is a human-readable warmed timing/allocation survey.

@@ -79,8 +79,10 @@ function (rate::_CheckedCorrelatedRate{S,R})(time,parameters) where {S,R}
     value
 end
 _prepared_correlated_rate(rate::Number,::Type{R}) where R<:AbstractFloat=rate
-_prepared_correlated_rate(rate,::Type{R}) where R<:AbstractFloat=
-    _CheckedCorrelatedRate(rate,R)
+function _prepared_correlated_rate(rate,::Type{R}) where R<:AbstractFloat
+    P=_rate_schedule_precision(rate,R)
+    _CheckedCorrelatedRate(rate,P)
+end
 
 _correlated_tolerance_type(::Nothing)=Union{}
 _correlated_tolerance_type(x::Integer)=Union{}

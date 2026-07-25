@@ -45,6 +45,7 @@ const TEST_FILES=(
     (:workflows,"test_research_utilities.jl"),
     (:workflows,"test_examples.jl"),
     (:workflows,"test_model_code_generator.jl"),
+    (:workflows,"test_benchmark_sources.jl"),
     (:literature,"test_published_models.jl"),
     (:analysis,"test_local_factor_trace.jl"),
     (:analysis,"test_entanglement.jl"),

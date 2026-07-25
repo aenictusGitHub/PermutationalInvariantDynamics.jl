@@ -346,6 +346,236 @@ weak_average=weak_pi_trajectory_average(weak_paths)
 @assert weak_average_alloc<=256*1024 "weak-PI trajectory averaging allocated $weak_average_alloc bytes"
 @assert all(abs(trace(state)-1)<=2e-12 for state in weak_average)
 
+# Local pseudomodes enlarge one identical supersite but remain an ordinary PI
+# model.  Exercise public construction, both generator directions, and the
+# prepared spin-factor trace without reconstructing the full Hilbert space.
+pseudomode_mode=BosonicPseudomode(
+    1;frequency=0.73,damping=0.31,label=:regression_local)
+pseudomode_coupling=PseudomodeCoupling(
+    sm;mode=:regression_local,strength=0.16)
+pseudomode_embedding=pseudomode_model(
+    2,zeros(ComplexF64,2,2),pseudomode_mode;
+    couplings=pseudomode_coupling)
+pseudomode_sparse=compile(
+    pseudomode_embedding.model;backend=:sparse,memory_budget=Inf)
+pseudomode_prepared=compile(
+    pseudomode_embedding.model;backend=:matrixfree,memory_budget=Inf)
+pseudomode_state=pseudomode_product_state(
+    pseudomode_embedding.supersite,ComplexF64[0,1])
+pseudomode_output=similar(pseudomode_state.data)
+pseudomode_reference=similar(pseudomode_state.data)
+pseudomode_work=LiouvillianWorkspace(pseudomode_prepared)
+mul!(
+    pseudomode_reference,pseudomode_sparse,pseudomode_state.data)
+apply!(
+    pseudomode_output,pseudomode_prepared,pseudomode_state.data,
+    0.0,nothing,pseudomode_work)
+@assert isapprox(
+    pseudomode_output,pseudomode_reference;
+    atol=5e-11,rtol=5e-11)
+@assert abs(trace(PIState(
+    pseudomode_embedding.basis,pseudomode_output)))<=5e-11
+pseudomode_apply_alloc=@allocated apply!(
+    pseudomode_output,pseudomode_prepared,pseudomode_state.data,
+    0.0,nothing,pseudomode_work)
+@assert pseudomode_apply_alloc<=4096 "local pseudomode apply allocated $pseudomode_apply_alloc bytes"
+pseudomode_adjoint_source=randn(
+    MersenneTwister(0x50534d41),ComplexF64,
+    length(pseudomode_embedding.basis))
+pseudomode_adjoint_output=similar(pseudomode_adjoint_source)
+pseudomode_adjoint_reference=similar(pseudomode_adjoint_source)
+apply_adjoint!(
+    pseudomode_adjoint_reference,pseudomode_sparse,
+    pseudomode_adjoint_source)
+apply_adjoint!(
+    pseudomode_adjoint_output,pseudomode_prepared,
+    pseudomode_adjoint_source,0.0,nothing,pseudomode_work)
+@assert isapprox(
+    pseudomode_adjoint_output,pseudomode_adjoint_reference;
+    atol=5e-11,rtol=5e-11)
+pseudomode_trace_prepared=pseudomode_trace_plan(
+    pseudomode_embedding.supersite)
+pseudomode_trace_work=LocalFactorTraceWorkspace(
+    pseudomode_trace_prepared)
+pseudomode_trace_output=PIState(
+    pseudomode_trace_prepared.output_basis)
+pseudomode_trace_expected=iid_pure_state(
+    pseudomode_trace_prepared.output_basis,ComplexF64[0,1])
+trace_pseudomodes!(
+    pseudomode_trace_output,pseudomode_state,
+    pseudomode_embedding.supersite,pseudomode_trace_prepared,
+    pseudomode_trace_work;check=false)
+@assert isapprox(
+    pseudomode_trace_output.data,pseudomode_trace_expected.data;
+    atol=5e-11,rtol=5e-11)
+pseudomode_trace_alloc=@allocated trace_pseudomodes!(
+    pseudomode_trace_output,pseudomode_state,
+    pseudomode_embedding.supersite,pseudomode_trace_prepared,
+    pseudomode_trace_work;check=false)
+@assert pseudomode_trace_alloc<=4096 "local pseudomode trace allocated $pseudomode_trace_alloc bytes"
+
+# A single shared mode is kept as a finite composite factor.  Its action and
+# two prepared reductions must remain allocation-free after warm-up.  Adjoint
+# duality supplies an independent matrix-free correctness check.
+global_mode=BosonicPseudomode(
+    1;frequency=0.73,damping=0.31,label=:regression_shared)
+global_coupling=PseudomodeCoupling(
+    sm;mode=:regression_shared,strength=0.16)
+global_system=PIModel(PIBasis(2,2),(
+    LocalJump(sm;rate=0.04),))
+global_embedding=global_pseudomode_model(
+    global_system,global_mode;couplings=global_coupling)
+global_state=pseudomode_product_state(
+    global_embedding,ComplexF64[0,1])
+global_work=global_pseudomode_workspace(global_embedding)
+global_output=similar(global_state.data)
+global_adjoint_source=randn(
+    MersenneTwister(0x47504d41),ComplexF64,
+    length(global_embedding.basis))
+global_adjoint_output=similar(global_adjoint_source)
+apply!(global_output,global_embedding,global_state.data,global_work)
+apply_adjoint!(
+    global_adjoint_output,global_embedding,
+    global_adjoint_source,global_work)
+@assert abs(dot(global_embedding.trace_vector,global_output))<=5e-11
+@assert isapprox(
+    dot(global_adjoint_source,global_output),
+    dot(global_adjoint_output,global_state.data);
+    atol=5e-11,rtol=5e-11)
+global_apply_alloc=@allocated apply!(
+    global_output,global_embedding,global_state.data,global_work)
+@assert global_apply_alloc<=4096 "global pseudomode apply allocated $global_apply_alloc bytes"
+global_system_output=PIState(global_embedding.system_basis)
+global_mode_output=zeros(
+    ComplexF64,global_mode.levels,global_mode.levels)
+trace_pseudomodes!(
+    global_system_output,global_state,global_embedding)
+global_pseudomode_state!(
+    global_mode_output,global_state,global_embedding)
+global_system_expected=iid_pure_state(
+    global_embedding.system_basis,ComplexF64[0,1])
+global_mode_expected=
+    global_mode.vacuum*adjoint(global_mode.vacuum)
+@assert isapprox(
+    global_system_output.data,global_system_expected.data;
+    atol=5e-11,rtol=5e-11)
+@assert isapprox(
+    global_mode_output,global_mode_expected;
+    atol=5e-11,rtol=5e-11)
+global_system_trace_alloc=@allocated trace_pseudomodes!(
+    global_system_output,global_state,global_embedding)
+global_mode_trace_alloc=@allocated global_pseudomode_state!(
+    global_mode_output,global_state,global_embedding)
+@assert global_system_trace_alloc<=1024 "global pseudomode system trace allocated $global_system_trace_alloc bytes"
+@assert global_mode_trace_alloc<=1024 "global pseudomode mode trace allocated $global_mode_trace_alloc bytes"
+
+# PI-HEOM stores PI density operators at hierarchy nodes; PI-HOPS stores one
+# direct-sum Schur pseudo-ket per node.  Both conditioned hot kernels are
+# preallocated, and HEOM additionally supports exact forward/adjoint batches.
+hierarchy_basis=PIBasis(2,2)
+hierarchy_spin=spin_matrices()
+hierarchy_model=qubit_ensemble_model(
+    hierarchy_basis;emission=0.04)
+hierarchy_coupling=collective_operator(
+    hierarchy_basis,hierarchy_spin.jz)
+hierarchy_bath=HEOMBath(
+    hierarchy_coupling,[0.18,0.05],[1.1,1.7];
+    right_coefficients=[0.18,0.05])
+heom_plan=HEOMPlan(
+    hierarchy_model,hierarchy_bath;
+    max_depth=2,scaling=:scaled)
+heom_work=HEOMWorkspace(heom_plan;batch_columns=3)
+heom_source=randn(
+    MersenneTwister(0x48454f4d),ComplexF64,size(heom_plan,1))
+heom_output=similar(heom_source)
+heom_adjoint_source=randn(
+    MersenneTwister(0x48454f4e),ComplexF64,size(heom_plan,1))
+heom_adjoint_output=similar(heom_source)
+apply!(heom_output,heom_plan,heom_source,heom_work)
+apply_adjoint!(
+    heom_adjoint_output,heom_plan,heom_adjoint_source,heom_work)
+@assert abs(dot(heom_plan.tracevec,heom_output))<=5e-11
+@assert isapprox(
+    dot(heom_adjoint_source,heom_output),
+    dot(heom_adjoint_output,heom_source);
+    atol=5e-11,rtol=5e-11)
+heom_apply_alloc=@allocated apply!(
+    heom_output,heom_plan,heom_source,heom_work)
+@assert heom_apply_alloc<=4096 "PI-HEOM apply allocated $heom_apply_alloc bytes"
+heom_batch_source=hcat(
+    heom_source,0.5heom_source,complex.(reverse(heom_source)))
+heom_batch_output=similar(heom_batch_source)
+apply!(
+    heom_batch_output,heom_plan,heom_batch_source,heom_work)
+heom_batch_reference=hcat((
+    begin
+        column=similar(heom_source)
+        apply!(
+            column,heom_plan,view(heom_batch_source,:,index),
+            HEOMWorkspace(heom_plan))
+        column
+    end for index in axes(heom_batch_source,2))...)
+@assert isapprox(
+    heom_batch_output,heom_batch_reference;atol=5e-11,rtol=5e-11)
+heom_batch_alloc=@allocated apply!(
+    heom_batch_output,heom_plan,heom_batch_source,heom_work)
+@assert heom_batch_alloc<=4096 "PI-HEOM batch allocated $heom_batch_alloc bytes"
+
+hops_hamiltonian=collective_operator(
+    hierarchy_basis,0.11 .* hierarchy_spin.jx)
+hops_bath=HOPSBath(
+    hierarchy_coupling,[0.18,0.05],[1.1,1.7])
+hops_plan=HOPSPlan(
+    hops_hamiltonian,hops_bath;
+    max_depth=2,scaling=:scaled)
+hops_work=HOPSWorkspace(hops_plan)
+hops_source=randn(
+    MersenneTwister(0x484f5053),ComplexF64,size(hops_plan,1))
+hops_output=similar(hops_source)
+hops_noise=ComplexF64[0.03-0.01im]
+hops_rhs!(
+    hops_output,hops_plan,hops_source,hops_noise,hops_work)
+hops_repeated=similar(hops_output)
+hops_rhs!(
+    hops_repeated,hops_plan,hops_source,hops_noise,hops_work)
+@assert hops_repeated==hops_output
+@assert all(
+    value->isfinite(real(value))&&isfinite(imag(value)),hops_output)
+hops_scaled_source=0.37hops_source
+hops_scaled_output=similar(hops_output)
+hops_rhs!(
+    hops_scaled_output,hops_plan,hops_scaled_source,hops_noise,hops_work)
+@assert isapprox(
+    hops_scaled_output,0.37hops_output;
+    atol=5e-12,rtol=5e-12)
+hops_apply_alloc=@allocated hops_rhs!(
+    hops_repeated,hops_plan,hops_source,hops_noise,hops_work)
+@assert hops_apply_alloc<=4096 "PI-HOPS conditioned RHS allocated $hops_apply_alloc bytes"
+hops_initial=weak_pi_pseudoket(iid_pure_state(
+    hierarchy_basis,ComplexF64[1,1]/sqrt(2)))
+hops_batch=HOPSBatchWorkspace(hops_plan;workers=1)
+hops_times=[0.0,0.01]
+hops_average_reference=hops_average(
+    hops_plan,hops_initial,hops_times,4;
+    dt=0.005,seed=0x484f5053,threaded=false,
+    workspace=hops_batch)
+hops_average_repeated=hops_average(
+    hops_plan,hops_initial,hops_times,4;
+    dt=0.005,seed=0x484f5053,threaded=false,
+    workspace=hops_batch)
+@assert all(
+    reference.data==repeated.data
+    for (reference,repeated) in
+    zip(hops_average_reference,hops_average_repeated))
+@assert all(
+    all(value->isfinite(real(value))&&isfinite(imag(value)),state.data)
+    for state in hops_average_reference)
+hops_batch_alloc=@allocated hops_average(
+    hops_plan,hops_initial,hops_times,4;
+    dt=0.005,seed=0x484f5053,threaded=false,
+    workspace=hops_batch)
+@assert hops_batch_alloc<=512*1024 "reused PI-HOPS ensemble allocated $hops_batch_alloc bytes"
+
 population_model=qubit_ensemble_model(b;
     hamiltonian=spin_matrices().jz,
     emission=0.4,dephasing=0.1,pumping=0.07,
@@ -403,16 +633,16 @@ onebody_block_payload=
 # representative supersite has a sparse plan more than an order of magnitude
 # smaller than the corresponding dense rectangular transforms.
 local_factor_basis=PIBasis(3,4)
-local_factor_system=ComplexF64[0.7 0.08im;-0.08im 0.3]
-local_factor_auxiliary=ComplexF64[0.6 0.05;0.05 0.4]
-local_factor_source=iid_state(
-    local_factor_basis,kron(local_factor_system,local_factor_auxiliary))
+local_factor_ket=ComplexF64[
+    sqrt(0.6),0,0,exp(0.3im)*sqrt(0.4)]
+local_factor_source=iid_pure_state(
+    local_factor_basis,local_factor_ket)
 local_factor_plan=LocalFactorTracePlan(
     local_factor_source,(2,2);traced_factor=2)
 local_factor_work=LocalFactorTraceWorkspace(local_factor_plan)
 local_factor_output=PIState(local_factor_plan.output_basis)
 local_factor_expected=iid_state(
-    local_factor_plan.output_basis,local_factor_system)
+    local_factor_plan.output_basis,ComplexF64[0.6 0;0 0.4])
 local_factor_trace!(
     local_factor_output,local_factor_source,
     local_factor_plan,local_factor_work;check=false)
@@ -498,30 +728,96 @@ reduction_alloc=@allocated reduced_state(rho,2;plan=reduction)
 @assert reduction_alloc<=2*1024^2 "prepared reduction allocated $reduction_alloc bytes"
 
 # Appendix-D geometry and qudit LR plans retain exact support instead of dense
-# zero-heavy path tensors or product-weight intertwiners.
-packed_pbody=PBodyGeometry(PIBasis(4,3),2)
+# zero-heavy path tensors or product-weight intertwiners.  Exercise the packed
+# two-body geometry through both production Liouvillian backends, rather than
+# testing its storage metadata in isolation.
+qutrit_kernel_basis=PIBasis(3,3)
+packed_pbody=PBodyGeometry(qutrit_kernel_basis,2)
 @assert packed_pbody.estimates.storage===:exact_support_sparse_csc
-@assert 5packed_pbody.estimates.retained_entries<
+@assert packed_pbody.estimates.retained_entries<
         packed_pbody.estimates.dense_entries
 @assert packed_pbody.estimates.retained_bytes<
         packed_pbody.estimates.dense_payload_bytes
 
-packed_reduction_basis=PIBasis(2,3)
-packed_reduction=ReductionPlan(packed_reduction_basis,1)
+qutrit_seed=ComplexF64[
+    1.0 0.10im 0.05
+    0.20 0.80 0.08im
+    0.10im 0.15 0.60]
+qutrit_local_density=qutrit_seed*qutrit_seed'
+qutrit_local_density./=tr(qutrit_local_density)
+qutrit_kernel_state=iid_state(qutrit_kernel_basis,qutrit_local_density)
+qutrit_level=ComplexF64[1 0 0;0 0 0;0 0 -1]
+qutrit_lowering=ComplexF64[0 1 0;0 0 sqrt(2);0 0 0]
+qutrit_pbody_model=PIModel(qutrit_kernel_basis,(
+    PBodyHamiltonian(kron(qutrit_level,qutrit_level),2;rate=0.07),
+    LocalPBodyJump(kron(qutrit_lowering,qutrit_lowering),2;rate=0.03)))
+qutrit_pbody_sparse=compile(qutrit_pbody_model;backend=:sparse)
+qutrit_pbody_matrixfree=compile(qutrit_pbody_model;backend=:matrixfree)
+qutrit_pbody_work=LiouvillianWorkspace(qutrit_pbody_matrixfree)
+qutrit_pbody_out=similar(qutrit_kernel_state.data)
+qutrit_pbody_reference=similar(qutrit_kernel_state.data)
+mul!(qutrit_pbody_reference,qutrit_pbody_sparse,qutrit_kernel_state.data)
+apply!(
+    qutrit_pbody_out,qutrit_pbody_matrixfree,qutrit_kernel_state.data,
+    0.0,nothing,qutrit_pbody_work)
+@assert isapprox(
+    qutrit_pbody_out,qutrit_pbody_reference;atol=5e-11,rtol=5e-11)
+@assert abs(trace(PIState(qutrit_kernel_basis,qutrit_pbody_out)))<=5e-11
+
+qutrit_pbody_adjoint_source=randn(
+    MersenneTwister(93),ComplexF64,length(qutrit_kernel_basis))
+qutrit_pbody_adjoint_out=similar(qutrit_pbody_adjoint_source)
+qutrit_pbody_adjoint_reference=similar(qutrit_pbody_adjoint_source)
+apply_adjoint!(
+    qutrit_pbody_adjoint_reference,qutrit_pbody_sparse,
+    qutrit_pbody_adjoint_source)
+apply_adjoint!(
+    qutrit_pbody_adjoint_out,qutrit_pbody_matrixfree,
+    qutrit_pbody_adjoint_source,0.0,nothing,qutrit_pbody_work)
+@assert isapprox(
+    qutrit_pbody_adjoint_out,qutrit_pbody_adjoint_reference;
+    atol=5e-11,rtol=5e-11)
+
+# The allocation gate is measured only after both directions have initialized
+# their task-owned scratch.
+apply!(
+    qutrit_pbody_out,qutrit_pbody_matrixfree,qutrit_kernel_state.data,
+    0.0,nothing,qutrit_pbody_work)
+qutrit_pbody_alloc=@allocated apply!(
+    qutrit_pbody_out,qutrit_pbody_matrixfree,qutrit_kernel_state.data,
+    0.0,nothing,qutrit_pbody_work)
+@assert qutrit_pbody_alloc<=16*1024 "packed qutrit p-body apply allocated $qutrit_pbody_alloc bytes"
+qutrit_pbody_adjoint_alloc=@allocated apply_adjoint!(
+    qutrit_pbody_adjoint_out,qutrit_pbody_matrixfree,
+    qutrit_pbody_adjoint_source,0.0,nothing,qutrit_pbody_work)
+@assert qutrit_pbody_adjoint_alloc<=16*1024 "packed qutrit p-body adjoint apply allocated $qutrit_pbody_adjoint_alloc bytes"
+
+# Keep two of three qutrits and compare with the analytic product-state
+# marginal.  This covers the packed LR intertwiners with nonzero coherences and
+# a nontrivial discarded particle.
+packed_reduction=ReductionPlan(qutrit_kernel_basis,2)
 @assert packed_reduction.estimates.storage===:weight_block_sparse_csc
 @assert packed_reduction.estimates.retained_entries<
         packed_reduction.estimates.dense_entries
-packed_reduction_source=maximally_mixed_state(packed_reduction_basis)
+@assert packed_reduction.estimates.retained_bytes<
+        packed_reduction.estimates.dense_payload_bytes
+packed_reduction_source=qutrit_kernel_state
+packed_reduction_expected=iid_state(
+    packed_reduction.output_basis,qutrit_local_density)
 packed_reduction_work=ReductionWorkspace(
     packed_reduction,packed_reduction_source;mode=:reduction)
+@assert isempty(packed_reduction_work.product_block)
 packed_reduction_out=PIState(packed_reduction.output_basis)
 reduced_state!(
     packed_reduction_out,packed_reduction_source,
     packed_reduction,packed_reduction_work;check=false)
+@assert isapprox(
+    packed_reduction_out.data,packed_reduction_expected.data;
+    atol=5e-11,rtol=5e-11)
 packed_reduction_alloc=@allocated reduced_state!(
     packed_reduction_out,packed_reduction_source,
     packed_reduction,packed_reduction_work;check=false)
-@assert packed_reduction_alloc<=8*1024 "packed qudit reduction allocated $packed_reduction_alloc bytes"
+@assert packed_reduction_alloc<=32*1024 "packed qudit reduction allocated $packed_reduction_alloc bytes"
 
 # Compare allocations rather than wall time so this setup regression remains
 # stable across Julia versions and CI hosts.  The uncached route is retained
@@ -596,4 +892,4 @@ expv_result=krylov_expv(
     expv_n,ComplexF64,expv_krylovdim)==
     expv_expected_entries*sizeof(ComplexF64)
 
-println("Performance regression gates passed (threads=$(Threads.nthreads()), apply_alloc=$allocated, batch_alloc=$batch_alloc, batch_adjoint_alloc=$batch_adjoint_alloc, collective_apply_alloc=$collective_apply_alloc, collective_materialization_alloc=$collective_materialization_alloc, threaded_alloc=$threaded_alloc, restricted_alloc=$restricted_alloc, trajectory_batch_alloc=$trajectory_batch_alloc, composite_trajectory_apply_alloc=$composite_trajectory_apply_alloc, composite_trajectory_step_alloc=$composite_trajectory_step_alloc, composite_trajectory_batch_alloc=$composite_trajectory_batch_alloc, weak_average_alloc=$weak_average_alloc, population_apply_alloc=$population_apply_alloc, population_evolve_alloc=$population_evolve_alloc, observable_alloc=$planned, onebody_alloc=$onebody_alloc, local_factor_alloc=$local_factor_alloc, composite_system_alloc=$composite_system_alloc, composite_auxiliary_alloc=$composite_auxiliary_alloc, reduction_alloc=$reduction_alloc, reduction_setup_alloc=$reduction_setup_alloc, reduction_uncached_alloc=$reduction_uncached_alloc, reduction_inplace_alloc=$reduction_inplace_alloc, reduction_unchecked_alloc=$reduction_unchecked_alloc, meanfield_alloc=$meanfield_alloc)")
+println("Performance regression gates passed (threads=$(Threads.nthreads()), apply_alloc=$allocated, batch_alloc=$batch_alloc, batch_adjoint_alloc=$batch_adjoint_alloc, collective_apply_alloc=$collective_apply_alloc, collective_materialization_alloc=$collective_materialization_alloc, threaded_alloc=$threaded_alloc, restricted_alloc=$restricted_alloc, trajectory_batch_alloc=$trajectory_batch_alloc, composite_trajectory_apply_alloc=$composite_trajectory_apply_alloc, composite_trajectory_step_alloc=$composite_trajectory_step_alloc, composite_trajectory_batch_alloc=$composite_trajectory_batch_alloc, weak_average_alloc=$weak_average_alloc, pseudomode_apply_alloc=$pseudomode_apply_alloc, pseudomode_trace_alloc=$pseudomode_trace_alloc, global_apply_alloc=$global_apply_alloc, global_system_trace_alloc=$global_system_trace_alloc, global_mode_trace_alloc=$global_mode_trace_alloc, heom_apply_alloc=$heom_apply_alloc, heom_batch_alloc=$heom_batch_alloc, hops_apply_alloc=$hops_apply_alloc, hops_batch_alloc=$hops_batch_alloc, population_apply_alloc=$population_apply_alloc, population_evolve_alloc=$population_evolve_alloc, observable_alloc=$planned, onebody_alloc=$onebody_alloc, local_factor_alloc=$local_factor_alloc, composite_system_alloc=$composite_system_alloc, composite_auxiliary_alloc=$composite_auxiliary_alloc, reduction_alloc=$reduction_alloc, qutrit_pbody_alloc=$qutrit_pbody_alloc, qutrit_pbody_adjoint_alloc=$qutrit_pbody_adjoint_alloc, packed_reduction_alloc=$packed_reduction_alloc, reduction_setup_alloc=$reduction_setup_alloc, reduction_uncached_alloc=$reduction_uncached_alloc, reduction_inplace_alloc=$reduction_inplace_alloc, reduction_unchecked_alloc=$reduction_unchecked_alloc, meanfield_alloc=$meanfield_alloc)")

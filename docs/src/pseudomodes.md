@@ -52,7 +52,7 @@ declared as
 
 and a local tensor operator is
 
-```julia
+```text
 kron(system_operator, mode1_operator, mode2_operator, ...)
 ```
 

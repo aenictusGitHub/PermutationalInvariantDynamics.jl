@@ -28,7 +28,10 @@ normal regression order.
 Run the allocation/thread-safety gates with multiple Julia threads:
 
 ```bash
-JULIA_NUM_THREADS=4 julia --project=. benchmark/performance_regression.jl
+julia --startup-file=no --project=benchmark -e \
+  'using Pkg; Pkg.develop(path=pwd()); Pkg.instantiate()'
+JULIA_NUM_THREADS=4 julia --startup-file=no --project=benchmark \
+  benchmark/performance_regression.jl
 ```
 
 Documentation and optional dependencies have isolated environments. See
