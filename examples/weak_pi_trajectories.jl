@@ -303,7 +303,7 @@ if render_plots && ExampleMakie.makie_available()
     M.Colorbar(figure[2, 3], heatmap;
                label="sector-changing events / trajectory")
     ExampleMakie.save_example_figure(
-        figure, "weak_pi_trajectories_zhang_molmer")
+        figure, "weak_pi_decay_trajectory_comparison")
 
     comparison = M.Figure(size=(1650, 480), fontsize=17)
     scaling_axis = M.Axis(

@@ -118,7 +118,7 @@ function all_to_all_model(basis,operators;J,omega_c,gamma,kappa,
     # J is the extensive Curie--Weiss scale.  The literal coefficient of each
     # unordered pair is written explicitly; the package inserts no Kac factor.
     Jpair=J/(basis.N-1)
-    debecker2026_all_to_all_ising_pseudomode_model(
+    all_to_all_xx_spin_local_pseudomode_model(
         basis,operators;Jpair,omega_c,gamma,kappa,coupling)
 end
 
@@ -310,7 +310,7 @@ end
 
 function cutoff_curve(N,nmax;J,omega_c,gamma,kappa,times,
                       steps_per_interval)
-    operators=debecker2026_pseudomode_operators(nmax)
+    operators=local_pseudomode_operators(nmax)
     basis=PIBasis(N,operators.dsite)
     pair_geometry=PBodyGeometry(basis,2)
     pair_xx=pair_observable(basis,operators,pair_geometry)
@@ -333,10 +333,10 @@ end
 function save_fitted_boundary_data(results)
     directory=figure_output_directory()
     scan_mode=FULL_SCAN ? :full : :compact
-    run_stem="debecker2026_all_to_all_ising_pseudomodes_" *
+    run_stem="all_to_all_xx_spin_local_pseudomodes_" *
         "N$(results.N)_nmax$(results.nmax)_$(scan_mode)"
     common_metadata=(
-        model="all_to_all_ising_local_pseudomodes",
+        model="all_to_all_xx_spin_local_pseudomodes",
         particles=results.N,
         pseudomode_cutoff=results.nmax,
         scan_mode,
@@ -373,7 +373,7 @@ function main(;N::Int=parse(Int,get(ENV,"PI_PSEUDOMODE_N","3")),
     omega_c=1.0
     gamma=0.05
     J_dynamic=0.25
-    operators=debecker2026_pseudomode_operators(nmax)
+    operators=local_pseudomode_operators(nmax)
     basis=PIBasis(N,operators.dsite)
     geometry=OneBodyGeometry(basis)
     pair_geometry=PBodyGeometry(basis,2)
@@ -936,7 +936,7 @@ if makie_available()
         "no spatial correlation length is defined.";
         fontsize=14,color=:gray35,tellwidth=false)
     save_example_figure(
-        figure,"debecker2026_all_to_all_ising_pseudomodes")
+        figure,"all_to_all_xx_spin_local_pseudomodes")
 
     cutoff_figure=M.Figure(size=(1050,430),fontsize=17)
     cutoff_axis=M.Axis(
@@ -957,7 +957,7 @@ if makie_available()
              max.(results.cutoff_2.top,eps(Float64));
              color=:royalblue,linewidth=2.5)
     save_example_figure(
-        cutoff_figure,"debecker2026_all_to_all_ising_pseudomodes_cutoff")
+        cutoff_figure,"all_to_all_xx_spin_local_pseudomodes_cutoff")
 
     ghz_figure=M.Figure(size=(900,600),fontsize=17)
     ghz_axis=M.Axis(
@@ -1018,5 +1018,5 @@ if makie_available()
         "\n" * ghz_fit_note;
         fontsize=12.5,color=:gray35,tellwidth=false)
     save_example_figure(
-        ghz_figure,"debecker2026_all_to_all_ising_pseudomodes_ghz")
+        ghz_figure,"all_to_all_xx_spin_local_pseudomodes_ghz")
 end

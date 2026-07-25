@@ -185,7 +185,7 @@ end
 ```
 
 SVG is text and remains sharp in papers and presentations. The runnable
-`examples/schur_block_visualization.jl` example solves a pump--decay steady
+`examples/irrep_block_visualization.jl` example solves a pump--decay steady
 state, renders its sector populations and multiplicity-compressed density
 spectrum, compares collective and local dissipators, and writes all generated
 figures only inside a temporary directory.

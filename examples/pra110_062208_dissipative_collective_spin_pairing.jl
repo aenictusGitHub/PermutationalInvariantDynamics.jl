@@ -51,10 +51,10 @@ function main()
     results = NamedTuple[]
 
     for gammaI in (1.0, 1.8, 2.6)
-        # pausch2024_model retains the exact one-/two-body decomposition of
+        # dissipative_collective_spin_pairing_model retains the exact one-/two-body decomposition of
         # Jx^2-Jy^2.  The same model therefore drives both exact PI and
         # product-state mean-field calculations without changing conventions.
-        model = pausch2024_model(
+        model = dissipative_collective_spin_pairing_model(
             N, d; V=V, gammaI=gammaI, gammaC=gammaC)
         prepared = compile(model; backend=:sparse)
         steady = stationary_state(
@@ -185,5 +185,5 @@ if makie_available()
     M.vlines!(z_axis, [2.0]; color=:gray50, linestyle=:dash)
     M.vlines!(order_axis, [2.0]; color=:gray50, linestyle=:dash)
     M.axislegend(order_axis; position=:rt, labelsize=12)
-    save_example_figure(figure, "pra110_062208_lmg_meanfield")
+    save_example_figure(figure, "pra110_062208_dissipative_collective_spin_pairing_meanfield")
 end

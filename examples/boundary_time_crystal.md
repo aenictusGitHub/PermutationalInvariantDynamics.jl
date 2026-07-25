@@ -1,6 +1,6 @@
 # Boundary time-crystal Liouvillian modes
 
-Source: [`iemini2018_boundary_time_crystal.jl`](iemini2018_boundary_time_crystal.jl)
+Source: [`boundary_time_crystal.jl`](boundary_time_crystal.jl)
 
 ## Model
 
@@ -36,12 +36,12 @@ The optional CairoMakie figure presents the finite-size scaling against
 oscillatory mode, and its oscillation frequency. The stationary and
 time-crystalline parameter ratios use consistent colours and markers, making
 the gap closing and long-lived oscillatory branch directly comparable. PDF
-and PNG copies are saved as `iemini2018_boundary_time_crystal.*`.
+and PNG copies are saved as `boundary_time_crystal.*`.
 
 ## Run
 
 ```sh
-julia --project=examples examples/iemini2018_boundary_time_crystal.jl
+julia --project=examples examples/boundary_time_crystal.jl
 ```
 
 The ordered finite-size results show gap closing in the oscillatory regime;
@@ -49,7 +49,7 @@ repeat with increasing `N` before drawing a thermodynamic conclusion.
 
 ## Expected output
 
-![Expected finite-size Liouvillian gaps and slow oscillatory modes](../docs/src/assets/example_figures/iemini2018_boundary_time_crystal.png)
+![Expected finite-size Liouvillian gaps and slow oscillatory modes](../docs/src/assets/example_figures/boundary_time_crystal.png)
 
 The displayed sizes are the script defaults. A thermodynamic conclusion
 requires an independently converged finite-size scaling study.

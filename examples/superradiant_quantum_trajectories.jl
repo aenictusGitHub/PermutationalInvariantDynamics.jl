@@ -24,10 +24,10 @@ function physical_diagonal(operator)
 end
 
 function run_decay_case(gammaL;times,seed,dt,dtmax)
-    model = zhang2018_superradiance_model(N;GammaC,gammaL)
+    model = collective_local_decay_model(N;GammaC,gammaL)
     basis = model.basis
     rho0 = iid_pure_state(basis,ComplexF64[0,1])
-    radiation = zhang2018_radiation_operators(basis;GammaC,gammaL)
+    radiation = collective_local_radiation_operators(basis;GammaC,gammaL)
 
     # Decay from a fully excited state stays Schur/GT diagonal. The exact
     # master-equation reference can therefore be exponentiated in the
@@ -145,5 +145,5 @@ if makie_available()
                    label="free-space trajectories")
         M.axislegend(axis; position=:rt, labelsize=13)
     end
-    save_example_figure(figure, "zhang2018_superradiant_trajectories")
+    save_example_figure(figure, "superradiant_quantum_trajectories")
 end

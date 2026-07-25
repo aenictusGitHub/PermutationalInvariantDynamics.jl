@@ -1,6 +1,6 @@
-# Schur-block visualization
+# Irreducible-sector block visualization
 
-Source: [`schur_block_visualization.jl`](schur_block_visualization.jl)
+Source: [`irrep_block_visualization.jl`](irrep_block_visualization.jl)
 
 ## Purpose
 
@@ -176,7 +176,7 @@ generated artifact in the repository.
 ## Run
 
 ```sh
-julia --project=. examples/schur_block_visualization.jl
+julia --project=. examples/irrep_block_visualization.jl
 ```
 
 The output reports the sector populations, compressed density eigenvalues and
@@ -189,15 +189,15 @@ positive.
 
 Steady-state populations and compressed density spectrum:
 
-![Expected thermal steady-state Schur populations](../docs/src/assets/example_figures/schur_block_visualization_state.svg)
+![Expected thermal steady-state Schur populations](../docs/src/assets/example_figures/irrep_block_visualization_state.svg)
 
-![Expected multiplicity-compressed density spectrum](../docs/src/assets/example_figures/schur_block_visualization_density_spectrum.svg)
+![Expected multiplicity-compressed density spectrum](../docs/src/assets/example_figures/irrep_block_visualization_density_spectrum.svg)
 
 Collective and local dissipators have visibly different inter-sector support:
 
-![Expected sector-diagonal collective Liouvillian](../docs/src/assets/example_figures/schur_block_visualization_collective_liouvillian.svg)
+![Expected sector-diagonal collective Liouvillian](../docs/src/assets/example_figures/irrep_block_visualization_collective_liouvillian.svg)
 
-![Expected local-decay Schur-sector couplings](../docs/src/assets/example_figures/schur_block_visualization_local_liouvillian.svg)
+![Expected local-decay Schur-sector couplings](../docs/src/assets/example_figures/irrep_block_visualization_local_liouvillian.svg)
 
 These SVGs are rendered from the already computed metadata. They do not repeat
 the stationary solve, diagonalization, or matrix-free probes.

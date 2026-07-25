@@ -1,6 +1,6 @@
 # Cooperative resonance fluorescence
 
-Source: [`morrison2008_cooperative_fluorescence.jl`](morrison2008_cooperative_fluorescence.jl)
+Source: [`cooperative_fluorescence.jl`](cooperative_fluorescence.jl)
 
 ## Model
 
@@ -32,12 +32,12 @@ polarizations with those obtained from the article's exact finite-size state.
 A companion logarithmic panel shows the full PI coefficient-vector error, so
 visual agreement of the two observables is backed by the stronger state-level
 validation. PDF and PNG copies are saved as
-`morrison2008_cooperative_fluorescence.*`.
+`cooperative_fluorescence.*`.
 
 ## Run
 
 ```sh
-julia --project=examples examples/morrison2008_cooperative_fluorescence.jl
+julia --project=examples examples/cooperative_fluorescence.jl
 ```
 
 Small residuals and state distance provide stronger validation than matching
@@ -45,7 +45,7 @@ a single observable.
 
 ## Expected output
 
-![Expected cooperative-fluorescence steady-state observables](../docs/src/assets/example_figures/morrison2008_cooperative_fluorescence.png)
+![Expected cooperative-fluorescence steady-state observables](../docs/src/assets/example_figures/cooperative_fluorescence.png)
 
 The plotted observables are evaluated from the numerically solved state and
 the independent analytical state used by the state-level validation.

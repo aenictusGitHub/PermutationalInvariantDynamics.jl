@@ -1,6 +1,6 @@
 # Balanced-gain/loss dissipative time crystal
 
-Source: [`nakanishi2023_pt_time_crystal.jl`](nakanishi2023_pt_time_crystal.jl)
+Source: [`pt_symmetric_time_crystal.jl`](pt_symmetric_time_crystal.jl)
 
 Literature: Y. Nakanishi and T. Sasamoto, *Phys. Rev. A* **107**, L010201
 (2023), [arXiv:2203.06672](https://arxiv.org/abs/2203.06672).
@@ -31,7 +31,7 @@ whereas `CollectiveJump` uses the standard convention
 \]
 
 Thus \(\mathcal D_{\rm paper}=2\mathcal D_{\rm std}\). For \(N\) qubits,
-\(S=N/2\), so `nakanishi2023_pt_model` passes the library rates
+\(S=N/2\), so `balanced_gain_loss_time_crystal_model` passes the library rates
 \(4\kappa(1+p)/N\) and \(4\kappa(1-p)/N\) to the two collective jumps. This
 factor-of-two conversion is essential when comparing the finite-size decay
 rates.
@@ -96,14 +96,14 @@ curve. The visible damping is essential: persistent oscillations are not
 claimed at either finite size.
 
 The vector and raster outputs are saved as
-`nakanishi2023_pt_time_crystal.pdf` and
-`nakanishi2023_pt_time_crystal.png` in the configured example-figure
+`pt_symmetric_time_crystal.pdf` and
+`pt_symmetric_time_crystal.png` in the configured example-figure
 directory.
 
 ## Run
 
 ```sh
-julia --project=examples examples/nakanishi2023_pt_time_crystal.jl
+julia --project=examples examples/pt_symmetric_time_crystal.jl
 ```
 
 Running under the root package environment still performs the numerical
@@ -111,7 +111,7 @@ validation; without CairoMakie, it logs that the optional figure was skipped.
 
 ## Expected output
 
-![Expected balanced Liouvillian spectrum and collective oscillation](../docs/src/assets/example_figures/nakanishi2023_pt_time_crystal.png)
+![Expected balanced Liouvillian spectrum and collective oscillation](../docs/src/assets/example_figures/pt_symmetric_time_crystal.png)
 
 The spectrum is the complete default finite-`N` PI spectrum; the dynamics
 panel uses the separately checked matrix-free evolution.

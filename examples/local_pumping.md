@@ -1,6 +1,6 @@
 # Independent pumping and emission
 
-Source: [`shammah2018_local_pumping.jl`](shammah2018_local_pumping.jl)
+Source: [`local_pumping.jl`](local_pumping.jl)
 
 ## Model
 
@@ -46,12 +46,12 @@ populations in its first panel. Its second panel overlays their sorted,
 multiplicity-compressed physical Schur-block spectra on a logarithmic scale.
 Agreement in both views checks more structure than the scalar state error
 alone while remaining in PI coordinates. PDF and PNG copies are saved as
-`shammah2018_local_pumping.*`.
+`local_pumping.*`.
 
 ## Run
 
 ```sh
-julia --project=examples examples/shammah2018_local_pumping.jl
+julia --project=examples examples/local_pumping.jl
 ```
 
 The trace, positivity, Liouvillian residual, and distance to the exact product
@@ -61,7 +61,7 @@ rendering is skipped.
 
 ## Expected output
 
-![Expected thermal excitation and Schur-sector populations under local pumping](../docs/src/assets/example_figures/shammah2018_local_pumping.png)
+![Expected thermal excitation and Schur-sector populations under local pumping](../docs/src/assets/example_figures/local_pumping.png)
 
 The numerical points use the default finite ensemble and are compared with the
 exact product-state prediction.

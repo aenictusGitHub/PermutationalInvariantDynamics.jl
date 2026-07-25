@@ -13,7 +13,7 @@ excited = ComplexF64[0 0; 0 1]
 results = NamedTuple[]
 
 for pump in (0.1, 1.0, N * GammaC / 2, N * GammaC, 30.0)
-    model = meiser2009_superradiance_model(
+    model = steady_superradiance_model(
         N; GammaC=GammaC, pump=pump)
     prepared = compile(model)
     rho = stationary_state(prepared; algorithm=DirectAlgorithm())
@@ -73,5 +73,5 @@ if makie_available()
               label="independent emission")
     M.axislegend(enhancement_axis; position=:rt, labelsize=12)
 
-    save_example_figure(figure, "meiser2009_steady_superradiance")
+    save_example_figure(figure, "steady_superradiance")
 end

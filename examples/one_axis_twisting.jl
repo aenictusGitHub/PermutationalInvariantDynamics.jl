@@ -5,7 +5,7 @@ include(joinpath(@__DIR__, "utils", "makie_support.jl"))
 using .ExampleMakie
 
 N=8;chi=0.3;sx=ComplexF64[0 1;1 0]
-model=kitagawa1993_oat_model(N;chi=chi);b=model.basis
+model=one_axis_twisting_model(N;chi=chi);b=model.basis
 rho0=iid_pure_state(b,ComplexF64[1,1]/sqrt(2))
 times=range(0,1.5;length=31)
 prepared=compile(model;backend=:matrixfree)
@@ -14,11 +14,11 @@ solution=solve_dynamics(prepared,rho0,(first(times),last(times));
 geometry=OneBodyGeometry(b)
 Jx=CollectiveObservablePlan(b,sx/2;cache=geometry)
 numeric=[collective_expectation(rho,Jx) for rho in solution]
-exact=[kitagawa1993_mean_spin_exact(N,t;chi=chi) for t in times]
+exact=[one_axis_twisting_mean_spin_exact(N,t;chi=chi) for t in times]
 @assert diagnostics(last(solution);atol=1e-10,rtol=1e-10).valid
 @assert maximum(abs,imag.(numeric)) < 1e-10
 errors=abs.(numeric.-exact)
-println("Kitagawa--Ueda OAT maximum |<Jx>-exact| = ",maximum(errors))
+println("One-axis-twisting maximum |<Jx>-exact| = ",maximum(errors))
 
 # Product-Schur data for the fixed one-particle marginal are also reusable.
 one_body=ReductionPlan(b,1)
@@ -37,7 +37,7 @@ if makie_available()
         title="One-spin purity")
 
     M.lines!(spin_axis,scaled_times,exact ./ (N/2);
-             color=:black,linewidth=2.7,label="Kitagawa–Ueda formula")
+             color=:black,linewidth=2.7,label="Analytical formula")
     M.scatter!(spin_axis,scaled_times,real.(numeric) ./ (N/2);
                color=:royalblue,markersize=8,label="PI dynamics")
     M.axislegend(spin_axis;position=:rt,labelsize=13)
@@ -47,5 +47,5 @@ if makie_available()
     M.hlines!(purity_axis,[1.0];color=:gray50,linestyle=:dash,
               label="pure one-spin state")
     M.axislegend(purity_axis;position=:rb,labelsize=13)
-    save_example_figure(figure, "kitagawa1993_one_axis_twisting")
+    save_example_figure(figure, "one_axis_twisting")
 end

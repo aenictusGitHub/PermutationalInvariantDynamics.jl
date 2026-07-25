@@ -74,17 +74,17 @@ snapshot.
 | `global_pseudomode_cavity.jl` | [One shared damped cavity](global_pseudomode_cavity.md) | Factorized Tavis--Cummings dynamics, system/mode reductions, radiated flux, and a cutoff-boundary check |
 | `cumulant_bridge.jl` | [Higher-order cumulant bridge](cumulant_bridge.md) | Exact PI local moments, neutral model metadata, and closure-error comparisons |
 | `correlated_reservoirs.jl` | [Correlated Kossakowski reservoirs](correlated_reservoirs.md) | Cross-correlated local/collective one-body noise, observable-only dynamics, and preallocated matrix schedules |
-| `debecker2026_all_to_all_ising_pseudomodes.jl` | [All-to-all Ising spins with local pseudomodes](debecker2026_all_to_all_ising_pseudomodes.md) | Exact PI supersites, spin-only negativity, prepared-preconditioned GMRES, a strong-parity-reduced x-GHZ solve, fitted-boundary exports, and cutoff checks |
+| `all_to_all_xx_spin_local_pseudomodes.jl` | [All-to-all XX spins with local pseudomodes](all_to_all_xx_spin_local_pseudomodes.md) | Exact PI supersites, spin-only negativity, prepared-preconditioned GMRES, a strong-parity-reduced x-GHZ solve, fitted-boundary exports, and cutoff checks |
 | `driven_qubits.jl` | [Driven qubits](driven_qubits.md) | Coherent drive, local decay, and the specialized one-body marginal kernel |
-| `floquet_periodic_decay.jl` | [Floquet decay](floquet_periodic_decay.md) | Reusable matrix-free period action, selected multipliers, symmetry restriction, and a trace-fixed periodic state |
-| `gambetta2019_dissipative_discrete_time_crystal.jl` | [Dissipative discrete time crystal](gambetta2019_dissipative_discrete_time_crystal.md) | Floquet period-doubling precursor |
-| `huelga1997_ramsey_dephasing.jl` | [Ramsey dephasing](huelga1997_ramsey_dephasing.md) | Independent dephasing |
-| `iemini2018_boundary_time_crystal.jl` | [Boundary time crystal](iemini2018_boundary_time_crystal.md) | Gap closing and oscillatory modes |
-| `kitagawa1993_one_axis_twisting.jl` | [One-axis twisting](kitagawa1993_one_axis_twisting.md) | Collective nonlinear dynamics |
-| `meiser2009_steady_superradiance.jl` | [Steady superradiance](meiser2009_steady_superradiance.md) | Pumped superradiant steady states |
+| `periodic_decay_channel.jl` | [Periodic decay channel](periodic_decay_channel.md) | Reusable matrix-free period action, selected multipliers, symmetry restriction, and a trace-fixed periodic state |
+| `dissipative_discrete_time_crystal.jl` | [Dissipative discrete time crystal](dissipative_discrete_time_crystal.md) | Floquet period-doubling precursor |
+| `independent_dephasing_coherence.jl` | [Independent-dephasing coherence](independent_dephasing_coherence.md) | Independent dephasing |
+| `boundary_time_crystal.jl` | [Boundary time crystal](boundary_time_crystal.md) | Gap closing and oscillatory modes |
+| `one_axis_twisting.jl` | [One-axis twisting](one_axis_twisting.md) | Collective nonlinear dynamics |
+| `steady_superradiance.jl` | [Steady superradiance](steady_superradiance.md) | Pumped superradiant steady states |
 | `meanfield_time_crystal.jl` | [Mean-field time-crystal prediction](meanfield_time_crystal.md) | Finite-`N` product closure, thermodynamic prediction, and exact PI comparison |
-| `morrison2008_cooperative_fluorescence.jl` | [Cooperative fluorescence](morrison2008_cooperative_fluorescence.md) | Exact driven-dissipative steady state |
-| `nakanishi2023_pt_time_crystal.jl` | [PT-symmetric time crystal](nakanishi2023_pt_time_crystal.md) | Exact balanced-gain/loss spectrum and matrix-free dynamics |
+| `cooperative_fluorescence.jl` | [Cooperative fluorescence](cooperative_fluorescence.md) | Exact driven-dissipative steady state |
+| `pt_symmetric_time_crystal.jl` | [PT-symmetric time crystal](pt_symmetric_time_crystal.md) | Exact balanced-gain/loss spectrum and matrix-free dynamics |
 | `paper_models.jl` | [Paper model constructors](paper_models.md) | Reusable literature models |
 | `pbody_pair_processes.jl` | [Pair processes](pbody_pair_processes.md) | Appendix-D p-body terms and exact-support packed path geometry |
 | `parameter_scan.jl` | [Prepared parameter scans](parameter_scan.md) | Compiled scalar-rate families, recycled GMRES continuation, restart, streaming diagnostics, and batched sensitivities |
@@ -92,23 +92,23 @@ snapshot.
 | `pi_hops.jl` | [PI--HOPS collective dephasing](pi_hops.md) | Direct-sum Schur pure-state hierarchy, stationary colored-noise ensemble, analytic coherence, and deterministic PI--HEOM comparison |
 | `pi_hops_collective_emission.jl` | [PI--HOPS collective emission](pi_hops_collective_emission.md) | Non-Hermitian shared-bath coupling, exact one-excitation hierarchy closure, prescribed-noise paths, and conditioned `hops_rhs!` |
 | `pi_hops_mixed_multibath.jl` | [Mixed-state, multi-bath PI--HOPS](pi_hops_mixed_multibath.md) | Schur spectral initialization, reusable batch workspaces, Monte Carlo diagnostics, hierarchy metadata, and importance pruning |
-| `piccitto2021_interacting_time_crystal.jl` | [Interacting boundary time crystal](piccitto2021_interacting_time_crystal.md) | Nonlinear collective-spin slow modes |
-| `pra110_062208_lmg.jl` | [Dissipative LMG model](pra110_062208_lmg.md) | Exact finite PI versus finite-product and thermodynamic mean-field predictions |
+| `interacting_boundary_time_crystal.jl` | [Interacting boundary time crystal](interacting_boundary_time_crystal.md) | Nonlinear collective-spin slow modes |
+| `pra110_062208_dissipative_collective_spin_pairing.jl` | [Dissipative collective-spin pairing](pra110_062208_dissipative_collective_spin_pairing.md) | Exact finite PI versus finite-product and thermodynamic mean-field predictions |
 | `pra94_033838_superradiance.jl` | [Correlated superradiance](pra94_033838_superradiance.md) | Two-atom analytic benchmark, `N=30` radiated pulse, and peak-state Schur blocks |
 | `qubit_population_dynamics.jl` | [Certified qubit population dynamics](qubit_population_dynamics.md) | Six-rate model, reduced population evolution, and stationary populations |
-| `qudit_husimi.jl` | [Generalized qudit Husimi Q](qudit_husimi.md) | Qutrit Schur-sector coherent-state data and qubit normalization sanity check |
+| `qudit_coherent_state_q_distribution.jl` | [Generalized qudit coherent-state Q](qudit_coherent_state_q_distribution.md) | Qutrit Schur-sector coherent-state data and qubit normalization sanity check |
 | `quantum_regression.jl` | [Quantum regression](quantum_regression.md) | Exact PI two-time correlations, antibunching, and optical spectra |
 | `research_utilities.jl` | [Research utilities](research_utilities.md) | PI channels, POVMs, tomography, checkpoints, population metadata, and joint symmetries |
-| `quantum_trajectories.jl` | [Analytic Mølmer trajectory benchmark](quantum_trajectories.md) | Independent-emitter state, count, and no-jump laws |
-| `schur_block_visualization.jl` | [Schur-block visualization](schur_block_visualization.md) | Steady-state blocks, Young-diagram labels, compressed density spectrum, and superoperator couplings as SVG |
+| `quantum_trajectories.jl` | [Analytic independent-emitter trajectory benchmark](quantum_trajectories.md) | Independent-emitter state, count, and no-jump laws |
+| `irrep_block_visualization.jl` | [Irrep-block visualization](irrep_block_visualization.md) | Steady-state blocks, Young-diagram labels, compressed density spectrum, and superoperator couplings as SVG |
 | `spectral_visualization.jl` | [Spectral visualization](spectral_visualization.md) | Liouvillian eigenvalues and Floquet multiplier/exponent SVGs |
-| `shammah2018_local_pumping.jl` | [Local pumping](shammah2018_local_pumping.md) | Exact thermal product state |
+| `local_pumping.jl` | [Local pumping](local_pumping.md) | Exact thermal product state |
 | `spin_phase_space.jl` | [Sector-resolved spin phase space](spin_phase_space.md) | Multi-sector Husimi-Q and spin-Wigner data with dependency-free SVG rendering |
 | `steady_state_methods.jl` | [Steady-state solvers](steady_state_methods.md) | Typed solver choices, shift-invert, matrix-free GMRES, and direct prepared-kernel Schur preconditioning |
 | `streaming_output.jl` | [Streaming output](streaming_output.md) | Observable-only dynamics and state-free online trajectory statistics |
-| `weak_pi_trajectories.jl` | [Weak-PI pseudo-ket trajectories](weak_pi_trajectories.md) | Zhang--Mølmer Schur Kraus paths, event-driven confidence stopping, stationary batch diagnostics, and deterministic PI comparisons |
-| `wiseman_milburn_homodyne.jl` | [Homodyne PI trajectories](wiseman_milburn_homodyne.md) | Conditional collective fluorescence and its unconditional ensemble limit |
-| `zhang2018_superradiant_trajectories.jl` | [Zhang--Mølmer superradiant trajectories](zhang2018_superradiant_trajectories.md) | Collective/local radiated pulses: trajectory ensemble versus population master equation |
+| `weak_pi_trajectories.jl` | [Weak-PI pseudo-ket trajectories](weak_pi_trajectories.md) | Schur-Kraus paths, event-driven confidence stopping, stationary batch diagnostics, and deterministic PI comparisons |
+| `homodyne_pi_trajectories.jl` | [Homodyne PI trajectories](homodyne_pi_trajectories.md) | Conditional collective fluorescence and its unconditional ensemble limit |
+| `superradiant_quantum_trajectories.jl` | [Superradiant quantum trajectories](superradiant_quantum_trajectories.md) | Collective/local radiated pulses: trajectory ensemble versus population master equation |
 
 Run a numerical example from the package root with:
 
@@ -118,10 +118,10 @@ julia --project=. examples/<name>.jl
 ```
 
 Use `--project=examples` for the Makie-enabled literature scripts: the
-year-named examples in the table, both `pra*.jl` validations,
+literature examples in the table, both `pra*.jl` validations,
 `quantum_trajectories.jl`, `meanfield_time_crystal.jl`, `pi_heom.jl`,
 the three `pi_hops*.jl` scripts, and
-`qudit_husimi.jl`. The Debecker example is the permutation-invariant
+`qudit_coherent_state_q_distribution.jl`. The local-pseudomode example is the permutation-invariant
 uniform-all-pair specialization of the manuscript's nearest-neighbour model,
 not a reproduction of its spatial chain. Each paired guide describes its
 panels and output stem.

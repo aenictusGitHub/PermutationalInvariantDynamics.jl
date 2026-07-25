@@ -60,5 +60,5 @@ if makie_available()
                  linewidth=1.5, label=string(sector.parts))
     end
     M.axislegend(axis; position=:rt, labelsize=11)
-    save_example_figure(figure, "qudit_husimi")
+    save_example_figure(figure, "qudit_coherent_state_q_distribution")
 end

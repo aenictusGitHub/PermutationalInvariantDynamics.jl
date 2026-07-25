@@ -11,7 +11,7 @@ small_times = range(0.0, 3.0; length=121)
 gamma0 = 1.0
 small_curves = NamedTuple[]
 for gamma in (gamma0, 0.75gamma0, 0.0)
-    model = damanet2016_model(2; gamma0, gamma)
+    model = correlated_superradiance_model(2; gamma0, gamma)
     basis = model.basis
     rho0 = iid_pure_state(basis, ComplexF64[0, 1])
     prepared = compile(model; backend=:sparse)
@@ -19,11 +19,11 @@ for gamma in (gamma0, 0.75gamma0, 0.0)
     # Dense exponentiation is intentional here: it is the independent
     # small-N validation route used for the pointwise analytical comparison.
     L = Matrix(liouvillian(prepared))
-    intensity_operator = damanet2016_intensity_operator(basis; gamma0, gamma)
+    intensity_operator = correlated_superradiance_intensity_operator(basis; gamma0, gamma)
     numeric = [real(expectation(
         PIState(basis, exp(t * L) * rho0.data), intensity_operator))
         for t in small_times]
-    exact = [damanet2016_intensity_exact(t; gamma0, gamma)
+    exact = [two_qubit_correlated_superradiance_intensity_exact(t; gamma0, gamma)
              for t in small_times]
     error = maximum(abs.(numeric - exact))
     @assert error < 2e-11
@@ -40,7 +40,7 @@ end
 N = 30
 delta_gamma = 0.4gamma0
 gamma = gamma0 - delta_gamma
-model = damanet2016_model(N; gamma0, gamma)
+model = correlated_superradiance_model(N; gamma0, gamma)
 basis = model.basis
 rho0 = iid_pure_state(basis, ComplexF64[0, 1])
 population_plan = PopulationPlan(model)
@@ -54,7 +54,7 @@ population_solution = solve_populations(
 # In the population coordinates p_(nu,W)=f^nu (rho_nu)_(W,W), the expectation
 # of a Schur-diagonal observable is a single dot product with the diagonal of
 # each physical Schur block.  Prepare these weights once for the whole pulse.
-intensity_operator = damanet2016_intensity_operator(basis; gamma0, gamma)
+intensity_operator = correlated_superradiance_intensity_operator(basis; gamma0, gamma)
 intensity_diagonal = reduce(vcat,
     (diag(block) for (_, block) in each_schur_block(intensity_operator)))
 @assert maximum(abs, imag.(intensity_diagonal)) < 2e-12
@@ -112,7 +112,7 @@ peak_sector_populations = diag(peak_structure.weights)
 # generated artifact in the repository.
 display(peak_figure)
 mktempdir() do directory
-    path = joinpath(directory, "damanet2016_N30_peak_schur.svg")
+    path = joinpath(directory, "correlated_superradiance_N30_peak_irrep_blocks.svg")
     @assert save_schur_block_visualization(path, peak_figure) == path
     @assert occursin("<svg", read(path, String))
 end

@@ -72,5 +72,5 @@ if makie_available()
     axis2 = M.Axis(figure[2, 1]; xlabel="time", ylabel="integrated Y(t)",
                    title="Cumulative homodyne measurement record")
     M.lines!(axis2, times, vec(conditional.records); color=:darkgreen)
-    save_example_figure(figure, "wiseman_milburn_homodyne")
+    save_example_figure(figure, "homodyne_pi_trajectories")
 end

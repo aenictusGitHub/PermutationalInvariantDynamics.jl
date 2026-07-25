@@ -1,6 +1,6 @@
-# Ramsey spectroscopy with independent dephasing
+# Coherence decay under independent dephasing
 
-Source: [`huelga1997_ramsey_dephasing.jl`](huelga1997_ramsey_dephasing.jl)
+Source: [`independent_dephasing_coherence.jl`](independent_dephasing_coherence.jl)
 
 ## Model
 
@@ -37,16 +37,16 @@ positivity of the final numerical state without altering it.
 ## Makie figure
 
 When CairoMakie is available, the script creates a two-panel figure. The first
-panel overlays the normalized PI Ramsey signal with the analytical exponential
+panel overlays the normalized PI coherence with the analytical exponential
 as a function of the dimensionless time `gamma*t`. The second shows the
 pointwise absolute discrepancy used in the printed convergence report. Vector
 PDF and raster PNG copies are saved as
-`huelga1997_ramsey_dephasing.pdf` and `.png`.
+`independent_dephasing_coherence.pdf` and `.png`.
 
 ## Run and validation
 
 ```sh
-julia --project=examples examples/huelga1997_ramsey_dephasing.jl
+julia --project=examples examples/independent_dephasing_coherence.jl
 ```
 
 The printed maximum error compares every saved numerical value with the
@@ -57,7 +57,7 @@ all numerical checks still run and only figure rendering is skipped.
 
 ## Expected output
 
-![Expected Ramsey coherence under independent dephasing](../docs/src/assets/example_figures/huelga1997_ramsey_dephasing.png)
+![Expected coherence under independent dephasing](../docs/src/assets/example_figures/independent_dephasing_coherence.png)
 
 The markers are the PI evolution for the default controls and the line is the
 analytical exponential used by the numerical assertion.

@@ -418,12 +418,12 @@ end
 
 @testset "PRA 94, 033838 (2016), Fig. 6 and Eqs. 41-43" begin
     for gamma in (1.0,0.75,0.0)
-        m=damanet2016_model(2;gamma0=1.0,gamma=gamma);b=m.basis
+        m=correlated_superradiance_model(2;gamma0=1.0,gamma=gamma);b=m.basis
         rho0=iid_pure_state(b,ComplexF64[0,1]); L=Matrix(liouvillian(m;representation=:sparse))
-        Iop=damanet2016_intensity_operator(b;gamma0=1.0,gamma=gamma)
+        Iop=correlated_superradiance_intensity_operator(b;gamma0=1.0,gamma=gamma)
         for t in range(0,3;length=31)
             rho=PIState(b,exp(t*L)*rho0.data)
-            @test real(expectation(rho,Iop)) ≈ damanet2016_intensity_exact(t;gamma0=1,gamma=gamma) atol=2e-11 rtol=2e-11
+            @test real(expectation(rho,Iop)) ≈ two_qubit_correlated_superradiance_intensity_exact(t;gamma0=1,gamma=gamma) atol=2e-11 rtol=2e-11
         end
     end
 end
@@ -433,25 +433,25 @@ end
     sx=ComplexF64[0 1;1 0]
     for N in (2,4,6), t in (0.0,0.17,0.41)
         b=PIBasis(N,2); rho=iid_pure_state(b,ComplexF64[1,1]/sqrt(2))
-        L=Matrix(liouvillian(kitagawa1993_oat_model(N;chi=.7);representation=:sparse))
+        L=Matrix(liouvillian(one_axis_twisting_model(N;chi=.7);representation=:sparse))
         rt=PIState(b,exp(t*L)*rho.data)
-        @test collective_expectation(rt,sx/2) ≈ kitagawa1993_mean_spin_exact(N,t;chi=.7) atol=2e-10
+        @test collective_expectation(rt,sx/2) ≈ one_axis_twisting_mean_spin_exact(N,t;chi=.7) atol=2e-10
     end
     for N in (1,3,5), t in (0.0,.2,.8)
         b=PIBasis(N,2); rho=iid_pure_state(b,ComplexF64[1,1]/sqrt(2))
-        L=Matrix(liouvillian(huelga1997_dephasing_model(N;gamma=.4);representation=:sparse))
+        L=Matrix(liouvillian(independent_dephasing_model(N;gamma=.4);representation=:sparse))
         rt=PIState(b,exp(t*L)*rho.data)
-        @test collective_expectation(rt,sx/2) ≈ huelga1997_ramsey_exact(N,t;gamma=.4) atol=2e-10
+        @test collective_expectation(rt,sx/2) ≈ independent_dephasing_coherence_exact(N,t;gamma=.4) atol=2e-10
     end
-    m=shammah2018_thermal_model(4;down=1.0,up=.3)
-    exact=shammah2018_thermal_state(m.basis;down=1.0,up=.3)
+    m=local_pump_decay_model(4;down=1.0,up=.3)
+    exact=local_pump_decay_steady_state(m.basis;down=1.0,up=.3)
     @test steady_state(m) ≈ exact.data atol=2e-9
 
     # Zhang--Zhang--Mølmer Eq. (1), decay-only specialization.  These two
     # Dicke states fix both ladder conventions and every rate prefactor in
     # Ic=GammaC<J+J-> and Ifs=gammaL(N/2+<Jz>).
-    zhang=zhang2018_superradiance_model(4;GammaC=.3,gammaL=.7)
-    radiation=zhang2018_radiation_operators(
+    zhang=collective_local_decay_model(4;GammaC=.3,gammaL=.7)
+    radiation=collective_local_radiation_operators(
         zhang.basis;GammaC=.3,gammaL=.7)
     fully_excited=iid_pure_state(zhang.basis,ComplexF64[0,1])
     central=dicke_state(zhang.basis,2,0)
@@ -466,26 +466,26 @@ end
     @test zhang_populations.invariance.invariant===true
     @test size(population_generator(
         zhang_populations;representation=:sparse))==(9,9)
-    zhang32=zhang2018_superradiance_model(
+    zhang32=collective_local_decay_model(
         2;GammaC=Float32(.3),gammaL=Float32(.7))
-    radiation32=zhang2018_radiation_operators(
+    radiation32=collective_local_radiation_operators(
         zhang32.basis;GammaC=Float32(.3),gammaL=Float32(.7))
     @test eltype(liouvillian(zhang32;representation=:sparse))===ComplexF32
     @test eltype(radiation32.cavity.data)===ComplexF32
     @test eltype(radiation32.free_space.data)===ComplexF32
-    @test_throws ArgumentError zhang2018_superradiance_model(0)
-    @test_throws ArgumentError zhang2018_superradiance_model(2;gammaL=-1)
+    @test_throws ArgumentError collective_local_decay_model(0)
+    @test_throws ArgumentError collective_local_decay_model(2;gammaL=-1)
 
     for gamma in (0.12,0.3)
-        m=morrison2008_model(4;Omega=.2,gamma=gamma)
-        exact=morrison2008_exact_state(m.basis;Omega=.2,gamma=gamma)
+        m=cooperative_fluorescence_model(4;Omega=.2,gamma=gamma)
+        exact=cooperative_fluorescence_exact_state(m.basis;Omega=.2,gamma=gamma)
         @test steady_state(m)≈exact.data atol=3e-10
     end
-    ms=meiser2009_superradiance_model(4;GammaC=1,pump=2)
+    ms=steady_superradiance_model(4;GammaC=1,pump=2)
     rss=PIState(ms.basis,steady_state(ms));sm=ComplexF64[0 1;0 0];Jm=collective_operator(ms.basis,sm)
     @test real(expectation(rss,adjoint(Jm)*Jm))>0
     for N in (6,8)
-        mb=iemini2018_btc_model(N;omega0=1.5,kappa=1)
+        mb=boundary_time_crystal_model(N;omega0=1.5,kappa=1)
         vals=eigvals(Matrix(liouvillian(mb;representation=:sparse)))
         @test any(abs(imag(z))>0.5 for z in vals)
     end
@@ -494,7 +494,7 @@ end
 @testset "Debecker 2026 all-to-all Ising pseudomode specialization" begin
     # One retained boson is enough to fix the supersite ordering and scalar
     # contract without making this literature-model gate expensive.
-    operators32=debecker2026_pseudomode_operators(1;T=Float32)
+    operators32=local_pseudomode_operators(1;T=Float32)
     @test (operators32.levels,operators32.dsite)==(2,4)
     @test all(matrix->eltype(matrix)===ComplexF32,
               (operators32.spin_paulis...,operators32.lifted_paulis...,
@@ -502,7 +502,7 @@ end
                operators32.mode_top,operators32.exchange_minus,
                operators32.exchange_z))
 
-    model32=debecker2026_all_to_all_ising_pseudomode_model(
+    model32=all_to_all_xx_spin_local_pseudomode_model(
         2,1;Jpair=.23f0,omega_c=.9f0,gamma=.04f0,kappa=.5f0)
     @test model32.basis.d==4
     @test model32.terms[1] isa LocalHamiltonian
@@ -519,9 +519,9 @@ end
     @test eltype(liouvillian(model32;representation=:sparse))===ComplexF32
 
     Jpair=.23;omega_c=.9;gamma=.04;kappa=.5
-    operators=debecker2026_pseudomode_operators(1)
+    operators=local_pseudomode_operators(1)
     basis=PIBasis(2,operators.dsite)
-    model=debecker2026_all_to_all_ising_pseudomode_model(
+    model=all_to_all_xx_spin_local_pseudomode_model(
         basis,operators;Jpair,omega_c,gamma,kappa)
     sparse=liouvillian(model;representation=:sparse)
     matrixfree=liouvillian(model;representation=:matrixfree)
@@ -552,7 +552,7 @@ end
     @test Matrix(sparse)≈
           Matrix(liouvillian(direct_model;representation=:sparse)) atol=3e-11 rtol=3e-11
 
-    z_model=debecker2026_all_to_all_ising_pseudomode_model(
+    z_model=all_to_all_xx_spin_local_pseudomode_model(
         basis,operators;Jpair,omega_c,gamma,kappa,coupling=:z)
     @test z_model.terms[2].operator==operators.exchange_z
     @test check_liouvillian_symmetry(
@@ -577,21 +577,21 @@ end
     strong_probe=ComplexF64.(1:length(strong_restriction))
     @test z_restricted*strong_probe≈
           z_sparse[strong_indices,strong_indices]*strong_probe atol=3e-11 rtol=3e-11
-    @test_throws ArgumentError debecker2026_pseudomode_operators(0)
-    @test_throws ArgumentError debecker2026_pseudomode_operators(typemax(Int))
-    @test_throws ArgumentError debecker2026_pseudomode_operators(
+    @test_throws ArgumentError local_pseudomode_operators(0)
+    @test_throws ArgumentError local_pseudomode_operators(typemax(Int))
+    @test_throws ArgumentError local_pseudomode_operators(
         big(typemax(Int))+1)
-    @test_throws ArgumentError debecker2026_all_to_all_ising_pseudomode_model(
+    @test_throws ArgumentError all_to_all_xx_spin_local_pseudomode_model(
         1,1;Jpair)
-    @test_throws ArgumentError debecker2026_all_to_all_ising_pseudomode_model(
+    @test_throws ArgumentError all_to_all_xx_spin_local_pseudomode_model(
         2,1;Jpair,gamma=-gamma)
-    @test_throws ArgumentError debecker2026_all_to_all_ising_pseudomode_model(
+    @test_throws ArgumentError all_to_all_xx_spin_local_pseudomode_model(
         2,1;Jpair,kappa=0)
-    @test_throws ArgumentError debecker2026_all_to_all_ising_pseudomode_model(
+    @test_throws ArgumentError all_to_all_xx_spin_local_pseudomode_model(
         basis,operators;Jpair,coupling=:raising)
-    @test_throws DimensionMismatch debecker2026_all_to_all_ising_pseudomode_model(
+    @test_throws DimensionMismatch all_to_all_xx_spin_local_pseudomode_model(
         PIBasis(2,3),operators;Jpair)
-    @test_throws ArgumentError debecker2026_all_to_all_ising_pseudomode_model(
+    @test_throws ArgumentError all_to_all_xx_spin_local_pseudomode_model(
         PIBasis(2,4;sectors=[(2,0,0,0)]),operators;Jpair)
 end
 
@@ -600,9 +600,9 @@ end
     # spectra as multisets because the dense eigensolver may permute exact
     # degeneracies arbitrarily.
     N=5;g=1.3;kappa=0.4
-    model=nakanishi2023_pt_model(N;g=g,kappa=kappa,p=0)
+    model=balanced_gain_loss_time_crystal_model(N;g=g,kappa=kappa,p=0)
     numerical=collect(eigvals(Matrix(liouvillian(model;representation=:sparse))))
-    remaining=collect(nakanishi2023_pt_spectrum(N;g=g,kappa=kappa))
+    remaining=collect(balanced_gain_loss_spectrum(N;g=g,kappa=kappa))
     maximum_error=0.0
     for z in numerical
         j=argmin(abs.(remaining.-z))
@@ -619,7 +619,7 @@ end
     # p-body/collective implementation equals Eqs. (1), (2), and (5) written
     # directly in PI operator coordinates, including every factor of N.
     N=4;omega_z=0.7;omega_x=1.1;Gamma_up=0.23;Gamma_down=0.08
-    interacting=piccitto2021_interacting_btc_model(N;omega_z=omega_z,
+    interacting=interacting_boundary_time_crystal_model(N;omega_z=omega_z,
         omega_x=omega_x,Gamma_up=Gamma_up,Gamma_down=Gamma_down)
     b=interacting.basis;s=spin_matrices(2)
     Sx=collective_operator(b,2s.jx);Sz=collective_operator(b,2s.jz)
@@ -635,7 +635,7 @@ end
 
 @testset "PRA 110, 062208 (2024), Eqs. 2-6" begin
     for d in (2,3), dissipator in (:spin,:equal)
-        m=pausch2024_model(3,d;V=1,gammaI=.4,gammaC=.2,dissipator=dissipator)
+        m=dissipative_collective_spin_pairing_model(3,d;V=1,gammaI=.4,gammaC=.2,dissipator=dissipator)
         @test check_generator(m).trace_preservation_error < 2e-10
         L=liouvillian(m;representation=:sparse)
         @test size(L)==(commutant_dimension(3,d),commutant_dimension(3,d))
@@ -654,7 +654,7 @@ end
     # For qubits the thermodynamic lowering reproduces the article's Bloch
     # equations (10a-c), not the special gammaI=0 family in Eq. (11).
     N=8;V=1.0;gammaI=0.7;gammaC=0.2;s=spin_matrices(2)
-    meanfield_model=pausch2024_model(
+    meanfield_model=dissipative_collective_spin_pairing_model(
         N,2;V=V,gammaI=gammaI,gammaC=gammaC)
     plan=MeanFieldPlan(meanfield_model;limit=:thermodynamic)
     X=0.2;Y=-0.3;Z=-0.4
@@ -669,15 +669,15 @@ end
     @test collect(numerical)≈collect(article) atol=3e-12 rtol=3e-12
 
     # At V=0, decay drives the exactly polarized |-j> tensor power to itself.
-    m=pausch2024_model(4,2;V=0,gammaI=.7,gammaC=.3)
+    m=dissipative_collective_spin_pairing_model(4,2;V=0,gammaI=.7,gammaC=.3)
     ground=iid_pure_state(m.basis,ComplexF64[1,0])
     @test norm(liouvillian(m;representation=:sparse)*ground.data)<2e-12
 
     # The N=1 edge case has no two-particle Hamiltonian term, but retains a
     # valid microscopic model and therefore remains mean-field compatible.
-    single=pausch2024_model(1,2;V=.6,gammaI=.4,gammaC=.1)
+    single=dissipative_collective_spin_pairing_model(1,2;V=.6,gammaI=.4,gammaC=.1)
     @test length(single.terms)==3
     @test MeanFieldPlan(single;limit=:finite) isa MeanFieldPlan
-    @test_throws ArgumentError pausch2024_model(0,2)
-    @test_throws ArgumentError pausch2024_model(2,1)
+    @test_throws ArgumentError dissipative_collective_spin_pairing_model(0,2)
+    @test_throws ArgumentError dissipative_collective_spin_pairing_model(2,1)
 end

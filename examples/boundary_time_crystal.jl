@@ -14,7 +14,7 @@ for ratio in (0.5, 1.5)
     gaps = Float64[]
     modes = ComplexF64[]
     for N in sizes
-        model = iemini2018_btc_model(
+        model = boundary_time_crystal_model(
             N; omega0=ratio * kappa, kappa=kappa)
         prepared = compile(model; backend=:sparse)
         # The complete small-sector spectrum is needed to identify the slow
@@ -71,5 +71,5 @@ if makie_available()
     end
     M.axislegend(gap_axis; position=:lt, labelsize=12)
 
-    save_example_figure(figure, "iemini2018_boundary_time_crystal")
+    save_example_figure(figure, "boundary_time_crystal")
 end

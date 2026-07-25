@@ -21,7 +21,7 @@ I(t)=-\frac{d}{dt}\langle J_z\rangle
 +\Delta\gamma\sum_i\langle\sigma_i^+\sigma_i^-\rangle.
 \]
 
-`damanet2016_intensity_operator` constructs exactly this PI observable. In a
+`correlated_superradiance_intensity_operator` constructs exactly this PI observable. In a
 spin-\(J\) state with magnetic number \(M\), its diagonal value is
 
 \[
@@ -132,7 +132,7 @@ summary. The script also verifies the SVG writer in a temporary directory. To
 retain a copy, replace that temporary path or run, for example,
 
 ```julia
-save_schur_block_visualization("damanet2016_N30_peak_schur.svg", peak_figure)
+save_schur_block_visualization("correlated_superradiance_N30_peak_irrep_blocks.svg", peak_figure)
 ```
 
 ## Makie figure

@@ -1,4 +1,4 @@
-# Generalized qudit Husimi-Q data
+# Generalized qudit coherent-state Q data
 
 This example evaluates the generalized coherent-state Husimi transform of a
 three-qutrit PI product state. A local Hermitian generator is lifted into each
@@ -25,14 +25,14 @@ and sector-resolved qutrit values along the generator path.
 Run from the repository root with
 
 ```sh
-julia --project=. examples/qudit_husimi.jl
+julia --project=. examples/qudit_coherent_state_q_distribution.jl
 ```
 
 or use `--project=examples` to save the optional Makie PDF and PNG.
 
 ## Expected output
 
-![Expected aggregate and sector-resolved qutrit Husimi data](../docs/src/assets/example_figures/qudit_husimi.png)
+![Expected aggregate and sector-resolved qutrit Husimi data](../docs/src/assets/example_figures/qudit_coherent_state_q_distribution.png)
 
 The curves use the default generator orbit; the qubit normalization check is
 performed numerically before rendering.

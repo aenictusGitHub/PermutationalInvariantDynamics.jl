@@ -38,7 +38,7 @@ compares the event-driven PI ensemble with the exact tensor-power state
 the exact no-jump probability. Stochastic assertions are expressed in
 analytical standard-error units rather than as a brittle absolute tolerance.
 
-`examples/zhang2018_superradiant_trajectories.jl` implements the decay-only
+`examples/superradiant_quantum_trajectories.jl` implements the decay-only
 specialization of Eq. (1) and the two rate ratios of Fig. 2(a,b) in Zhang,
 Zhang, and Mølmer, *New J. Phys.* **20**, 112001 (2018). The default
 ``N=10``, 256-path run compares cavity and free-space radiation against a
@@ -101,7 +101,7 @@ state vector or a ``2^{30}\times2^{30}`` density matrix.
 
 ## Dissipative LMG model (2024)
 
-`examples/pra110_062208_lmg.jl` implements Eqs. (1)--(6) of Pausch *et al.*,
+`examples/pra110_062208_dissipative_collective_spin_pairing.jl` implements Eqs. (1)--(6) of Pausch *et al.*,
 *Phys. Rev. A* **110**, 062208 (2024):
 
 ```math

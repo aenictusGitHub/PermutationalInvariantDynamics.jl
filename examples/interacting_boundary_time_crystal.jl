@@ -24,7 +24,7 @@ decay_rates = Float64[]
 frequencies = Float64[]
 
 for N in sizes
-    model = piccitto2021_interacting_btc_model(
+    model = interacting_boundary_time_crystal_model(
         N; omega_z=omega_z, omega_x=omega_x,
         Gamma_up=Gamma_up, Gamma_down=Gamma_down)
     prepared = compile(model; backend=:sparse)
@@ -83,5 +83,5 @@ if makie_available()
         figure[2, 1:2],
         "Three modest sizes resolve a precursor; no asymptotic exponent is fitted.";
         fontsize=14, color=:gray35, tellwidth=false)
-    save_example_figure(figure, "piccitto2021_interacting_time_crystal")
+    save_example_figure(figure, "interacting_boundary_time_crystal")
 end

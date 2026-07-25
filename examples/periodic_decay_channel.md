@@ -1,6 +1,6 @@
-# Matrix-free Floquet dynamics with periodic decay
+# Matrix-free one-period dynamics with periodic decay
 
-Source: [`floquet_periodic_decay.jl`](floquet_periodic_decay.jl)
+Source: [`periodic_decay_channel.jl`](periodic_decay_channel.jl)
 
 ## Model
 
@@ -100,7 +100,7 @@ density-operator diagnostics.
 
 ## Expected output
 
-![Expected matrix-free Floquet figure](../docs/src/assets/example_figures/floquet_periodic_decay.png)
+![Expected matrix-free Floquet figure](../docs/src/assets/example_figures/periodic_decay_channel.png)
 
 The three panels show RK4 period-map convergence, the dense small-system and
 selected matrix-free multipliers, and stroboscopic excitation decay. The unit
@@ -112,7 +112,7 @@ multipliers, and trajectory already evaluated by the assertions.
 ## Run
 
 ```sh
-julia --project=. examples/floquet_periodic_decay.jl
+julia --project=. examples/periodic_decay_channel.jl
 ```
 
 For noncommuting drives, repeat the calculation with a finer period grid.

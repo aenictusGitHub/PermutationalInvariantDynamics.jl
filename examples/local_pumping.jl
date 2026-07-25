@@ -5,11 +5,11 @@ using .PaperModels
 include(joinpath(@__DIR__, "utils", "makie_support.jl"))
 using .ExampleMakie
 
-N=10; down=1.0; up=0.3; model=shammah2018_thermal_model(N;down=down,up=up)
+N=10; down=1.0; up=0.3; model=local_pump_decay_model(N;down=down,up=up)
 prepared=compile(model)
 result=stationary_state(prepared;return_info=true)
 numeric=result.state
-exact=shammah2018_thermal_state(model.basis;down=down,up=up)
+exact=local_pump_decay_steady_state(model.basis;down=down,up=up)
 @assert result.info.converged
 @assert diagnostics(numeric).valid
 state_error=norm(numeric.data-exact.data)
@@ -26,7 +26,7 @@ sector_order=sortperm(sector_spins)
 numeric_spectrum=pi_density_spectrum(numeric)
 exact_spectrum=pi_density_spectrum(exact)
 
-println("Shammah local pump/emission steady-state error = ",state_error)
+println("Local pump/emission steady-state error = ",state_error)
 
 if makie_available()
     M=makie_module()
@@ -54,5 +54,5 @@ if makie_available()
     M.scatter!(spectrum_axis,spectrum_indices,numeric_spectrum.values;
                color=:firebrick,markersize=7,label="PI steady state")
     M.axislegend(spectrum_axis;position=:rt,labelsize=13)
-    save_example_figure(figure, "shammah2018_local_pumping")
+    save_example_figure(figure, "local_pumping")
 end

@@ -17,7 +17,7 @@ using PermutationalInvariantDynamics
 include("examples/paper_models.jl")
 using .PaperModels
 
-model = PaperModels.kitagawa1993_oat_model(8; chi=0.2)
+model = PaperModels.one_axis_twisting_model(8; chi=0.2)
 prepared = compile(model)
 ```
 
@@ -37,21 +37,21 @@ matrices or Pauli matrices divided by two, and to the definition of
 benchmarks. When changing parameters, preserve the documented `N` scaling of
 collective rates.
 
-`zhang2018_superradiance_model` returns the decay-only specialization of
+`collective_local_decay_model` returns the decay-only specialization of
 Zhang, Zhang, and Mølmer's collective-plus-local master equation.
-`zhang2018_radiation_operators` constructs its cavity and free-space fluxes,
+`collective_local_radiation_operators` constructs its cavity and free-space fluxes,
 ``\Gamma_cJ_+J_-`` and ``\gamma_l\sum_i\sigma_+^{(i)}\sigma_-^{(i)}``.
 These helpers are used by the trajectory/master-equation comparison without
 introducing a plotting or cavity-mode dependency.
 
 The time-crystal constructors make two easily missed convention conversions
-explicit. `nakanishi2023_pt_model` converts the paper's dissipator
+explicit. `balanced_gain_loss_time_crystal_model` converts the paper's dissipator
 `D_paper = 2D_std` to the package convention. The normalized magnetizations
-in `piccitto2021_interacting_btc_model` give collective jump rates `4Gamma/N`,
+in `interacting_boundary_time_crystal_model` give collective jump rates `4Gamma/N`,
 and its `Jz^2` interaction is lowered to a two-body term after removing the
 irrelevant identity component.
 
-`pausch2024_model` likewise retains the microscopic provenance of its LMG
+`dissipative_collective_spin_pairing_model` likewise retains the microscopic provenance of its LMG
 Hamiltonian: the self part of `Jx^2 - Jy^2` is a `LocalHamiltonian`, and the
 cross part is a symmetric `PBodyHamiltonian` with its required factor of two.
 This is exactly equivalent to the collective quadratic operator in the paper,
@@ -60,20 +60,20 @@ for finite-product or thermodynamic predictions.
 
 ## Uniform all-pair spin--pseudomode embedding
 
-`debecker2026_pseudomode_operators(nmax; T=Float64)` constructs one truncated
+`local_pseudomode_operators(nmax; T=Float64)` constructs one truncated
 spin--mode supersite in the fixed order `spin tensor mode`. It returns the
 spin Pauli matrices, their supersite lifts, the mode annihilation, number, and
 top-level projectors, and the exchange matrices for either `sigma_minus` or
 `sigma_z` coupling. Its local dimension is `2(nmax+1)`.
 
-`debecker2026_all_to_all_ising_pseudomode_model` then constructs the exact PI
+`all_to_all_xx_spin_local_pseudomode_model` then constructs the exact PI
 uniform-all-pair specialization of the local-pseudomode embedding in the
 maintainer-supplied Debecker *et al.* manuscript:
 
 ```julia
-operators = debecker2026_pseudomode_operators(2)
+operators = local_pseudomode_operators(2)
 basis = PIBasis(N, operators.dsite)
-model = debecker2026_all_to_all_ising_pseudomode_model(
+model = all_to_all_xx_spin_local_pseudomode_model(
     basis, operators;
     Jpair=J / (N - 1),
     omega_c=1.0,
@@ -101,13 +101,13 @@ This helper is not a constructor for the manuscript's nearest-neighbour
 ring. That geometry is only translation invariant, whereas the helper assumes
 invariance under every site permutation. Consequently the all-pair model has
 one common distinct-pair correlator and no spatial correlation length. See
-[`debecker2026_all_to_all_ising_pseudomodes.md`](debecker2026_all_to_all_ising_pseudomodes.md)
+[`all_to_all_xx_spin_local_pseudomodes.md`](all_to_all_xx_spin_local_pseudomodes.md)
 for the complete dynamics, stationary-state, spin-only-negativity, and cutoff
 workflow.
 
 The basis-taking method is preferred for parameter scans because it reuses the
 same complete `PIBasis`. The convenience method
-`debecker2026_all_to_all_ising_pseudomode_model(N,nmax; ...)` constructs that
+`all_to_all_xx_spin_local_pseudomode_model(N,nmax; ...)` constructs that
 basis automatically. A complete basis has
 `binomial(N + d^2 - 1, N)` PI coordinates with
 `d=2(nmax+1)`, so the pseudomode cutoff must be convergence-tested and its
@@ -118,11 +118,11 @@ rapid coordinate growth estimated before large scans.
 `paper_models.jl` is a constructor module and intentionally performs no solve
 when included. Its constructors feed the checked workflows illustrated below:
 
-![Expected Damanet correlated-superradiance output](../docs/src/assets/example_figures/pra94_033838_superradiance.png)
+![Expected correlated-superradiance output](../docs/src/assets/example_figures/pra94_033838_superradiance.png)
 
-![Expected Pausch dissipative-LMG output](../docs/src/assets/example_figures/pra110_062208_lmg_meanfield.png)
+![Expected dissipative collective-spin pairing output](../docs/src/assets/example_figures/pra110_062208_dissipative_collective_spin_pairing_meanfield.png)
 
-![Expected Debecker all-to-all pseudomode output](../docs/src/assets/example_figures/debecker2026_all_to_all_ising_pseudomodes.png)
+![Expected all-to-all local-pseudomode output](../docs/src/assets/example_figures/all_to_all_xx_spin_local_pseudomodes.png)
 
 Run the linked model-specific scripts to reproduce a figure; including this
 helper alone only defines the constructors.

@@ -1,6 +1,6 @@
 # Dissipative discrete-time-crystal precursor
 
-Source: [`gambetta2019_dissipative_discrete_time_crystal.jl`](gambetta2019_dissipative_discrete_time_crystal.jl)
+Source: [`dissipative_discrete_time_crystal.jl`](dissipative_discrete_time_crystal.jl)
 
 Primary reference: F. M. Gambetta, F. Carollo, M. Marcuzzi,
 J. P. Garrahan, and I. Lesanovsky, *Phys. Rev. Lett.* **122**, 015701
@@ -136,13 +136,13 @@ with alternating periods colored separately. Since the highlighted multiplier ha
 a finite-size precursor and not a phase diagnosis.
 
 PDF and PNG versions are written with the stem
-`gambetta2019_dissipative_discrete_time_crystal` in the configured
+`dissipative_discrete_time_crystal` in the configured
 example-figure directory.
 
 ## Run
 
 ```sh
-julia --project=examples examples/gambetta2019_dissipative_discrete_time_crystal.jl
+julia --project=examples examples/dissipative_discrete_time_crystal.jl
 ```
 
 Use `--project=.` to run only against the core environment; all assertions
@@ -154,7 +154,7 @@ less efficient for this piecewise-constant protocol.
 
 ## Expected output
 
-![Expected finite-size Floquet spectrum and decaying subharmonic response](../docs/src/assets/example_figures/gambetta2019_dissipative_discrete_time_crystal.png)
+![Expected finite-size Floquet spectrum and decaying subharmonic response](../docs/src/assets/example_figures/dissipative_discrete_time_crystal.png)
 
 This snapshot uses the default finite-`N` and step-doubled controls. It is a
 finite-size precursor, not evidence by itself for an asymptotic time crystal.

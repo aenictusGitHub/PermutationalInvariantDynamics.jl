@@ -1,6 +1,6 @@
 # Interacting boundary time crystal
 
-Source: [`piccitto2021_interacting_time_crystal.jl`](piccitto2021_interacting_time_crystal.jl)
+Source: [`interacting_boundary_time_crystal.jl`](interacting_boundary_time_crystal.jl)
 
 ## Model and normalization
 
@@ -81,13 +81,13 @@ paper. Thus the figure visualizes a finite-size precursor, not evidence by
 itself for persistent thermodynamic oscillations.
 
 Vector PDF and raster PNG copies are written as
-`piccitto2021_interacting_time_crystal.*` in the configured example-figure
+`interacting_boundary_time_crystal.*` in the configured example-figure
 directory.
 
 ## Run
 
 ```sh
-julia --project=examples examples/piccitto2021_interacting_time_crystal.jl
+julia --project=examples examples/interacting_boundary_time_crystal.jl
 ```
 
 The core numerical assertions can also be run with `--project=.`; if
@@ -99,7 +99,7 @@ spin models*, [Phys. Rev. B **104**, 014307 (2021)](https://doi.org/10.1103/Phys
 
 ## Expected output
 
-![Expected interacting boundary-time-crystal slow-mode scaling](../docs/src/assets/example_figures/piccitto2021_interacting_time_crystal.png)
+![Expected interacting boundary-time-crystal slow-mode scaling](../docs/src/assets/example_figures/interacting_boundary_time_crystal.png)
 
 The finite sizes and selected modes are the checked defaults; larger-size
 claims require a separately converged spectral calculation.

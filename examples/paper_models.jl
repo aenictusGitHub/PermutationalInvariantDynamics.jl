@@ -3,34 +3,34 @@ module PaperModels
 using LinearAlgebra
 using PermutationalInvariantDynamics
 
-export spin_matrices, damanet2016_model, damanet2016_intensity_operator,
-       damanet2016_intensity_exact, pausch2024_model, kitagawa1993_oat_model,
-       kitagawa1993_mean_spin_exact, huelga1997_dephasing_model,
-       huelga1997_ramsey_exact, shammah2018_thermal_model,
-       shammah2018_thermal_state, zhang2018_superradiance_model,
-       zhang2018_radiation_operators
-export morrison2008_model, morrison2008_exact_state,
-       meiser2009_superradiance_model, iemini2018_btc_model,
-       nakanishi2023_pt_model, nakanishi2023_pt_spectrum,
-       piccitto2021_interacting_btc_model,
-       debecker2026_pseudomode_operators,
-       debecker2026_all_to_all_ising_pseudomode_model
+export spin_matrices, correlated_superradiance_model, correlated_superradiance_intensity_operator,
+       two_qubit_correlated_superradiance_intensity_exact, dissipative_collective_spin_pairing_model, one_axis_twisting_model,
+       one_axis_twisting_mean_spin_exact, independent_dephasing_model,
+       independent_dephasing_coherence_exact, local_pump_decay_model,
+       local_pump_decay_steady_state, collective_local_decay_model,
+       collective_local_radiation_operators
+export cooperative_fluorescence_model, cooperative_fluorescence_exact_state,
+       steady_superradiance_model, boundary_time_crystal_model,
+       balanced_gain_loss_time_crystal_model, balanced_gain_loss_spectrum,
+       interacting_boundary_time_crystal_model,
+       local_pseudomode_operators,
+       all_to_all_xx_spin_local_pseudomode_model
 
 """PRA 94, 033838 (2016), Eqs. (3)-(5), with `delta_gamma=gamma0-gamma`."""
-function damanet2016_model(N;gamma0=1.0,gamma=gamma0)
+function correlated_superradiance_model(N;gamma0=1.0,gamma=gamma0)
     0<=gamma<=gamma0 || throw(ArgumentError("the paper assumes 0 <= gamma <= gamma0"))
     b=PIBasis(N,2); sm=ComplexF64[0 1;0 0]
     PIModel(b,[CollectiveJump(sm;rate=gamma),LocalJump(sm;rate=gamma0-gamma)])
 end
 
 """Operator whose expectation is the radiated rate, paper Eq. (39)."""
-function damanet2016_intensity_operator(b;gamma0=1.0,gamma=gamma0)
+function correlated_superradiance_intensity_operator(b;gamma0=1.0,gamma=gamma0)
     sm=ComplexF64[0 1;0 0]; Jm=collective_operator(b,sm)
     gamma*(adjoint(Jm)*Jm)+(gamma0-gamma)*collective_operator(b,sm'*sm)
 end
 
 """Analytical N=2 intensity, Eqs. (41)-(43)."""
-function damanet2016_intensity_exact(t;gamma0=1.0,gamma=gamma0)
+function two_qubit_correlated_superradiance_intensity_exact(t;gamma0=1.0,gamma=gamma0)
     dg=gamma0-gamma
     iszero(dg) && return 2gamma0*exp(-2gamma0*t)*(1+2gamma0*t)
     iszero(gamma) && return 2gamma0*exp(-gamma0*t)
@@ -39,9 +39,11 @@ function damanet2016_intensity_exact(t;gamma0=1.0,gamma=gamma0)
 end
 
 """PRA 110, 062208 (2024), Eqs. (2)-(6), with microscopic body order retained."""
-function pausch2024_model(N,d;V=1.0,gammaI=0.0,gammaC=0.0,dissipator=:spin)
-    N>=1||throw(ArgumentError("the Pausch model requires N >= 1"))
-    d>=2||throw(ArgumentError("the Pausch model requires a nonzero spin (d >= 2)"))
+function dissipative_collective_spin_pairing_model(N,d;V=1.0,gammaI=0.0,gammaC=0.0,dissipator=:spin)
+    N>=1||throw(ArgumentError(
+        "the dissipative collective-spin pairing model requires N >= 1"))
+    d>=2||throw(ArgumentError(
+        "the dissipative collective-spin pairing model requires a nonzero spin (d >= 2)"))
     s=spin_matrices(d); b=PIBasis(N,d)
 
     # This is exactly V*(Jx^2-Jy^2)/(N*j).  Keeping the one- and two-body
@@ -62,26 +64,26 @@ function pausch2024_model(N,d;V=1.0,gammaI=0.0,gammaC=0.0,dissipator=:spin)
 end
 
 """Kitagawa--Ueda, PRA 47, 5138 (1993): `H=chi*Jz^2`."""
-function kitagawa1993_oat_model(N;chi=1.0)
+function one_axis_twisting_model(N;chi=1.0)
     b=PIBasis(N,2); sz=ComplexF64[1 0;0 -1]
     Jz=collective_operator(b,sz/2)
     PIModel(b,[DirectPIHamiltonian(chi*(Jz*Jz))])
 end
-kitagawa1993_mean_spin_exact(N,t;chi=1.0)=N/2*cos(chi*t)^(N-1)
+one_axis_twisting_mean_spin_exact(N,t;chi=1.0)=N/2*cos(chi*t)^(N-1)
 
 """Huelga et al., PRL 79, 3865 (1997): independent Markovian dephasing."""
-function huelga1997_dephasing_model(N;gamma=1.0)
+function independent_dephasing_model(N;gamma=1.0)
     b=PIBasis(N,2); sz=ComplexF64[1 0;0 -1]
     PIModel(b,[LocalJump(sz;rate=gamma/2)])
 end
-huelga1997_ramsey_exact(N,t;gamma=1.0)=N/2*exp(-gamma*t)
+independent_dephasing_coherence_exact(N,t;gamma=1.0)=N/2*exp(-gamma*t)
 
 """Local pumping and emission benchmark used in Shammah et al., PRA 98, 063815 (2018)."""
-function shammah2018_thermal_model(N;down=1.0,up=0.25)
+function local_pump_decay_model(N;down=1.0,up=0.25)
     b=PIBasis(N,2); sm=ComplexF64[0 1;0 0]
     PIModel(b,[LocalJump(sm;rate=down),LocalJump(sm';rate=up)])
 end
-function shammah2018_thermal_state(b;down=1.0,up=0.25)
+function local_pump_decay_steady_state(b;down=1.0,up=0.25)
     iid_state(b,ComplexF64[down 0;0 up]/(down+up))
 end
 
@@ -93,8 +95,9 @@ The package convention is `D[L]ρ=LρL†-{L†L,ρ}/2`.  Consequently the
 positive rates below are the paper's `GammaC` and `gammaL` without an extra
 factor of two.
 """
-function zhang2018_superradiance_model(N;GammaC=1.0,gammaL=zero(GammaC))
-    N>=1||throw(ArgumentError("the Zhang--Mølmer model requires N >= 1"))
+function collective_local_decay_model(N;GammaC=1.0,gammaL=zero(GammaC))
+    N>=1||throw(ArgumentError(
+        "the collective/local-decay model requires N >= 1"))
     GammaC>=0||throw(ArgumentError("GammaC must be nonnegative"))
     gammaL>=0||throw(ArgumentError("gammaL must be nonnegative"))
     R=promote_type(typeof(float(GammaC)),typeof(float(gammaL)))
@@ -103,8 +106,8 @@ function zhang2018_superradiance_model(N;GammaC=1.0,gammaL=zero(GammaC))
                LocalJump(sm;rate=gammaL)))
 end
 
-"""Cavity and free-space photon-flux operators for the Zhang--Mølmer model."""
-function zhang2018_radiation_operators(b;GammaC=1.0,gammaL=zero(GammaC))
+"""Cavity and free-space photon-flux operators for the collective/local-decay model."""
+function collective_local_radiation_operators(b;GammaC=1.0,gammaL=zero(GammaC))
     b.d==2||throw(ArgumentError("the radiation operators require a qubit basis"))
     GammaC>=0||throw(ArgumentError("GammaC must be nonnegative"))
     gammaL>=0||throw(ArgumentError("gammaL must be nonnegative"))
@@ -117,7 +120,7 @@ function zhang2018_radiation_operators(b;GammaC=1.0,gammaL=zero(GammaC))
 end
 
 """Morrison--Parkins, PRA 77, 043810 (2008), Eq. (1)."""
-function morrison2008_model(N;Omega=0.2,gamma=0.3,restricted=true)
+function cooperative_fluorescence_model(N;Omega=0.2,gamma=0.3,restricted=true)
     b=restricted ? PIBasis(N,2;sectors=[(N,0)]) : PIBasis(N,2)
     sx=ComplexF64[0 1;1 0];sm=ComplexF64[0 1;0 0]
     PIModel(b,[CollectiveHamiltonian(sx/2;rate=Omega),
@@ -125,7 +128,7 @@ function morrison2008_model(N;Omega=0.2,gamma=0.3,restricted=true)
 end
 
 """Exact symmetric-sector steady state, Morrison--Parkins Eq. (2)."""
-function morrison2008_exact_state(b;Omega=0.2,gamma=0.3)
+function cooperative_fluorescence_exact_state(b;Omega=0.2,gamma=0.3)
     length(b.sectors)==1&&b.sectors[1]==Partition((b.N,0))||throw(ArgumentError("exact state requires the symmetric-sector basis"))
     sm=ComplexF64[0 1;0 0];Jm=collective_block(b,sm,b.sectors[1]);a=Omega*b.N/(2gamma)
     A=Jm+im*a*I;R=inv(A)*inv(A)';R=(R+R')/2;R./=tr(R)
@@ -133,13 +136,13 @@ function morrison2008_exact_state(b;Omega=0.2,gamma=0.3)
 end
 
 """Meiser--Holland, PRA 81, 033847 (2010), Eq. (1)."""
-function meiser2009_superradiance_model(N;GammaC=1.0,pump=1.0)
+function steady_superradiance_model(N;GammaC=1.0,pump=1.0)
     b=PIBasis(N,2);sm=ComplexF64[0 1;0 0]
     PIModel(b,[CollectiveJump(sm;rate=GammaC),LocalJump(sm';rate=pump)])
 end
 
 """Iemini et al., PRL 121, 035301 (2018), Eq. (2)."""
-function iemini2018_btc_model(N;omega0=1.5,kappa=1.0)
+function boundary_time_crystal_model(N;omega0=1.5,kappa=1.0)
     b=PIBasis(N,2;sectors=[(N,0)]);sx=ComplexF64[0 1;1 0];sm=ComplexF64[0 1;0 0]
     PIModel(b,[CollectiveHamiltonian(sx/2;rate=omega0),
                CollectiveJump(sm;rate=2kappa/N)])
@@ -153,7 +156,7 @@ The paper uses `D_paper[L] = 2D[L]`, `S=N/2`, and
 standard Lindblad dissipator and is restricted to the conserved spin-`S`
 sector.  The dissipative time-crystal point is the balanced case `p=0`.
 """
-function nakanishi2023_pt_model(N;g=1.3,kappa=0.4,p=0.0)
+function balanced_gain_loss_time_crystal_model(N;g=1.3,kappa=0.4,p=0.0)
     N>0||throw(ArgumentError("N must be positive"))
     kappa>=0||throw(ArgumentError("kappa must be nonnegative"))
     -1<=p<=1||throw(ArgumentError("p must lie in [-1,1]"))
@@ -165,7 +168,7 @@ function nakanishi2023_pt_model(N;g=1.3,kappa=0.4,p=0.0)
 end
 
 """Exact balanced (`p=0`) Liouvillian eigenvalue multiset, paper Eq. (14)."""
-function nakanishi2023_pt_spectrum(N;g=1.3,kappa=0.4)
+function balanced_gain_loss_spectrum(N;g=1.3,kappa=0.4)
     N>0||throw(ArgumentError("N must be positive"))
     kappa>=0||throw(ArgumentError("kappa must be nonnegative"))
     ComplexF64[im*g*q-(4kappa/N)*(abs(q)+l*(1+l+2abs(q)))
@@ -179,7 +182,7 @@ This is the `p=2,q=1` interacting boundary-time-crystal model.  The paper's
 magnetizations are `Jalpha=sum_i sigma_i^alpha/N`; the scalar part of
 `-N*omega_z*Jz^2` is omitted because it drops out of the commutator.
 """
-function piccitto2021_interacting_btc_model(N;omega_z=1.0,omega_x=3.0,
+function interacting_boundary_time_crystal_model(N;omega_z=1.0,omega_x=3.0,
                                              Gamma_up=0.2,Gamma_down=0.0)
     N>=2||throw(ArgumentError("N must be at least two for the p=2 interaction"))
     Gamma_up>=0||throw(ArgumentError("Gamma_up must be nonnegative"))
@@ -193,7 +196,7 @@ function piccitto2021_interacting_btc_model(N;omega_z=1.0,omega_x=3.0,
 end
 
 """
-    debecker2026_pseudomode_operators(nmax; T=Float64)
+    local_pseudomode_operators(nmax; T=Float64)
 
 Construct the local matrices for one spin coupled to one pseudomode truncated
 to occupations `0:nmax`.  The supersite ordering is `spin tensor mode`, its
@@ -202,7 +205,7 @@ their supersite lifts, the mode annihilation/number/top-level operators, and
 the two spin--mode exchange operators associated with `sigma_minus` and
 `sigma_z` coupling.
 """
-function debecker2026_pseudomode_operators(
+function local_pseudomode_operators(
         nmax::Integer;T::Type{<:AbstractFloat}=Float64)
     nmax>=1||throw(ArgumentError(
         "the pseudomode cutoff must retain at least occupations 0 and 1"))
@@ -259,17 +262,17 @@ function debecker2026_pseudomode_operators(
 end
 
 """
-    debecker2026_all_to_all_ising_pseudomode_model(
+    all_to_all_xx_spin_local_pseudomode_model(
         basis, operators; Jpair, omega_c=1, gamma=0.05, kappa=1,
         coupling=:minus)
-    debecker2026_all_to_all_ising_pseudomode_model(
+    all_to_all_xx_spin_local_pseudomode_model(
         N, nmax; Jpair, omega_c=1, gamma=0.05, kappa=1,
         coupling=:minus)
 
 Construct the permutation-invariant all-to-all specialization of the local
 pseudomode embedding in Debecker *et al.* (2026).  Each of the `N` identical
 spin--pseudomode supersites has the matrices returned by
-[`debecker2026_pseudomode_operators`](@ref).  The Hamiltonian is
+[`local_pseudomode_operators`](@ref).  The Hamiltonian is
 
 `-Jpair * sum(i<j) X_i*X_j + omega_c * sum_i a_i' a_i +
  sqrt(gamma*kappa) * sum_i (L_i*a_i' + L_i'*a_i)`.
@@ -282,7 +285,7 @@ reuse across scans; the convenience method constructs a complete
 `PIBasis(N,2(nmax+1))` with a non-narrowing scalar type inferred from the
 parameters.
 """
-function debecker2026_all_to_all_ising_pseudomode_model(
+function all_to_all_xx_spin_local_pseudomode_model(
         basis::PIBasis,operators;Jpair,omega_c=1,gamma=0.05,kappa=1,
         coupling::Symbol=:minus)
     basis.N>=2||throw(ArgumentError(
@@ -314,7 +317,7 @@ function debecker2026_all_to_all_ising_pseudomode_model(
     ))
 end
 
-function debecker2026_all_to_all_ising_pseudomode_model(
+function all_to_all_xx_spin_local_pseudomode_model(
         N::Integer,nmax::Integer;Jpair,omega_c=1,gamma=0.05,kappa=1,
         coupling::Symbol=:minus)
     N>=2||throw(ArgumentError(
@@ -323,9 +326,9 @@ function debecker2026_all_to_all_ising_pseudomode_model(
         ArgumentError("Jpair, omega_c, gamma, and kappa must be real numbers"))
     R=promote_type(typeof(float(Jpair)),typeof(float(omega_c)),
                    typeof(float(gamma)),typeof(float(kappa)))
-    operators=debecker2026_pseudomode_operators(nmax;T=R)
+    operators=local_pseudomode_operators(nmax;T=R)
     basis=PIBasis(N,operators.dsite)
-    debecker2026_all_to_all_ising_pseudomode_model(
+    all_to_all_xx_spin_local_pseudomode_model(
         basis,operators;Jpair,omega_c,gamma,kappa,coupling)
 end
 

@@ -42,12 +42,12 @@ function main()
     N = 6
     g = 1.3
     kappa = 0.4
-    model = nakanishi2023_pt_model(N; g=g, kappa=kappa, p=0.0)
+    model = balanced_gain_loss_time_crystal_model(N; g=g, kappa=kappa, p=0.0)
     prepared = compile(model; backend=:sparse)
     numerical = liouvillian_spectrum(
         prepared; target=:largest_real, nev=pi_dimension(prepared),
         algorithm=:dense)
-    exact = nakanishi2023_pt_spectrum(N; g=g, kappa=kappa)
+    exact = balanced_gain_loss_spectrum(N; g=g, kappa=kappa)
     spectrum_error = spectrum_multiset_error(numerical, exact)
 
     gap = pi_liouvillian_gap(prepared; method=:dense)
@@ -75,7 +75,7 @@ function main()
     # A larger finite-size propagation uses only matrix-free kernels.  The
     # q=+-1, l=0 modes of Eq. (14) give this damped collective oscillation.
     Ndyn = 24
-    dynamic_model = nakanishi2023_pt_model(Ndyn; g=g, kappa=kappa, p=0.0)
+    dynamic_model = balanced_gain_loss_time_crystal_model(Ndyn; g=g, kappa=kappa, p=0.0)
     dynamic = compile(dynamic_model; backend=:matrixfree)
     basis = dynamic_model.basis
     rho0 = iid_pure_state(basis, ComplexF64[1, 0])
@@ -125,7 +125,7 @@ function main()
         M.hlines!(dynamics_axis, [0.0]; color=:gray70, linewidth=1)
         M.axislegend(dynamics_axis; position=:rt, labelsize=12)
 
-        save_example_figure(figure, "nakanishi2023_pt_time_crystal")
+        save_example_figure(figure, "pt_symmetric_time_crystal")
     end
 end
 

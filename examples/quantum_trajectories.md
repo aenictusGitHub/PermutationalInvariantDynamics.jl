@@ -1,4 +1,4 @@
-# Quantum trajectories: an analytic Mølmer benchmark
+# Quantum trajectories: an analytic independent-emitter benchmark
 
 Source: [`quantum_trajectories.jl`](quantum_trajectories.jl)
 
@@ -98,7 +98,7 @@ When CairoMakie is available, the script creates a two-panel figure. The first
 panel overlays the exact excited fraction with the trajectory mean and its
 one-standard-error band. The second shows, on a logarithmic scale, the PI-state
 error of the trajectory average and deterministic RK4 solution. Vector PDF
-and raster PNG copies are written as `quantum_trajectories_molmer.*` in the
+and raster PNG copies are written as `independent_emitter_quantum_trajectories.*` in the
 configured example-figure directory.
 
 ## Run and convergence
@@ -115,7 +115,7 @@ but a fixed seed still gives the same ordered paths.
 
 ## Expected output
 
-![Expected Mølmer trajectory benchmark against independent-emitter laws](../docs/src/assets/example_figures/quantum_trajectories_molmer.png)
+![Expected trajectory benchmark against independent-emitter laws](../docs/src/assets/example_figures/independent_emitter_quantum_trajectories.png)
 
 The snapshot uses the documented seed and trajectory count. Its uncertainty
 bands are sampling errors, not integration-error estimates.

@@ -1,6 +1,6 @@
 # Steady-state superradiance
 
-Source: [`meiser2009_steady_superradiance.jl`](meiser2009_steady_superradiance.jl)
+Source: [`steady_superradiance.jl`](steady_superradiance.jl)
 
 ## Model
 
@@ -36,12 +36,12 @@ intensity, excited-state fraction, and collective enhancement across the pump
 scan. The intensity panel includes the large-`N` peak estimate, while the
 enhancement panel marks the independent-emitter value. The logarithmic pump
 axis retains both the weak- and strong-pumping limits in one view. PDF and PNG
-copies are saved as `meiser2009_steady_superradiance.*`.
+copies are saved as `steady_superradiance.*`.
 
 ## Run
 
 ```sh
-julia --project=examples examples/meiser2009_steady_superradiance.jl
+julia --project=examples examples/steady_superradiance.jl
 ```
 
 Finite `N` shifts and rounds the optimum, so compare trends rather than
@@ -49,7 +49,7 @@ expecting the asymptotic maximum exactly.
 
 ## Expected output
 
-![Expected steady superradiant intensity and enhancement versus pumping](../docs/src/assets/example_figures/meiser2009_steady_superradiance.png)
+![Expected steady superradiant intensity and enhancement versus pumping](../docs/src/assets/example_figures/steady_superradiance.png)
 
 The points use the default finite ensemble; the asymptotic prediction is
 included only as a reference.

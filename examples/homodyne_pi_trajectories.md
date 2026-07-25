@@ -1,7 +1,7 @@
-# Homodyne PI trajectories (Wiseman--Milburn convention)
+# Homodyne PI trajectories
 
 Source:
-[`wiseman_milburn_homodyne.jl`](wiseman_milburn_homodyne.jl)
+[`homodyne_pi_trajectories.jl`](homodyne_pi_trajectories.jl)
 
 This example conditions a collectively decaying qubit ensemble on an
 inefficient homodyne fluorescence record.  It implements the normalized Itô
@@ -27,12 +27,12 @@ upper panel and the cumulative homodyne record in the lower panel.
 Run with:
 
 ```sh
-julia --project=examples examples/wiseman_milburn_homodyne.jl
+julia --project=examples examples/homodyne_pi_trajectories.jl
 ```
 
 ## Expected output
 
-![Expected conditional homodyne record and unconditional PI limit](../docs/src/assets/example_figures/wiseman_milburn_homodyne.png)
+![Expected conditional homodyne record and unconditional PI limit](../docs/src/assets/example_figures/homodyne_pi_trajectories.png)
 
 The ensemble curve and sampling band use the script's fixed seed and default
 trajectory count; reduce the time step before interpreting a changed setup.

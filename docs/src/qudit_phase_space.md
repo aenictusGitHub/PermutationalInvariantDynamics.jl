@@ -56,7 +56,7 @@ resolved custom plots.
 
 For `d=2`, the normalized-Haar result equals ``4\pi`` times the package's
 sphere-density `spin_husimi_q` convention at the corresponding spin-coherent
-direction. See `examples/qudit_husimi.jl` for that sanity check and a qutrit
+direction. See `examples/qudit_coherent_state_q_distribution.jl` for that sanity check and a qutrit
 scan.
 
 ## API

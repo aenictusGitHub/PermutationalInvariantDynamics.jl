@@ -30,7 +30,7 @@ const SIGMA_Y = ComplexF64[0 im; -im 0]
 const NUMBER = ComplexF64[0 0; 0 1]
 const SIGMA_MINUS = ComplexF64[0 1; 0 0]
 
-"""Construct one autonomous segment of the Gambetta et al. Floquet cycle."""
+"""Construct one autonomous segment of the dissipative periodic cycle."""
 function segment_model(basis; omega_x, omega_y, detuning)
     N = basis.N
     terms = [
@@ -109,7 +109,7 @@ function main()
     sx_stationary = real(collective_expectation(rhoF, sx_plan)) / N
     late_ratio = (sx[end] - sx_stationary) / (sx[end-1] - sx_stationary)
 
-    println("Gambetta et al. finite-N PI precursor")
+    println("Dissipative discrete-time-crystal finite-N PI precursor")
     println("N=$N; PI dimension=$(length(basis)); backends=",
             (diagnostics(relaxing).backend, diagnostics(rotation).backend))
     println("rotation axis: ", ROTATION_AXIS)
@@ -187,7 +187,7 @@ function main()
             "At N=4, |ε₋| < 1 and the alternating signal decays: this is a finite-size precursor.";
             fontsize=14, color=:gray35, tellwidth=false)
         save_example_figure(
-            figure, "gambetta2019_dissipative_discrete_time_crystal")
+            figure, "dissipative_discrete_time_crystal")
     end
 end
 

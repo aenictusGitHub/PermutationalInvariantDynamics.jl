@@ -34,7 +34,7 @@ at the balanced point \(p=0\). The paper uses
 \(\mathcal D_{\rm paper}=2\mathcal D_{\rm std}\), while the library uses the
 standard Lindblad dissipator. With \(S=N/2\), each package `CollectiveJump`
 therefore has rate \(4\kappa/N\). The reusable constructor
-`nakanishi2023_pt_model` contains this convention conversion.
+`balanced_gain_loss_time_crystal_model` contains this convention conversion.
 
 For an initially polarized state, the exact finite-size result is
 

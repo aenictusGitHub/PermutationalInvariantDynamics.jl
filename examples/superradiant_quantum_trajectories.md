@@ -1,7 +1,7 @@
-# Zhang--Mølmer superradiant quantum trajectories
+# Superradiant quantum trajectories
 
 Source:
-[`zhang2018_superradiant_trajectories.jl`](zhang2018_superradiant_trajectories.jl)
+[`superradiant_quantum_trajectories.jl`](superradiant_quantum_trajectories.jl)
 
 ## Published model
 
@@ -26,7 +26,7 @@ I_c=\Gamma_c\langle J_+J_-\rangle,
 I_{\rm fs}=\gamma_l\left(N/2+\langle J_z\rangle\right).
 ```
 
-`zhang2018_superradiance_model` and `zhang2018_radiation_operators` in
+`collective_local_decay_model` and `collective_local_radiation_operators` in
 [`paper_models.jl`](paper_models.jl) keep these rate and spin conventions in
 one place. The free Hamiltonian and collective Lamb shift in the complete
 article model commute with the decay-only Dicke populations and hence do not
@@ -97,13 +97,13 @@ single-ensemble weak-PI backend does not emulate that missing coupling.
 The generated two-panel Makie figure corresponds to the two decay-rate ratios.
 Each panel overlays the deterministic cavity and free-space intensities with
 trajectory means and one-standard-error bands. It is saved as
-`zhang2018_superradiant_trajectories.pdf` and `.png`, providing a direct visual
+`superradiant_quantum_trajectories.pdf` and `.png`, providing a direct visual
 counterpart to the pointwise statistical assertions.
 
 ## Run
 
 ```sh
-julia --project=examples examples/zhang2018_superradiant_trajectories.jl
+julia --project=examples examples/superradiant_quantum_trajectories.jl
 ```
 
 The script prints the pulse maxima, their times, channel-resolved mean jump
@@ -112,7 +112,7 @@ error units for each rate ratio.
 
 ## Expected output
 
-![Expected Zhang--Mølmer superradiant trajectory pulses](../docs/src/assets/example_figures/zhang2018_superradiant_trajectories.png)
+![Expected superradiant trajectory pulses](../docs/src/assets/example_figures/superradiant_quantum_trajectories.png)
 
 The plotted ensemble is intentionally smaller than the paper's production
 calculation. Confidence bands reflect sampling error only.

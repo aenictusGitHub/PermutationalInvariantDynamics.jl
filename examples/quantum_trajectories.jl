@@ -136,5 +136,5 @@ if makie_available()
              color=:seagreen, linewidth=2.5, linestyle=:dash,
              label="deterministic RK4")
     M.axislegend(state_axis; position=:rb)
-    save_example_figure(figure, "quantum_trajectories_molmer")
+    save_example_figure(figure, "independent_emitter_quantum_trajectories")
 end

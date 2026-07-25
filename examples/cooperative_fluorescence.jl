@@ -11,12 +11,12 @@ Omega = 0.2
 results = NamedTuple[]
 
 for gamma in (0.1, 0.2, 0.35)
-    model = morrison2008_model(N; Omega=Omega, gamma=gamma)
+    model = cooperative_fluorescence_model(N; Omega=Omega, gamma=gamma)
     prepared = compile(model)
     stationary = stationary_state(
         prepared; algorithm=DirectAlgorithm(), return_info=true)
     numeric = stationary.state
-    exact = morrison2008_exact_state(
+    exact = cooperative_fluorescence_exact_state(
         model.basis; Omega=Omega, gamma=gamma)
     # The package basis is |g>,|e>; the paper's spin axes take |e> as m=+1/2.
     sy = -ComplexF64[0 -im; im 0] / 2
@@ -67,5 +67,5 @@ if makie_available()
                [max(result.error, error_floor) for result in results];
                color=:black, markersize=11)
 
-    save_example_figure(figure, "morrison2008_cooperative_fluorescence")
+    save_example_figure(figure, "cooperative_fluorescence")
 end

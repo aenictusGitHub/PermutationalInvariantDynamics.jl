@@ -1,7 +1,7 @@
-# All-to-all Ising spins with local pseudomodes
+# All-to-all XX spins with local pseudomodes
 
 Source:
-[`debecker2026_all_to_all_ising_pseudomodes.jl`](debecker2026_all_to_all_ising_pseudomodes.jl)
+[`all_to_all_xx_spin_local_pseudomodes.jl`](all_to_all_xx_spin_local_pseudomodes.jl)
 
 ## Scope of the example
 
@@ -73,7 +73,7 @@ coefficient `kappa` is therefore represented by
 `g=sqrt(gamma*kappa)`; neither conversion should be applied a second time in a
 calling script.
 
-`debecker2026_all_to_all_ising_pseudomode_model` interprets `Jpair` literally:
+`all_to_all_xx_spin_local_pseudomode_model` interprets `Jpair` literally:
 it is the coefficient of each unordered pair and the constructor inserts no
 system-size scaling. The executable uses the extensive Curie--Weiss choice
 
@@ -115,9 +115,9 @@ omega_c = 1.0
 gamma = 0.05
 kappa = 2.0
 
-operators = debecker2026_pseudomode_operators(nmax)
+operators = local_pseudomode_operators(nmax)
 basis = PIBasis(N, operators.dsite)
-model = debecker2026_all_to_all_ising_pseudomode_model(
+model = all_to_all_xx_spin_local_pseudomode_model(
     basis, operators;
     Jpair=J / (N - 1), omega_c, gamma, kappa,
     coupling=:minus,
@@ -649,7 +649,7 @@ text data and Makie output:
 
 ```sh
 PI_EXAMPLE_FIGURE_DIR=/path/to/results \
-  julia --project=examples examples/debecker2026_all_to_all_ising_pseudomodes.jl
+  julia --project=examples examples/all_to_all_xx_spin_local_pseudomodes.jl
 ```
 
 ## Cutoff and scaling
@@ -705,14 +705,14 @@ The annotation states the Kac scaling and explicitly notes that no spatial
 correlation length exists. The finite `N=3` heat maps are solver and model
 demonstrations, not evidence for a thermodynamic phase boundary. PDF and PNG
 copies are saved as
-`debecker2026_all_to_all_ising_pseudomodes.*`.
+`all_to_all_xx_spin_local_pseudomodes.*`.
 
 The two fitted-boundary text files described above are saved to the same
 output directory before Makie is loaded.
 
 A second figure overlays the `nmax=1` and 2 correlation curves and shows the
 wider-cutoff highest-level population. It is saved as
-`debecker2026_all_to_all_ising_pseudomodes_cutoff.*`.
+`all_to_all_xx_spin_local_pseudomodes_cutoff.*`.
 
 A third, manuscript-Fig.-4-style figure shows the parity-selected
 `coupling=:z` spin x-GHZ fidelity. Its raw `0.5` contour marks the usual GHZ
@@ -723,7 +723,7 @@ guide style described above. The annotation reports the 204-of-816
 strong-parity coordinate reduction, the largest stationary Liouvillian
 residual, the independent long-time-propagation discrepancy, both relevant fit
 residuals, and the fitted power-law amplitude and exponent when selected. It is saved as
-`debecker2026_all_to_all_ising_pseudomodes_ghz.*`. As with the first heat maps,
+`all_to_all_xx_spin_local_pseudomodes_ghz.*`. As with the first heat maps,
 this is the uniform-all-pair analogue and not a spatial-chain reproduction.
 
 The executable defaults to a compact stationary grid. Set
@@ -731,7 +731,7 @@ The executable defaults to a compact stationary grid. Set
 
 ```sh
 PI_PSEUDOMODE_FULL_SCAN=1 \
-  julia --project=examples examples/debecker2026_all_to_all_ising_pseudomodes.jl
+  julia --project=examples examples/all_to_all_xx_spin_local_pseudomodes.jl
 ```
 
 The default system size is `N=3`. Select a larger size without editing the
@@ -739,7 +739,7 @@ script through `PI_PSEUDOMODE_N`; for example:
 
 ```sh
 PI_PSEUDOMODE_N=4 \
-  julia --project=examples examples/debecker2026_all_to_all_ising_pseudomodes.jl
+  julia --project=examples examples/all_to_all_xx_spin_local_pseudomodes.jl
 ```
 
 The stationary grid uses sparse direct factorizations, so its memory and run
@@ -749,7 +749,7 @@ remain in PI coordinates.
 Run the checked compact version, including its Makie output, with:
 
 ```sh
-julia --project=examples examples/debecker2026_all_to_all_ising_pseudomodes.jl
+julia --project=examples examples/all_to_all_xx_spin_local_pseudomodes.jl
 ```
 
 The numerical assertions also run under the root project; without the
@@ -757,11 +757,11 @@ examples-only CairoMakie dependency, only figure generation is skipped.
 
 ## Expected output
 
-![Expected Debecker all-to-all pseudomode dynamics, stationary correlation, and spin negativity](../docs/src/assets/example_figures/debecker2026_all_to_all_ising_pseudomodes.png)
+![Expected all-to-all pseudomode dynamics, stationary correlation, and spin negativity](../docs/src/assets/example_figures/all_to_all_xx_spin_local_pseudomodes.png)
 
-![Expected pseudomode-cutoff convergence](../docs/src/assets/example_figures/debecker2026_all_to_all_ising_pseudomodes_cutoff.png)
+![Expected pseudomode-cutoff convergence](../docs/src/assets/example_figures/all_to_all_xx_spin_local_pseudomodes_cutoff.png)
 
-![Expected spin-x GHZ witness map and fitted boundary](../docs/src/assets/example_figures/debecker2026_all_to_all_ising_pseudomodes_ghz.png)
+![Expected spin-x GHZ witness map and fitted boundary](../docs/src/assets/example_figures/all_to_all_xx_spin_local_pseudomodes_ghz.png)
 
 These snapshots use the checked compact `N=3` controls. The coarse maps are
 illustrative; refine the parameter grid, pseudomode cutoff, stationary

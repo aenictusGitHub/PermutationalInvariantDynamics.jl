@@ -11,8 +11,8 @@ function main()
     N = 6
     down = 1.0
     up = 0.3
-    model = shammah2018_thermal_model(N; down=down, up=up)
-    exact = shammah2018_thermal_state(model.basis; down=down, up=up)
+    model = local_pump_decay_model(N; down=down, up=up)
+    exact = local_pump_decay_steady_state(model.basis; down=down, up=up)
 
     # The small-system methods share one sparse compilation. Algorithms are
     # values, so solver selection is explicit and checked by dispatch.

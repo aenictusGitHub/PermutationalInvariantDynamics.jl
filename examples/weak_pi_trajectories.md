@@ -156,7 +156,7 @@ With CairoMakie available, the first figure contains:
 - a heatmap of sampled source-``J`` to target-``J'`` local sector changes per
   trajectory.
 
-It is saved as `weak_pi_trajectories_zhang_molmer.{pdf,png}`. A second figure,
+It is saved as `weak_pi_decay_trajectory_comparison.{pdf,png}`. A second figure,
 `weak_pi_trajectories_method_comparison.{pdf,png}`, shows exact coordinate
 scaling through ``N=50`` and the warmed per-path wall time measured for the
 two fixed-step trajectory backends on the current run. Its third panel shows
@@ -239,7 +239,7 @@ trajectory.
 
 ## Expected output
 
-![Expected weak-PI and density-valued trajectory comparison](../docs/src/assets/example_figures/weak_pi_trajectories_zhang_molmer.png)
+![Expected weak-PI and density-valued trajectory comparison](../docs/src/assets/example_figures/weak_pi_decay_trajectory_comparison.png)
 
 ![Expected weak-PI representation, runtime, and retained-history comparison](../docs/src/assets/example_figures/weak_pi_trajectories_method_comparison.png)
 

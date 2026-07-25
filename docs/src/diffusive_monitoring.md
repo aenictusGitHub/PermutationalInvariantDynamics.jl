@@ -155,7 +155,7 @@ weak-PI pseudo-kets, and collective diffusive paths, but not Distributed
 workers.
 
 The runnable
-[`wiseman_milburn_homodyne.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/wiseman_milburn_homodyne.jl)
+[`homodyne_pi_trajectories.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/homodyne_pi_trajectories.jl)
 compares the conditional paths, their ensemble average, and the PI master
 equation.
 

@@ -229,7 +229,7 @@ save_density_spectrum_visualization(
 
 SVG text, titles, tooltips, axes, and reference boundaries are generated
 without a plotting package. See the runnable
-`examples/schur_block_visualization.jl` example for a solved steady-state
+`examples/irrep_block_visualization.jl` example for a solved steady-state
 Schur-population and compressed-density-spectrum workflow, and
 `examples/spectral_visualization.jl` for complete Liouvillian, multiplier,
 and exponent workflows with numerical checks.

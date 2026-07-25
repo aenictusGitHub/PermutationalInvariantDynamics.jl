@@ -18,7 +18,7 @@ function main()
     N = 16
     g = 1.3
     kappa = 0.4
-    model = nakanishi2023_pt_model(N; g=g, kappa=kappa, p=0.0)
+    model = balanced_gain_loss_time_crystal_model(N; g=g, kappa=kappa, p=0.0)
 
     finite = MeanFieldPlan(model; limit=:finite)
     thermodynamic = MeanFieldPlan(model; limit=:thermodynamic)
@@ -77,7 +77,7 @@ function main()
     final_moments = meanfield_collective_moments(
         finite, last(finite_solution), sigma_z)
 
-    println("Nakanishi--Sasamoto balanced time crystal")
+    println("Balanced gain/loss time crystal")
     println("finite product-closure error: ", finite_error)
     println("thermodynamic undamped-curve error: ", thermodynamic_error)
     println("exact finite-N PI formula error: ", pi_formula_error)

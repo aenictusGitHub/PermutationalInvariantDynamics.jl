@@ -14,7 +14,7 @@ script. Then choose the closest workflow below.
 | Compare stationary solvers | [`steady_state_methods.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/steady_state_methods.jl) | Direct, shift-invert, SVD, and prepared-preconditioned matrix-free GMRES paths |
 | Keep observables but not states | [`streaming_output.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/streaming_output.jl) | Memory-light deterministic and stochastic output |
 | Simulate jump records | [`quantum_trajectories.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/quantum_trajectories.jl) | Event-driven paths and analytical ensemble checks |
-| Study periodic dynamics | [`floquet_periodic_decay.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/floquet_periodic_decay.jl) | Reusable matrix-free period maps, selected multipliers, and a periodic state |
+| Study periodic dynamics | [`periodic_decay_channel.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/periodic_decay_channel.jl) | Reusable matrix-free period maps, selected multipliers, and a periodic state |
 | Compare density and Schur pseudo-ket paths | [`weak_pi_trajectories.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/weak_pi_trajectories.jl) | Fixed/event-driven weak-PI paths, confidence stopping, and stationary batch diagnostics |
 | Combine ensembles or an ancilla | [`composite_ensembles.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/composite_ensembles.jl) | Factorized composite coordinates, cross-system maps, and fixed-capacity matrix-RHS actions |
 | Couple the ensemble to one shared cavity | [`global_pseudomode_cavity.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/global_pseudomode_cavity.jl) | Collective Tavis--Cummings dynamics, factor reductions, and a mode-cutoff diagnostic |
@@ -22,7 +22,7 @@ script. Then choose the closest workflow below.
 | Unravel one shared structured bath | [`pi_hops.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/pi_hops.jl) | Direct-sum Schur pure-state hierarchy, stationary colored noise, and an HEOM/analytic comparison |
 | Use a non-Hermitian HOPS coupling | [`pi_hops_collective_emission.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/pi_hops_collective_emission.jl) | Exact one-excitation collective emission, hard-depth comparison, prescribed noise, and conditioned hierarchy application |
 | Start HOPS from a mixed state | [`pi_hops_mixed_multibath.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/pi_hops_mixed_multibath.jl) | Multiple shared baths, Schur spectral sampling, reusable batch workspaces, Monte Carlo errors, and pruning metadata |
-| Embed one truncated pseudomode per spin | [`debecker2026_all_to_all_ising_pseudomodes.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/debecker2026_all_to_all_ising_pseudomodes.jl) | Uniform-all-pair PI supersites, trajectory estimates, spin-only negativity, a strong-parity-reduced x-GHZ steady solve, and cutoff checks |
+| Embed one truncated pseudomode per spin | [`all_to_all_xx_spin_local_pseudomodes.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/all_to_all_xx_spin_local_pseudomodes.jl) | Uniform-all-pair PI supersites, trajectory estimates, spin-only negativity, a strong-parity-reduced x-GHZ steady solve, and cutoff checks |
 
 Each script has a same-basename guide in the repository's `examples/`
 directory. The sections below explain the specialized workflows and link to
@@ -39,7 +39,7 @@ the state to a `d^N` Hilbert-space matrix.
 
 ## Diffusive monitoring
 
-`examples/wiseman_milburn_homodyne.jl` compares collective homodyne
+`examples/homodyne_pi_trajectories.jl` compares collective homodyne
 trajectories with unconditional PI evolution and checks ensemble convergence.
 The model already contains the monitored-channel dissipator; monitoring adds
 only the conditioned innovation. See [Diffusive monitoring](diffusive_monitoring.md)
@@ -174,7 +174,7 @@ peak, and Wigner negativity without constructing a full Hilbert-space state.
 See [Sector-resolved spin phase space](spin_phase_space.md) for the precise
 normalization and multipole convention.
 
-`examples/qudit_husimi.jl` extends the coherent-state Q check to qutrit Schur
+`examples/qudit_coherent_state_q_distribution.jl` extends the coherent-state Q check to qutrit Schur
 sectors. It reuses one `QuditHusimiPlan`, verifies normalized-Haar population
 weighting and the maximally mixed density, and checks the `d=2` factor against
 the spin-sphere convention. See [Qudit Husimi phase
@@ -232,7 +232,7 @@ specialized hierarchy for independent local non-Markovian baths.
 
 ## Uniform all-pair Ising spins with local pseudomodes
 
-`examples/debecker2026_all_to_all_ising_pseudomodes.jl` demonstrates a
+`examples/all_to_all_xx_spin_local_pseudomodes.jl` demonstrates a
 different finite-memory strategy: each spin and its truncated local
 pseudomode are combined into one supersite of dimension
 `d=2(nmax+1)`. The all-to-all interaction has the same coefficient for every
@@ -247,9 +247,9 @@ non-Markovian spin dynamics:
 include("examples/paper_models.jl")
 using .PaperModels
 
-operators = debecker2026_pseudomode_operators(nmax)
+operators = local_pseudomode_operators(nmax)
 basis = PIBasis(N, operators.dsite)
-model = debecker2026_all_to_all_ising_pseudomode_model(
+model = all_to_all_xx_spin_local_pseudomode_model(
     basis, operators;
     Jpair=J / (N - 1), omega_c, gamma, kappa,
     coupling=:minus,
@@ -351,7 +351,7 @@ candidate, and any available fallback candidate together with fit metadata.
 Set `PI_EXAMPLE_FIGURE_DIR` to redirect both numerical and graphical output.
 The
 [complete example
-guide](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/debecker2026_all_to_all_ising_pseudomodes.md)
+guide](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/all_to_all_xx_spin_local_pseudomodes.md)
 records the model boundary, rate conversion, solver checks, and figure stems.
 
 ## Visualizing Liouvillian and Floquet spectra
@@ -380,7 +380,7 @@ for the complete/partial-spectrum and branch conventions.
 
 ## Inspecting Schur-block structure
 
-`examples/schur_block_visualization.jl` solves the full-rank `N=4` local
+`examples/irrep_block_visualization.jl` solves the full-rank `N=4` local
 pump--decay steady state and compares it with its exact iid thermal form. It
 then contrasts collective- and local-decay Liouvillians. Reusable state-sector
 data are obtained with `schur_block_structure` and rendered separately:
@@ -472,7 +472,7 @@ counts, and no-jump probability as analytical Mølmer-method references. Every
 stochastic assertion is scaled by the corresponding Monte Carlo standard
 error.
 
-`examples/zhang2018_superradiant_trajectories.jl` combines collective cavity
+`examples/superradiant_quantum_trajectories.jl` combines collective cavity
 decay and individual free-space decay at the two rate ratios used in Fig. 2 of
 Zhang, Zhang, and Mølmer, *New J. Phys.* **20**, 112001 (2018):
 
@@ -480,11 +480,11 @@ Zhang, Zhang, and Mølmer, *New J. Phys.* **20**, 112001 (2018):
 include("examples/paper_models.jl")
 using .PaperModels
 
-model = zhang2018_superradiance_model(
+model = collective_local_decay_model(
     N; GammaC=1.0, gammaL=10.0)
 basis = model.basis
 rho0 = iid_pure_state(basis, ComplexF64[0, 1])
-radiation = zhang2018_radiation_operators(
+radiation = collective_local_radiation_operators(
     basis; GammaC=1.0, gammaL=10.0)
 times = collect(range(0.0, 0.6; length=31))
 trajectories = quantum_trajectories(
@@ -649,7 +649,7 @@ requested `nev`; inspect `stationary_multiplicity_certified` in gap reports.
 
 ## Periodic decay and Floquet analysis
 
-`examples/floquet_periodic_decay.jl`
+`examples/periodic_decay_channel.jl`
 uses a sinusoidally modulated local decay rate. It performs an RK4 convergence
 study against the exact commuting one-period map and computes multipliers, the
 Floquet gap, the periodic steady state, and stroboscopic populations.
@@ -687,7 +687,7 @@ Increase `steps` until the relevant map action, multiplier, or observable has
 converged, independently of Krylov tolerances. Stiff protocols may require a
 dedicated integration strategy rather than the fixed-step Floquet helper.
 
-`examples/gambetta2019_dissipative_discrete_time_crystal.jl` applies the same
+`examples/dissipative_discrete_time_crystal.jl` applies the same
 piecewise workflow to the fully connected dissipative Rydberg protocol of
 Gambetta *et al.*, *Phys. Rev. Lett.* **122**, 015701 (2019). The short pulse
 and long relaxation segment are integrated separately and composed in their
@@ -699,27 +699,27 @@ the paper's time-crystalline conclusion comes from lifetime scaling at larger
 
 ## Further literature models
 
-`examples/morrison2008_cooperative_fluorescence.jl` implements Eq. (1) of
+`examples/cooperative_fluorescence.jl` implements Eq. (1) of
 Morrison and Parkins, *Phys. Rev. A* **77**, 043810 (2008), and compares every
 finite-size stationary state from `stationary_state` with their exact Eq. (2).
 The script explicitly converts the package's `|g>,|e>` ordering to the spin
 axes used in the paper and shares one `OneBodyGeometry` between two prepared
 collective observables.
 
-`examples/meiser2009_steady_superradiance.jl` implements Eq. (1) of Meiser and
+`examples/steady_superradiance.jl` implements Eq. (1) of Meiser and
 Holland, *Phys. Rev. A* **81**, 033847 (2010). It compiles each parameter point,
 uses a typed direct stationary-state solve, reports the collective intensity
 of Eq. (2), and compares its maximum with the large-`N` prediction
 ``N^2\Gamma_c/8`` from Eq. (10).
 
-`examples/iemini2018_boundary_time_crystal.jl` implements Eq. (2) of Iemini
+`examples/boundary_time_crystal.jl` implements Eq. (2) of Iemini
 *et al.*, *Phys. Rev. Lett.* **121**, 035301 (2018). It uses the high-level
 `liouvillian_spectrum` ordering and contrasts the gapped
 ``\omega_0/\kappa<1`` regime with the time-crystalline
 ``\omega_0/\kappa>1`` regime, where finite-size oscillatory modes approach the
 imaginary axis as `N` increases.
 
-`examples/piccitto2021_interacting_time_crystal.jl` implements the nonlinear
+`examples/interacting_boundary_time_crystal.jl` implements the nonlinear
 `p=2,q=1` collective-spin model of Piccitto *et al.*, *Phys. Rev. B* **104**,
 014307 (2021). Its Appendix-D pair Hamiltonian is algebraically identical to
 the paper's normalized `Jz^2` term up to a scalar identity. Complete small
@@ -727,7 +727,7 @@ symmetric-sector spectra resolve the complex branch whose decay decreases
 with size; the script does not infer the paper's approximate `N^-0.4` law from
 only three small systems.
 
-`examples/nakanishi2023_pt_time_crystal.jl` implements the balanced-gain/loss
+`examples/pt_symmetric_time_crystal.jl` implements the balanced-gain/loss
 model of Nakanishi and Sasamoto, *Phys. Rev. A* **107**, L010201 (2023). It
 matches every finite-size eigenvalue to their exact Eq. (14), verifies the
 gap `4kappa/N` and uniform irrep steady state, then checks the exact damped

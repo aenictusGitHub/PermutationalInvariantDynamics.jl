@@ -164,5 +164,5 @@ if makie_available()
     M.scatter!(
         dynamics_axis, period_indices, populations;
         color=:darkorange2, markersize=9)
-    save_example_figure(figure, "floquet_periodic_decay")
+    save_example_figure(figure, "periodic_decay_channel")
 end
