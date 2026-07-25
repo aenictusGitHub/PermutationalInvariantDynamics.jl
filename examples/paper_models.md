@@ -40,7 +40,7 @@ collective rates.
 `collective_local_decay_model` returns the decay-only specialization of
 Zhang, Zhang, and Mølmer's collective-plus-local master equation.
 `collective_local_radiation_operators` constructs its cavity and free-space fluxes,
-``\Gamma_cJ_+J_-`` and ``\gamma_l\sum_i\sigma_+^{(i)}\sigma_-^{(i)}``.
+$\Gamma_cJ_+J_-$ and $\gamma_l\sum_i\sigma_+^{(i)}\sigma_-^{(i)}$.
 These helpers are used by the trajectory/master-equation comparison without
 introducing a plotting or cavity-mode dependency.
 

@@ -2,12 +2,12 @@
 
 The quantum regression backend evolves operator-inserted PI states with the
 same compiled Liouvillian used for density-matrix dynamics. It remains in the
-PI coefficient space and does not construct a ``d^N`` state, a
-``d^{2N}`` superoperator, or a dense Liouvillian.
+PI coefficient space and does not construct a $d^N$ state, a
+$d^{2N}$ superoperator, or a dense Liouvillian.
 
 ## Convention
 
-For a stationary or specified initial PI state ``\rho``, the two-operator
+For a stationary or specified initial PI state $\rho$, the two-operator
 function is
 
 ```math
@@ -15,15 +15,15 @@ C_{AB}(\tau)=\mathrm{tr}\!\left[
 A e^{\mathcal L\tau}(B\rho R)\right],
 ```
 
-where the optional right insertion ``R`` is omitted by default. The first
+where the optional right insertion $R$ is omitted by default. The first
 operator is not implicitly adjointed. For example, the optical first-order
-correlation ``\langle c^\dagger(\tau)c(0)\rangle`` uses
+correlation $\langle c^\dagger(\tau)c(0)\rangle$ uses
 `A=adjoint(c)` and `B=c`.
 
 This explicit convention matters because the general package operation
-`expectation(rho, A)` is ``\mathrm{tr}(A^\dagger\rho)``. Internally the
+`expectation(rho, A)` is $\mathrm{tr}(A^\dagger\rho)$. Internally the
 correlation readout is arranged so that it instead evaluates exactly
-``\mathrm{tr}(A\rho_{\rm conditional})``.
+$\mathrm{tr}(A\rho_{\rm conditional})$.
 
 ## Prepared workflow
 
@@ -81,9 +81,9 @@ c^\dagger c\,e^{\mathcal L\tau}(c\rho c^\dagger)\right].
 ```
 
 With `normalized=true`, it returns
-``g^{(2)}(\tau)=G^{(2)}(\tau)/I^2``, where
-``I=\mathrm{tr}(c^\dagger c\rho)``. This normalization is stationary: the
-routine validates unit trace and stationarity, and raises when ``I=0``.
+$g^{(2)}(\tau)=G^{(2)}(\tau)/I^2$, where
+$I=\mathrm{tr}(c^\dagger c\rho)$. This normalization is stationary: the
+routine validates unit trace and stationarity, and raises when $I=0$.
 Choose `normalized=false` for a nonstationary or unnormalized result.
 
 ## Infinite-time and sampled spectra
@@ -115,11 +115,11 @@ handles a final short remainder sequentially; forced multi-shift mode requires
 an exact number of full batches.
 
 `optical_spectrum(L, rho, c, frequencies)` is the convenience form with
-``A=c^\dagger`` and ``B=c``.
+$A=c^\dagger$ and $B=c$.
 
 For a finite uniformly sampled record, `correlation_spectrum_fft` provides a
 dependency-free radix-two FFT. It uses the same
-``e^{-i\omega\tau}`` sign, trapezoidal endpoint weights, and optional zero
+$e^{-i\omega\tau}$ sign, trapezoidal endpoint weights, and optional zero
 padding. Its result is a finite-window integral. When called with a plan and a
 stationary state, it subtracts the exact stationary offset instead of guessing
 it from a tail sample.

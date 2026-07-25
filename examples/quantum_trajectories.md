@@ -18,23 +18,23 @@ Six initially excited qubits decay independently:
 ```
 
 The model has unusually strong analytical checks. With
-``p_e(t)=e^{-\gamma t}``, its exact state is
+$p_e(t)=e^{-\gamma t}$, its exact state is
 
 ```math
 \rho(t)=\left[(1-p_e)|g\rangle\langle g|
                  +p_e|e\rangle\langle e|\right]^{\otimes N}.
 ```
 
-The excitation count is ``B(N,p_e)``. At the final time the photon count is
-``B(N,1-p_e)``, with mean ``N(1-p_e)``, variance
-``Np_e(1-p_e)``, and no-jump probability ``e^{-N\gamma t}``.
+The excitation count is $B(N,p_e)$. At the final time the photon count is
+$B(N,1-p_e)$, with mean $N(1-p_e)$, variance
+$Np_e(1-p_e)$, and no-jump probability $e^{-N\gamma t}$.
 
 ## PI solution and comparisons
 
 The script draws 500 event-driven paths using continuous hazard roots. It
 compares them with both the exact tensor-power PI state and deterministic
-matrix-free evolution prepared once by `compile`. No ``2^N`` vector or
-``2^N\times2^N`` matrix is constructed.
+matrix-free evolution prepared once by `compile`. No $2^N$ vector or
+$2^N\times2^N$ matrix is constructed.
 
 `trajectory_statistics` computes the excitation mean and its sampling error.
 The script checks the mean at every saved time against the exact binomial law
@@ -88,7 +88,7 @@ trials at every bisection point.
 
 For an individual local jump the package does not resolve which identical
 particle emitted. The conditional PI state can therefore be mixed when
-``N>1``. That is a different measurement record from a particle-resolved pure
+$N>1$. That is a different measurement record from a particle-resolved pure
 wave-function trajectory, while its ensemble density matrix and the count and
 excitation laws tested here are the same.
 

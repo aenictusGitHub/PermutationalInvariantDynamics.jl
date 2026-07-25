@@ -202,8 +202,8 @@ enough information to infer a unique physical unraveling, and accepting an
 already complete generator plus the same channels would double-count their
 gains.
 
-For channel ``k`` with ``G_k[\rho]=J_k\rho J_k^\dagger`` and
-``Q_k=J_k^\dagger J_k``, the normalized conditional equation is
+For channel $k$ with $G_k[\rho]=J_k\rho J_k^\dagger$ and
+$Q_k=J_k^\dagger J_k$, the normalized conditional equation is
 
 ```math
 \dot\rho_c=\mathcal L_0(\rho_c)
@@ -213,8 +213,8 @@ For channel ``k`` with ``G_k[\rho]=J_k\rho J_k^\dagger`` and
 \lambda_k=\gamma_k\,\mathrm{tr}(Q_k\rho_c).
 ```
 
-A selected jump maps ``\rho_c`` to
-``G_k[\rho_c]/\mathrm{tr}(G_k[\rho_c])``. The fixed operator maps remain
+A selected jump maps $\rho_c$ to
+$G_k[\rho_c]/\mathrm{tr}(G_k[\rho_c])$. The fixed operator maps remain
 factorized. Scalar rates may be driven, but every evaluated trajectory rate
 must be finite, real, nonnegative, and representable in the prepared
 precision. Rate schedules used by threaded batches must be pure and thread

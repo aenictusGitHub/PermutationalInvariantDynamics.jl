@@ -1,8 +1,7 @@
 # Nonstabilizerness of symmetric qubit states
 
 The second stabilizer Rényi entropy quantifies how far a pure state is from
-the stabilizer set. For an `N`-qubit pure state ``\rho=|\psi\rangle\langle
-\psi|``, Passarelli, Fazio, and Lucignano define
+the stabilizer set. For an `N`-qubit pure state $\rho=|\psi\rangle\langle \psi|$, Passarelli, Fazio, and Lucignano define
 
 ```math
 M_2(\rho) =
@@ -12,7 +11,7 @@ M_2(\rho) =
 \right],
 ```
 
-where ``\mathcal P_N=\{I,X,Y,Z\}^{\otimes N}`` is the phase-free Pauli
+where $\mathcal P_N=\{I,X,Y,Z\}^{\otimes N}$ is the phase-free Pauli
 basis. The default logarithm is natural, as in [Phys. Rev. A **110**, 022436
 (2024)](https://doi.org/10.1103/PhysRevA.110.022436). Set `base=2` to report
 the same quantity in bits.
@@ -24,19 +23,19 @@ tolerances.
 
 ## PI-efficient evaluation
 
-A direct calculation enumerates ``4^N`` Pauli strings. Permutation symmetry
+A direct calculation enumerates $4^N$ Pauli strings. Permutation symmetry
 reduces the distinct expectations to the Pauli occupation counts
-``(n_I,n_X,n_Y,n_Z)``. The implementation goes further: it evaluates all
+$(n_I,n_X,n_Y,n_Z)$. The implementation goes further: it evaluates all
 representatives with normalized Krawtchouk transforms of the symmetric Schur
 block and stable hypergeometric weights.
 
 The resulting costs are:
 
-- ``O(N^4)`` arithmetic for one state;
-- ``O(N^3)`` retained data in a reusable `StabilizerRenyiPlan`;
-- ``O(N^2)`` mutable scratch in a `StabilizerRenyiWorkspace`.
+- $O(N^4)$ arithmetic for one state;
+- $O(N^3)$ retained data in a reusable `StabilizerRenyiPlan`;
+- $O(N^2)$ mutable scratch in a `StabilizerRenyiWorkspace`.
 
-No state of size ``2^N`` and no Pauli table of size ``4^N`` is constructed.
+No state of size $2^N$ and no Pauli table of size $4^N$ is constructed.
 Multinomial degeneracies are accumulated in the logarithmic domain, and the
 same pass checks the pure-state Pauli second-moment identity as an internal
 reliability diagnostic.
@@ -97,7 +96,7 @@ therefore rejects:
 
 - local dimensions other than two;
 - mixed states, including a maximally mixed state;
-- states with support outside the fully symmetric partition ``(N,0)``;
+- states with support outside the fully symmetric partition $(N,0)$;
 - nonunit-trace, non-Hermitian, nonpositive, or nonfinite inputs;
 - a plan or workspace built from a different basis or incompatible precision;
 - an invalid logarithm base or a request exceeding the memory budget.

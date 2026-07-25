@@ -1,19 +1,19 @@
 # Mean-field dynamics and predictions
 
 The mean-field layer derives a closed equation for the identical one-particle
-density matrix ``\sigma`` directly from the physical terms used by a
+density matrix $\sigma$ directly from the physical terms used by a
 `PIModel`. It is a product-BBGKY closure,
 
 ```math
 \rho^{(p)}\approx\sigma^{\otimes p},
 ```
 
-and works for a general local dimension ``d``. It is not restricted to qubit
-Bloch vectors and never constructs a ``d^N`` state, a PI basis vector, or a
-Liouvillian matrix. The evolved state contains only ``d^2`` complex entries;
-for a supported ``p``-body term, the largest scratch matrices are
-``d^p\times d^p``, requiring ``O(d^{2p})`` storage but remaining independent
-of ``N`` and the full many-body Hilbert space.
+and works for a general local dimension $d$. It is not restricted to qubit
+Bloch vectors and never constructs a $d^N$ state, a PI basis vector, or a
+Liouvillian matrix. The evolved state contains only $d^2$ complex entries;
+for a supported $p$-body term, the largest scratch matrices are
+$d^p\times d^p$, requiring $O(d^{2p})$ storage but remaining independent
+of $N$ and the full many-body Hilbert space.
 
 ## Quick start
 
@@ -51,7 +51,7 @@ plan = MeanFieldPlan(N, 2, (
 ); limit=:thermodynamic)
 ```
 
-This form is the efficient route for a very large formal ``N``: it does not
+This form is the efficient route for a very large formal $N$: it does not
 construct Schur geometry merely to obtain a mean-field equation.
 
 ## Product-closure equations
@@ -63,13 +63,13 @@ The library uses
 =L\sigma L^\dagger-\tfrac12\{L^\dagger L,\sigma\}.
 ```
 
-For a one-particle Hamiltonian term with rate ``r``,
+For a one-particle Hamiltonian term with rate $r$,
 
 ```math
 \dot\sigma=-\frac{ir}{\hbar}[h,\sigma].
 ```
 
-For a permutation-symmetric ``p``-particle Hamiltonian summed over unordered
+For a permutation-symmetric $p$-particle Hamiltonian summed over unordered
 subsets, define
 
 ```math
@@ -84,7 +84,7 @@ The finite product closure is
 {N-1\choose p-1}[h_{\rm eff}(\sigma),\sigma].
 ```
 
-A local one-particle jump contributes ``r\mathcal D[L]\sigma``. For
+A local one-particle jump contributes $r\mathcal D[L]\sigma$. For
 `LocalPBodyJump(L,p)`, let
 
 ```math
@@ -103,8 +103,8 @@ r{N-1\choose p-1}
 ```
 
 Finally, for a collective one-particle jump
-``J=\sum_iL_i``, write ``\ell=\mathrm{tr}(L\sigma)``. The exact
-finite-``N`` product closure is
+$J=\sum_iL_i$, write $\ell=\mathrm{tr}(L\sigma)$. The exact
+finite-$N$ product closure is
 
 ```math
 \dot\sigma\big|_J=r\left[
@@ -117,7 +117,7 @@ finite-``N`` product closure is
 These equations use the same unordered-subset convention as
 `PBodyHamiltonian` and `LocalPBodyJump`.
 
-For the collective ``p``-particle jump
+For the collective $p$-particle jump
 
 ```math
 J=\sum_{|S|=p}L_S,
@@ -133,8 +133,8 @@ E_m(\sigma)=\mathrm{tr}_{m+1\ldots p}
 \qquad 0\leq m\leq p,
 ```
 
-so that ``E_0=\ell=\mathrm{tr}(L\sigma^{\otimes p})`` and
-``E_p=L``, and introduce the cross dissipator
+so that $E_0=\ell=\mathrm{tr}(L\sigma^{\otimes p})$ and
+$E_p=L$, and introduce the cross dissipator
 
 ```math
 \Phi_{A,B}(R)=ARB^\dagger-
@@ -142,7 +142,7 @@ so that ``E_0=\ell=\mathrm{tr}(L\sigma^{\otimes p})`` and
 ```
 
 Only ordered subset pairs whose union contains the retained particle
-contribute. If both subsets contain it and have total overlap ``r``, their
+contribute. If both subsets contain it and have total overlap $r$, their
 number is
 
 ```math
@@ -150,7 +150,7 @@ a_r={N-1\choose p-1}{p-1\choose r-1}{N-p\choose p-r},
 \qquad 1\leq r\leq p.
 ```
 
-If exactly the first subset contains it and the remaining overlap is ``r``,
+If exactly the first subset contains it and the remaining overlap is $r$,
 the number is
 
 ```math
@@ -160,9 +160,9 @@ b_r={N-1\choose p-1}{p-1\choose r}{N-p\choose p-r},
 
 A binomial coefficient is understood to vanish when its lower argument lies
 outside its allowed range; this automatically removes overlap classes that do
-not fit at small ``N``.
+not fit at small $N$.
 
-Writing ``\widehat E_r=I_1\otimes E_r``, the exact finite product closure is
+Writing $\widehat E_r=I_1\otimes E_r$, the exact finite product closure is
 
 ```math
 \begin{aligned}
@@ -178,9 +178,9 @@ Writing ``\widehat E_r=I_1\otimes E_r``, the exact finite product closure is
 \end{aligned}
 ```
 
-The implementation evaluates every ``E_m`` directly and never constructs an
+The implementation evaluates every $E_m$ directly and never constructs an
 operator on the union of two subsets. Its largest matrices therefore remain
-``d^p\times d^p``, independent of ``N``. For ``p=1``, the two sums reduce to
+$d^p\times d^p$, independent of $N$. For $p=1$, the two sums reduce to
 the one-particle dissipator and the collective field shown above.
 
 ## Supported terms and explicit errors
@@ -220,8 +220,8 @@ dynamics.
 ```
 
 for Hamiltonian and local-jump `p`-body terms. For collective one-particle
-jumps it drops the subleading local dissipator and replaces ``N-1`` by
-``N``. Thus a rate written explicitly as ``r=\kappa/N``
+jumps it drops the subleading local dissipator and replaces $N-1$ by
+$N$. Thus a rate written explicitly as $r=\kappa/N$
 has the finite closure
 
 ```math
@@ -229,17 +229,17 @@ has the finite closure
 +\kappa\frac{N-1}{N}\,C_L(\sigma),
 ```
 
-and thermodynamic closure ``\kappa C_L(\sigma)``, where
-``C_L=(\ell^*[L,\sigma]-\ell[L^\dagger,\sigma])/2``.
+and thermodynamic closure $\kappa C_L(\sigma)$, where
+$C_L=(\ell^*[L,\sigma]-\ell[L^\dagger,\sigma])/2$.
 
 The plan cannot infer whether an arbitrary numerical rate was intended to
-scale as ``1/N``, ``1/N^{p-1}``, or remain constant. The user must encode the
+scale as $1/N$, $1/N^{p-1}$, or remain constant. The user must encode the
 physical Kac scaling in the term rate. In both modes rates are used exactly as
 supplied; `limit=:thermodynamic` changes combinatorial factors but never
-inserts a compensating power of ``N``. It is therefore not a symbolic limit of
+inserts a compensating power of $N$. It is therefore not a symbolic limit of
 arbitrary numeric terms.
 
-For a collective ``p``-body jump, the unique leading class consists of two
+For a collective $p$-body jump, the unique leading class consists of two
 disjoint subsets with exactly one containing the retained particle. Its count
 is replaced by
 
@@ -250,15 +250,15 @@ b_0={N-1\choose p-1}{N-p\choose p}
 ```
 
 All shared-particle and self terms are subleading and are dropped in this
-mode. With ``E_1`` and ``\ell=E_0``, the retained contribution is
+mode. With $E_1$ and $\ell=E_0$, the retained contribution is
 
 ```math
 r_J\frac{N^{2p-1}}{2(p-1)!p!}
 \left(\ell^*[E_1,\sigma]-\ell[E_1^\dagger,\sigma]\right).
 ```
 
-Consequently, an extensive collective-``p``-body model commonly supplies an
-explicit rate proportional to ``N^{-(2p-1)}``. The package does not insert
+Consequently, an extensive collective-$p$-body model commonly supplies an
+explicit rate proportional to $N^{-(2p-1)}$. The package does not insert
 that factor automatically.
 
 ## Plans, workspaces, and time dependence
@@ -340,7 +340,7 @@ each concurrently running solve.
 
 ## Product-state observable predictions
 
-For a local observable ``X``,
+For a local observable $X$,
 
 ```julia
 local_mean = meanfield_expectation(sigma, X)
@@ -356,7 +356,7 @@ The returned collective moments use
 N\langle X^2\rangle_\sigma+N(N-1)\langle X\rangle_\sigma^2,
 ```
 
-for ``X_c=\sum_iX_i``. A symmetric ``p``-body sum is predicted with
+for $X_c=\sum_iX_i$. A symmetric $p$-body sum is predicted with
 
 ```julia
 value = meanfield_pbody_expectation(plan, sigma, Xp, p)
@@ -389,7 +389,7 @@ converge is not evidence that no fixed point exists; change the seed and
 integration controls, or use a dedicated nonlinear solver.
 
 Linearization is performed in the real traceless-Hermitian tangent space of
-dimension ``d^2-1``:
+dimension $d^2-1$:
 
 ```julia
 J = meanfield_jacobian(plan, sigma_fixed)

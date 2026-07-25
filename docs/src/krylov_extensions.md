@@ -148,9 +148,9 @@ fill!(x, 0)
 second = recycled_gmres!(x, A1, b1, workspace)
 ```
 
-The GCRO projection maintains a pair of spaces ``U`` and ``C`` satisfying
-``M^{-1} A U=C`` with orthonormal columns of ``C``. Arnoldi then acts on the
-complement of ``C``. Near-`target` Ritz directions from the final correction
+The GCRO projection maintains a pair of spaces $U$ and $C$ satisfying
+$M^{-1} A U=C$ with orthonormal columns of $C$. Arnoldi then acts on the
+complement of $C$. Near-`target` Ritz directions from the final correction
 space replace `U` for the next call. The default `target=0` is appropriate for
 trace-fixed steady-state and low-frequency response systems.
 
@@ -166,7 +166,7 @@ custom linear systems.
 
 ## Adaptive exponential action
 
-`krylov_expv` computes ``\exp(tA)b`` directly. It restarts in time and adapts
+`krylov_expv` computes $\exp(tA)b$ directly. It restarts in time and adapts
 the slice length from an augmented-Hessenberg defect estimate:
 
 ```julia

@@ -60,13 +60,13 @@ The immutable batch plan is shareable. Its workspace is mutable, reusable
 sequentially, and must not be shared by concurrent callers.
 
 A one-particle monitor matrix is always lifted to the collective operator
-``\sum_i c^{(i)}``.  Passing a prepared `PIOperator` monitors that PI operator
+$\sum_i c^{(i)}$.  Passing a prepared `PIOperator` monitors that PI operator
 directly.  Particle-resolved local records reveal particle labels and do not
 preserve the PI conditional state, so this API rejects them rather than
 silently averaging a non-PI measurement.
 
 `heterodyne_monitor` produces orthogonal I/Q records with two independent real
-Wiener processes and strength ``\sqrt{\eta/2}`` per quadrature.  Efficiencies
+Wiener processes and strength $\sqrt{\eta/2}$ per quadrature.  Efficiencies
 and phases may be scalar schedules `(time, parameters)`.  Their values are
 validated at every step.
 

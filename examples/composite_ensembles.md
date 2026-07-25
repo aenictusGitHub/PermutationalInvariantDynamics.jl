@@ -33,7 +33,7 @@ The complete generator is
 ```
 
 The script uses two qubits in ensemble A and one in ensemble B, so ensemble A
-already retains both of its Schur sectors, ``j=1`` and ``j=0``. The resulting
+already retains both of its Schur sectors, $j=1$ and $j=0$. The resulting
 PI operator dimensions are 10 and 4 rather than full-space dimensions 16 and
 4, and the finite ancilla contributes another factor of 4. Thus the complete
 composite operator vector has only 160 coordinates. Increasing either
@@ -94,7 +94,7 @@ global Kronecker matrix.
 ![Composite endpoint observable and prepared-kernel checks](../docs/src/assets/example_figures/composite_ensembles.png)
 
 The left panel compares the initial and final expectation of
-``\sum_i\sigma_z^{(i)}`` in ensemble A after the preallocated evolution. These
+$\sum_i\sigma_z^{(i)}$ in ensemble A after the preallocated evolution. These
 are endpoint values, not a sampled trajectory. The right panel reports trace
 preservation, batched forward/adjoint agreement, and final-trace errors. Exact
 zeros are shown at machine epsilon only to make them visible on the logarithmic

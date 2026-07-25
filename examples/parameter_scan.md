@@ -12,7 +12,7 @@ pumping reservoir,
  +r\sum_i\mathcal D[\sigma_i^+]\rho.
 ```
 
-The exact stationary excited-state fraction is ``r/(1+r)``. This gives a
+The exact stationary excited-state fraction is $r/(1+r)$. This gives a
 compact validation of both the stationary solver and continuation machinery.
 
 ## Prepared scan
@@ -56,7 +56,7 @@ prediction and asserts that no state history was retained.
 ## Batched dynamic sensitivity
 
 The last setup-only check prepares the augmented equation for
-``[\rho,\partial\rho/\partial r]``:
+$[\rho,\partial\rho/\partial r]$:
 
 ```julia
 dynamic_model = specialize(family, (1.0, first(pump_rates)))

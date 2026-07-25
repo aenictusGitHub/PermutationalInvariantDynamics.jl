@@ -17,7 +17,7 @@ is, in this package's dissipator convention,
 ```
 
 For an initially excited ensemble, Fig. 2(a,b) compares
-``\gamma_l/\Gamma_c=1`` and ``10`` using ``N=50`` and 512 trajectories. Its two
+$\gamma_l/\Gamma_c=1$ and $10$ using $N=50$ and 512 trajectories. Its two
 radiated fluxes are
 
 ```math
@@ -34,7 +34,7 @@ change this pulse comparison.
 
 ## What the example compares
 
-The default ``N=10``, 256-trajectory run is a finite-size reproduction of the
+The default $N=10$, 256-trajectory run is a finite-size reproduction of the
 published model, initial condition, rate ratios, and observables. It is sized
 as a practical package regression rather than a digitization of Fig. 2. For
 each rate ratio it compares two distinct numerical routes:
@@ -49,7 +49,7 @@ each rate ratio it compares two distinct numerical routes:
    reported Monte Carlo standard errors plus a small numerical floor.
 
 The example also checks normalization, the exact initial fluxes
-``I_c(0)=N\Gamma_c`` and ``I_{\rm fs}(0)=N\gamma_l``, and the qualitative
+$I_c(0)=N\Gamma_c$ and $I_{\rm fs}(0)=N\gamma_l$, and the qualitative
 contrast of the two panels: a collective burst for comparable rates and
 free-space-dominated radiation for strong local decay.
 
@@ -60,7 +60,7 @@ density operators at every requested time, so that run uses substantially
 more memory than the paper's single-pseudo-state representation.
 
 The compact strong-local-loss panel stops at
-``\Gamma_c t=0.4``. Beyond that point the surviving records are rare enough
+$\Gamma_c t=0.4$. Beyond that point the surviving records are rare enough
 that 256 paths do not support a reliable pointwise normal-standard-error
 check; increase the trajectory count before extending that tail.
 
@@ -68,11 +68,11 @@ check; increase the trajectory count before extending that tail.
 
 The deterministic master equation and all ensemble-linear observables are the
 same, but the conditional records are not identical. Zhang *et al.* resolve a
-local event into ``J\to J+s`` branches and propagate a pure symbolic Dicke
+local event into $J\to J+s$ branches and propagate a pure symbolic Dicke
 pseudo-state. The density-valued backend used in this script combines the
 indistinguishable particle-local outcomes into one completely positive PI
 gain map, so a local jump generally produces a mixed conditional state. The
-example therefore compares ensemble intensities, not individual ``(J,M)``
+example therefore compares ensemble intensities, not individual $(J,M)$
 paths or trajectory variances.
 
 The separate [`weak_pi_trajectories.jl`](weak_pi_trajectories.jl) example uses

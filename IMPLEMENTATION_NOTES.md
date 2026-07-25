@@ -1069,7 +1069,7 @@ accepts `ExpvAlgorithm` (or `:expv`/`:krylov_expv`) for autonomous generators.
 It prepares one restarted-Arnoldi workspace and one task-owned source-action
 workspace, then reuses both across saved intervals and observable-only
 streaming. Its resource preflight counts the exact large-array payload
-``n(m+4)+(m+1)m+(m+1)^2`` for `m=min(n,krylovdim)`, separately from prepared
+$n(m+4)+(m+1)m+(m+1)^2$ for `m=min(n,krylovdim)`, separately from prepared
 Liouvillian scratch and returned output. Driven sources and parameter-bearing
 applications raise rather than being treated as one fixed exponential.
 

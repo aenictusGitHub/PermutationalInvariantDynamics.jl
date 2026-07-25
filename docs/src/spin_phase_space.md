@@ -1,7 +1,7 @@
 # Sector-resolved spin phase space
 
 The spin phase-space functions turn a qubit PI density operator into Husimi-Q
-or spin-Wigner data on the sphere without reconstructing its ``2^N`` Hilbert
+or spin-Wigner data on the sphere without reconstructing its $2^N$ Hilbert
 space. They work one Schur block at a time and distinguish the total-spin
 label from the angular coordinates.
 
@@ -13,9 +13,9 @@ For qubits, a retained partition
 \nu=(\nu_1,\nu_2)
 ```
 
-carries total spin ``j=(\nu_1-\nu_2)/2``, spin dimension ``n_j=2j+1``, and
-symmetric-group multiplicity ``f^\nu``. A general PI state can occupy several
-such sectors. It therefore does not belong to one spin-``j`` Hilbert space and
+carries total spin $j=(\nu_1-\nu_2)/2$, spin dimension $n_j=2j+1$, and
+symmetric-group multiplicity $f^\nu$. A general PI state can occupy several
+such sectors. It therefore does not belong to one spin-$j$ Hilbert space and
 does not have one irreducible spin sphere.
 
 The canonical result returned by this package is the discrete collection of
@@ -25,18 +25,18 @@ sector spheres. On each sphere the multiplicity-weighted Schur block
 \bar\rho_j=f^\nu\rho_j=\sqrt{f^\nu}\,C_\nu
 ```
 
-has trace equal to the physical sector population ``p_j``. Here ``C_\nu`` is
-the stored equation-(7) block and ``\rho_j=C_\nu/\sqrt{f^\nu}`` is the
+has trace equal to the physical sector population $p_j$. Here $C_\nu$ is
+the stored equation-(7) block and $\rho_j=C_\nu/\sqrt{f^\nu}$ is the
 physical block.
 
 `SpinPhaseSpaceData.values` is the sum of the selected sector densities. It is
 useful as a two-dimensional angular marginal, but it is explicitly obtained
-by forgetting the discrete ``j`` label. It must not be interpreted as though
+by forgetting the discrete $j$ label. It must not be interpreted as though
 all sectors were one larger spin.
 
 ## Husimi-Q normalization
 
-For a spin coherent state ``|\theta,\phi;j\rangle``, the package returns
+For a spin coherent state $|\theta,\phi;j\rangle$, the package returns
 
 ```math
 P_Q(j,\theta,\phi)=\frac{2j+1}{4\pi}
@@ -44,7 +44,7 @@ P_Q(j,\theta,\phi)=\frac{2j+1}{4\pi}
 ```
 
 This is a density with respect to
-``d\Omega=\sin\theta\,d\theta\,d\phi``:
+$d\Omega=\sin\theta\,d\theta\,d\phi$:
 
 ```math
 \int P_Q(j,\Omega)d\Omega=p_j.
@@ -58,8 +58,8 @@ point. Azimuthal dependence is evaluated as a finite Fourier series.
 ## Spin-Wigner convention
 
 `spin_wigner` uses the Agarwal multipole construction with orthonormal
-Condon--Shortley polarization tensors ``T_{kq}`` and standard spherical
-harmonics ``Y_{kq}``. With
+Condon--Shortley polarization tensors $T_{kq}$ and standard spherical
+harmonics $Y_{kq}$. With
 
 ```math
 t_{kq}=\mathrm{tr}(T_{kq}^\dagger\bar\rho_j),
@@ -73,8 +73,8 @@ P_W(j,\theta,\phi)=
 t_{kq}Y_{kq}(\theta,\phi).
 ```
 
-It also integrates to ``p_j``. A maximally mixed conditional block is the
-uniform density ``p_j/(4\pi)``. For one qubit with Bloch vector ``r``, the
+It also integrates to $p_j$. A maximally mixed conditional block is the
+uniform density $p_j/(4\pi)$. For one qubit with Bloch vector $r$, the
 convention reduces to
 
 ```math
@@ -116,8 +116,8 @@ The aggregate then integrates to the selected population, not necessarily
 one. Sector selection never renormalizes the result.
 
 The coherent-state Q evaluation costs
-``O(n_\theta\sum_j(n_j^2+n_\phi n_j))``. Wigner multipole setup costs
-``O(\sum_j n_j^3)`` and uses only sector-sized, call-local scratch; its grid
+$O(n_\theta\sum_j(n_j^2+n_\phi n_j))$. Wigner multipole setup costs
+$O(\sum_j n_j^3)$ and uses only sector-sized, call-local scratch; its grid
 evaluation has the same Fourier scaling as Q. No global mutable geometry
 cache or full Hilbert-space state is introduced.
 
@@ -134,8 +134,8 @@ sector_figure = visualize_spin_phase_space(
     w; sector=first(w.sectors), title="Symmetric-sector Wigner function")
 ```
 
-The SVG is an equirectangular heatmap: azimuth ``\phi`` is horizontal and
-polar angle ``\theta`` is vertical, with the north pole at the top. Rendering
+The SVG is an equirectangular heatmap: azimuth $\phi$ is horizontal and
+polar angle $\theta$ is vertical, with the north pole at the top. Rendering
 a sector requires data computed with `resolved=true`. Husimi data use a
 sequential color scale, while Wigner data use a zero-centered diverging scale.
 Explicit `colorlimits` only change the mapping to colors; the numerical data

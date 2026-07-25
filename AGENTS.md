@@ -512,7 +512,7 @@ prototype precision used by compiled parameter families.
   PI `N=3` (and the bipartite `N=2` consistency case). Never infer a conclusion
   from the raw scaled slack or solver status alone.
 - `stabilizer_renyi_entropy` implements the second stabilizer Rényi entropy
-  ``M_2`` of Passarelli--Fazio--Lucignano only in its paper-defined domain:
+  $M_2$ of Passarelli--Fazio--Lucignano only in its paper-defined domain:
   a validated pure qubit state with exact support in the fully symmetric
   `(N,0)` sector.  Do not apply its fourth Pauli moment to mixed or
   multi-sector PI states and call the result magic; the function must reject
@@ -521,8 +521,8 @@ prototype precision used by compiled parameter families.
 - `StabilizerRenyiPlan` retains bounded normalized Krawtchouk transforms,
   hypergeometric modes, and logarithmic binomial data for one exact basis;
   `StabilizerRenyiWorkspace` owns its mutable transform arrays and is
-  task-owned.  Evaluation is ``O(N^4)`` with ``O(N^3)`` retained plan data and
-  ``O(N^2)`` workspace.  It must never construct a ``2^N`` state, a ``4^N``
+  task-owned.  Evaluation is $O(N^4)$ with $O(N^3)$ retained plan data and
+  $O(N^2)$ workspace.  It must never construct a $2^N$ state, a $4^N$
   Pauli list, or a table of representative Pauli matrices.  Keep the final
   multinomial contraction in log-sum-exp form and retain the independent
   Pauli second-moment/purity check.
@@ -1082,13 +1082,14 @@ not dispatch on the accidental presence of an optional package.
   `checkdocs=:exports`.
 - Qualify names that conflict with Base, such as
   `PermutationalInvariantDynamics.isvalid`.
-- In `docs/src` and Documenter docstrings, write inline mathematics with
-  double backticks and display mathematics in fenced `math` blocks. Do not use
-  `\(...\)`, `\[...\]`, or single-dollar delimiters there: Julia Markdown
-  consumes them before KaTeX can render the expression. Paired example guides
-  are viewed directly on GitHub, so use `$...$` inline and fenced `math`
-  blocks for displays. GitHub rejects `\operatorname`; use `\mathrm{tr}`,
-  `\mathrm{Re}`, `\mathrm{diag}`, and analogous roman labels.
+- In tracked Markdown, write inline mathematics with `$...$` and display
+  mathematics in fenced `math` blocks. This common syntax renders both in
+  GitHub previews and through Documenter's configured KaTeX auto-renderer. Do
+  not use double backticks, `\(...\)`, or `\[...\]` for Markdown mathematics.
+  Source docstrings remain Julia-native and use double-backtick math; an
+  unescaped `$` in an ordinary Julia string would interpolate. GitHub rejects
+  `\operatorname`; use `\mathrm{tr}`, `\mathrm{Re}`, `\mathrm{diag}`, and
+  analogous roman labels.
 - Keep README, `CITATION.cff`, Documenter links, repository URL, and license
   synchronized. Do not add `date-released` before an actual release.
 - `scripts/release_gate.jl` is the dependency-free, non-publishing metadata

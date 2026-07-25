@@ -11,8 +11,8 @@ Choose the topology from the physics before comparing coordinate counts.
 
 ## Representation and master equation
 
-For a PI system basis with ``n_{\mathrm{PI}}`` operator coordinates and a mode
-with levels ``0,\ldots,n_{\max}``, the package constructs
+For a PI system basis with $n_{\mathrm{PI}}$ operator coordinates and a mode
+with levels $0,\ldots,n_{\max}$, the package constructs
 
 ```julia
 CompositePIBasis(system_basis, FiniteOperatorBasis(nmax + 1))
@@ -25,10 +25,10 @@ n_{\mathrm{PI}}(n_{\max}+1)^2
 ```
 
 coordinates. The system coordinate is the first and fastest factor. Factorized
-maps are applied one tensor mode at a time; neither a ``d^N`` system state nor
+maps are applied one tensor mode at a time; neither a $d^N$ system state nor
 the global Kronecker superoperator is formed.
 
-For a one-particle matrix ``L``, `PseudomodeCoupling(L; strength=g)` uses the
+For a one-particle matrix $L$, `PseudomodeCoupling(L; strength=g)` uses the
 collective operator
 
 ```math
@@ -42,7 +42,7 @@ H_{\mathrm{int}}=gJ_La^\dagger+g^*J_L^\dagger a.
 ```
 
 An optional `counterrotating_strength=h` adds
-``hJ_La+h^*J_L^\dagger a^\dagger``. No Kac or other ``N``-dependent scaling
+$hJ_La+h^*J_L^\dagger a^\dagger$. No Kac or other $N$-dependent scaling
 is inserted. Supply the scaling required by the model explicitly.
 
 The mode part is
@@ -54,8 +54,8 @@ The mode part is
 ```
 
 The package convention is
-``\mathcal D[c]\rho=c\rho c^\dagger-\{c^\dagger c,\rho\}/2``. Consequently,
-`damping=κ` makes a free mode amplitude decay at rate ``\kappa/2``.
+$\mathcal D[c]\rho=c\rho c^\dagger-\{c^\dagger c,\rho\}/2$. Consequently,
+`damping=κ` makes a free mode amplitude decay at rate $\kappa/2$.
 
 ## Build a shared-mode model
 
@@ -240,9 +240,9 @@ unsupported.
 
 | Physical model | Package representation | Main coordinate count | What must converge |
 |:--|:--|:--|:--|
-| One shared explicit mode | `GlobalPseudomodeModel` on `CompositePIBasis` | ``n_{\mathrm{PI}}(n_{\max}+1)^2`` | Mode cutoff and numerical solver |
-| One independent mode per identical system | `PISupersite` and local `pseudomode_model` | ``\binom{N+[d(n_{\max}+1)]^2-1}{N}`` for one mode | Every local-mode cutoff and numerical solver |
-| Common Gaussian bath represented by exponential correlations | `HEOMBath` and `HEOMPlan` | ``n_{\mathrm{PI}}n_{\mathrm{ADO}}`` | Bath decomposition, hierarchy depth, and numerical solver |
+| One shared explicit mode | `GlobalPseudomodeModel` on `CompositePIBasis` | $n_{\mathrm{PI}}(n_{\max}+1)^2$ | Mode cutoff and numerical solver |
+| One independent mode per identical system | `PISupersite` and local `pseudomode_model` | $\binom{N+[d(n_{\max}+1)]^2-1}{N}$ for one mode | Every local-mode cutoff and numerical solver |
+| Common Gaussian bath represented by exponential correlations | `HEOMBath` and `HEOMPlan` | $n_{\mathrm{PI}}n_{\mathrm{ADO}}$ | Bath decomposition, hierarchy depth, and numerical solver |
 
 The first two descriptions retain physical mode density matrices and
 occupations. HEOM eliminates the bath into auxiliary density operators and

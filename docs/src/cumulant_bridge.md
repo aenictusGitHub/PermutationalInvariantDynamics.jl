@@ -8,7 +8,7 @@ chooses symbolic operator and index spaces and performs the truncation.
 
 ## Exact ordered local moments
 
-For local matrices ``A_{a_1},\ldots,A_{a_k}`` on distinct particles, define
+For local matrices $A_{a_1},\ldots,A_{a_k}$ on distinct particles, define
 
 ```math
 M_{a_1\ldots a_k}
@@ -17,7 +17,7 @@ M_{a_1\ldots a_k}
 
 For a PI state this equals the expectation of the permutation-symmetrized
 `k`-site tensor summed over unordered subsets, divided by
-``\binom{N}{k}``. [`ordered_local_moment`](@ref) performs that contraction
+$\binom{N}{k}$. [`ordered_local_moment`](@ref) performs that contraction
 directly in Schur blocks. [`ordered_local_moments`](@ref) evaluates all
 symmetry-canonical multisets from a labeled operator alphabet and reuses one
 [`PBodyGeometry`](@ref) per order.
@@ -54,8 +54,7 @@ Schema `1.0.0` fixes the following adapter conventions:
 - a p-body operator is summed over unordered distinct subsets;
 - ordered local moments use distinct-particle/falling-factorial
   normalization;
-- the dissipator is ``L\rho L^\dagger-
-  \{L^\dagger L,\rho\}/2``;
+- the dissipator is $L\rho L^\dagger- \{L^\dagger L,\rho\}/2$;
 - `microscopic=false` forbids automatic lowering of a direct PI term.
 
 An adapter should reject a schema version it does not support. It must also

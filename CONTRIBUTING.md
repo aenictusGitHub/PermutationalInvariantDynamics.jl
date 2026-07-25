@@ -76,9 +76,10 @@ maintainer-only General registration step.
 - Keep non-core dependencies in package extensions.
 
 Every exported binding needs a source docstring and one canonical `@docs`
-entry. In `docs/src` and Documenter docstrings, use double backticks for
-inline mathematics and fenced `math` blocks for displays; Julia Markdown does
-not preserve `\(...\)`, `\[...\]`, or single-dollar delimiters for KaTeX.
-Example guides rendered directly by GitHub use `$...$` inline and fenced
-`math` blocks for displays. GitHub does not accept `\operatorname`; use roman
+entry. In tracked Markdown, use `$...$` for inline mathematics and fenced
+`math` blocks for displays. This common syntax renders in GitHub previews and
+through Documenter's configured KaTeX auto-renderer. Do not use double
+backticks, `\(...\)`, or `\[...\]` for Markdown mathematics. Source docstrings
+remain Julia-native and use double-backtick math because `$` interpolates in
+ordinary Julia strings. GitHub does not accept `\operatorname`; use roman
 labels such as `\mathrm{tr}` instead.

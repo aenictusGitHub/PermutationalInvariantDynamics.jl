@@ -61,7 +61,7 @@ trace-fixed rank-one system
 
 where `t` is the physical PI trace functional. For a trace-preserving
 Liouvillian with a unique stationary state, this is equivalent to
-``\mathcal L\rho=0`` and ``\mathrm{tr}\rho=1``.
+$\mathcal L\rho=0$ and $\mathrm{tr}\rho=1$.
 
 ```julia
 info = steady_state(model;
@@ -92,12 +92,12 @@ The returned information contains `state`, `residual`, `normalized_residual`,
 `operator_scale`, `trace_error`, `linear_residual`, `iterations`, `restarts`,
 `krylov_dimension`, and `converged`. The trace-fixed system uses
 `L/operator_scale`, making convergence invariant under a global rate
-rescaling. `residual` remains the physical ``\|\mathcal L\rho\|`` value;
+rescaling. `residual` remains the physical $\|\mathcal L\rho\|$ value;
 `normalized_residual` is the scale-independent accuracy check.
 
 ### Reusing storage
 
-GMRES stores ``O(nm)`` numbers for Liouville dimension `n` and Krylov dimension
+GMRES stores $O(nm)$ numbers for Liouville dimension `n` and Krylov dimension
 `m`. Reuse that storage for repeated solves:
 
 ```julia
@@ -179,8 +179,8 @@ specialization itself with `schur_sector_preconditioner(specialized)`; its
 exact basis is inferred. A detached, plan-less matrix-free callback
 deliberately retains the generic fallback because its bound parameters cannot
 be inferred.
-Both routes store ``\sum_s n_s^2`` block coefficients rather than the full
-``n^2`` matrix and produce the same trace-bordered block operator. Setup is
+Both routes store $\sum_s n_s^2$ block coefficients rather than the full
+$n^2$ matrix and produce the same trace-bordered block operator. Setup is
 worthwhile when GMRES is difficult or the factors are reused. For a small,
 rapidly convergent problem, unpreconditioned GMRES may be faster because the
 block construction and triangular solves have overhead.
@@ -238,7 +238,7 @@ With `vectors=true`, the result contains:
 
 - `values`: selected Ritz eigenvalues;
 - `vectors`: corresponding right Ritz vectors;
-- `residuals`: estimates of ``\|\mathcal Lv-\lambda v\|``;
+- `residuals`: estimates of $\|\mathcal Lv-\lambda v\|$;
 - `converged`: convergence flag for every requested pair;
 - `iterations`, `krylov_dimension`, and full PI `dimension`.
 
@@ -379,7 +379,7 @@ Important result fields are `hard_locked`, `correction_iterations`,
 `correction_failures`, `operator_applications`, `restarts`, and
 `restart_history`. Returned right eigenvectors are reconstructed from the
 locked Ritz block and checked explicitly with
-``\|L v-\lambda v\|``. A nonzero `correction_failures` is not by itself a
+$\|L v-\lambda v\|$. A nonzero `correction_failures` is not by itself a
 failure: inexact corrections are intentional, and a projected Davidson
 direction is used when GMRES stagnates. Convergence is decided only by the
 outer eigenpair residuals.
@@ -527,7 +527,7 @@ global gap is required.
 
 Periodic problems have the same plan/workspace split. `floquet_map` prepares
 the RK grid and the underlying Liouvillian action, but does not construct the
-``n_{\mathrm{PI}}\times n_{\mathrm{PI}}`` one-period matrix:
+$n_{\mathrm{PI}}\times n_{\mathrm{PI}}$ one-period matrix:
 
 ```julia
 period_map = floquet_map(prepared, period; steps=320)
@@ -563,7 +563,7 @@ batched period-map application. Jacobi--Davidson
 global spectral-radius calculation. Every selected result retains Ritz
 residuals, convergence flags, the full operator dimension, and whether its
 scope is partial. `floquet_steady_state` solves the trace-fixed equation
-``(F-I)\rho=0`` by restarted GMRES and reports the physical period residual.
+$(F-I)\rho=0$ by restarted GMRES and reports the physical period residual.
 
 `floquet_gap(period_map; return_info=true)` reports residual certification for
 the selected multipliers. A partial largest-modulus window can identify a

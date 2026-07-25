@@ -3,7 +3,7 @@
 This example evaluates the generalized coherent-state Husimi transform of a
 three-qutrit PI product state. A local Hermitian generator is lifted into each
 Schur irrep, so the cost is controlled by the retained Schur blocks and the
-number of supplied phase-space points rather than by ``3^N``.
+number of supplied phase-space points rather than by $3^N$.
 
 `QuditHusimiPlan` prepares the coherent vectors once. The same plan is reused
 for a nonuniform product state and the maximally mixed state. The script checks
@@ -18,7 +18,7 @@ redundant `U(3)` orbit, not a canonical two-dimensional chart, and the method
 does not define a qutrit Wigner quasidistribution.
 
 A one-qubit cross-check verifies the normalization against
-`spin_husimi_q`: the normalized-Haar density is ``4\pi`` times the spin
+`spin_husimi_q`: the normalized-Haar density is $4\pi$ times the spin
 sphere density. When CairoMakie is available, the figure shows the aggregate
 and sector-resolved qutrit values along the generator path.
 

@@ -81,7 +81,7 @@ For each cut, its unnormalized PPT operator is invariant under permutations
 within both sides. It therefore decomposes into product-Schur blocks indexed
 by partitions `alpha` of `k` and `beta` of `N-k`. The implementation stores
 their multiplicity-weighted Hermitian matrices
-``Y_{k,\alpha,\beta}`` and maximizes a common scaled slack ``t`` subject to
+$Y_{k,\alpha,\beta}$ and maximizes a common scaled slack $t$ subject to
 
 ```math
 Y_{k,\alpha,\beta}\succeq t I,
@@ -108,8 +108,8 @@ U_{\alpha\beta\rightarrow\lambda,r}.
 The left side is the multiplicity-weighted analysis block of the input
 `PIState`. This scaling keeps the assembled equality finite whenever the
 ordinary PI analysis block is representable. The optimized `scaled_margin`
-has the same sign interpretation as the slack ``s`` in Eq. (31) of the paper,
-but its magnitude is not that unscaled ``s`` because the product blocks use
+has the same sign interpretation as the slack $s$ in Eq. (31) of the paper,
+but its magnitude is not that unscaled $s$ because the product blocks use
 the package's Schur normalization.
 
 Clarabel uses real semidefinite cones. Each complex Hermitian PSD constraint
@@ -164,8 +164,8 @@ plan = PPTMixturePlan(restricted) # internally enforces every N=6 sector
 ## Scaling and memory
 
 The paper reduces the formulation to a polynomial number of objects: the
-number of real parameters is ``O(N^7)``, there are ``O(N^3)`` product-Schur
-matrix blocks, and the largest block dimension is ``O(N^2)``. Polynomial does
+number of real parameters is $O(N^7)$, there are $O(N^3)$ product-Schur
+matrix blocks, and the largest block dimension is $O(N^2)$. Polynomial does
 not mean inexpensive; sparse conic factorization fill and conditioning remain
 problem dependent.
 

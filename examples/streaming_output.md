@@ -10,7 +10,7 @@ four initially excited, independently decaying qubits,
 \dot\rho=\gamma\sum_{i=1}^N\mathcal D[\sigma_-^{(i)}]\rho.
 ```
 
-Its exact mean excitation count is ``N e^{-\gamma t}``, so both output paths
+Its exact mean excitation count is $N e^{-\gamma t}$, so both output paths
 have a direct analytical check.
 
 ## Deterministic sampling

@@ -15,7 +15,7 @@ studied collective cavity decay together with independent free-space decay,
 
 Their Dicke pseudo-state algorithm resolves an individual local event into
 allowed total-spin shifts. This example tests the package's corresponding
-opt-in weak-PI backend for the article's ``\gamma_l/\Gamma_c=1`` case. It
+opt-in weak-PI backend for the article's $\gamma_l/\Gamma_c=1$ case. It
 does not assign a label to the emitting particle. Instead, it factorizes the
 already permutation-averaged PI gain into a complete set of Schur-sector
 Kraus branches.
@@ -37,8 +37,8 @@ I_c=\Gamma_c\langle J_+J_-\rangle,
 I_{\mathrm{fs}}=\gamma_l\left(N/2+\langle J_z\rangle\right).
 ```
 
-The default ``N=6`` and 400 paths per unraveling make this a fast backend
-regression. The paper used ``N=50`` and 512 pseudo-state paths, so this is not
+The default $N=6$ and 400 paths per unraveling make this a fast backend
+regression. The paper used $N=50$ and 512 pseudo-state paths, so this is not
 a digitization of its figure.
 
 ## Four solution routes
@@ -89,8 +89,8 @@ retains its pseudo-ket paths before postprocessing.
 
 ## Accuracy and sector checks
 
-The example checks the exact initial values ``I_c(0)=N\Gamma_c`` and
-``I_{\mathrm{fs}}(0)=N\gamma_l``, conservation of the population sum, and
+The example checks the exact initial values $I_c(0)=N\Gamma_c$ and
+$I_{\mathrm{fs}}(0)=N\gamma_l$, conservation of the population sum, and
 agreement between the two deterministic PI solvers. Both stochastic fluxes
 must lie within six reported standard errors plus a small integration floor
 of the deterministic reference, and their averaged PI density states are
@@ -98,8 +98,8 @@ compared directly with the full PI solution.
 
 `weak_pi_trajectory_statistics` converts pseudo-ket outer products to PI
 density blocks only while forming ensemble averages. It also records every
-``J\rightarrow J'`` transition. The script verifies that collective-channel
-jumps preserve ``J`` and that every sector-changing record belongs to the
+$J\rightarrow J'$ transition. The script verifies that collective-channel
+jumps preserve $J$ and that every sector-changing record belongs to the
 local channel.
 
 ## Representation comparison
@@ -119,8 +119,8 @@ P_{\mathrm{PI\ density}}
 =\binom{N+3}{3}.
 ```
 
-A labeled-particle ket and density matrix instead contain ``2^N`` and
-``4^N`` complex coordinates. At the default size these counts are:
+A labeled-particle ket and density matrix instead contain $2^N$ and
+$4^N$ complex coordinates. At the default size these counts are:
 
 | representation | coordinates |
 |---|---:|
@@ -130,14 +130,14 @@ A labeled-particle ket and density matrix instead contain ``2^N`` and
 | full labeled-particle ket | 64 |
 | full density matrix | 4096 |
 
-The PI density vector can be longer than a full ket at very small ``N``
+The PI density vector can be longer than a full ket at very small $N$
 because the two objects solve different tasks: one stores an operator algebra,
 the other one pure labeled state. Its comparison at equal task is with the
 full density matrix; the weak pseudo-ket is the compressed trajectory-state
 comparison with a full ket.
 
-At the article's ``N=50``, the weak and PI density counts are 676 and 23,426,
-whereas the labeled ket already has ``2^{50}`` amplitudes. These are snapshot
+At the article's $N=50$, the weak and PI density counts are 676 and 23,426,
+whereas the labeled ket already has $2^{50}$ amplitudes. These are snapshot
 payload counts, not total plan or workspace memory. In particular, prepared
 Kraus maps and integration scratch also consume memory, returned histories
 multiply the payload by the number of paths and saved times, and the
@@ -153,12 +153,12 @@ With CairoMakie available, the first figure contains:
   unravelings and the population master-equation curve;
 - the PI coefficient-vector error of both ensemble averages, together with
   the deterministic population/full-PI discrepancy;
-- a heatmap of sampled source-``J`` to target-``J'`` local sector changes per
+- a heatmap of sampled source-$J$ to target-$J'$ local sector changes per
   trajectory.
 
 It is saved as `weak_pi_decay_trajectory_comparison.{pdf,png}`. A second figure,
 `weak_pi_trajectories_method_comparison.{pdf,png}`, shows exact coordinate
-scaling through ``N=50`` and the warmed per-path wall time measured for the
+scaling through $N=50$ and the warmed per-path wall time measured for the
 two fixed-step trajectory backends on the current run. Its third panel shows
 the retained memory of equal path ensembles with the same saved times.
 

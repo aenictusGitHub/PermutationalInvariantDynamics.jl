@@ -56,8 +56,7 @@ function _matching_backtick_end(bytes,start,count)
     nothing
 end
 
-function _prose_math_delimiter_violations(
-        markdown::AbstractString;reject_single_dollar::Bool=true)
+function _prose_math_syntax_violations(markdown::AbstractString)
     violations=NamedTuple{(:line,:token),Tuple{Int,String}}[]
     fence=nothing
     for (line_number,line) in
@@ -77,6 +76,8 @@ function _prose_math_delimiter_violations(
 
         bytes=codeunits(line)
         index=1
+        dollar_open=false
+        table_line=startswith(lstrip(line),"|")
         while index<=length(bytes)
             byte=bytes[index]
             if byte==UInt8('`')
@@ -86,6 +87,7 @@ function _prose_math_delimiter_violations(
                     run+=1
                 end
                 closing=_matching_backtick_end(bytes,index+run,run)
+                run==2&&push!(violations,(line=line_number,token="``"))
                 index=closing===nothing ? index+run : closing
             elseif byte==UInt8('\\')&&index<length(bytes)&&
                     bytes[index+1] in
@@ -93,20 +95,38 @@ function _prose_math_delimiter_violations(
                 token=String(UInt8[byte,bytes[index+1]])
                 push!(violations,(line=line_number,token=token))
                 index+=2
-            elseif reject_single_dollar&&byte==UInt8('$')
+            elseif byte==UInt8('$')
                 preceding_backslashes=0
                 previous=index-1
                 while previous>=1&&bytes[previous]==UInt8('\\')
                     preceding_backslashes+=1
                     previous-=1
                 end
-                iseven(preceding_backslashes)&&
-                    push!(violations,(line=line_number,token="\$"))
+                if isodd(preceding_backslashes)
+                    index+=1
+                elseif index<length(bytes)&&bytes[index+1]==UInt8('$')
+                    push!(violations,(line=line_number,token="\$\$"))
+                    index+=2
+                else
+                    dollar_open=!dollar_open
+                    index+=1
+                end
+            elseif dollar_open&&table_line&&byte==UInt8('|')
+                preceding_backslashes=0
+                previous=index-1
+                while previous>=1&&bytes[previous]==UInt8('\\')
+                    preceding_backslashes+=1
+                    previous-=1
+                end
+                iseven(preceding_backslashes)&&push!(
+                    violations,(line=line_number,token="raw table |"))
                 index+=1
             else
                 index+=1
             end
         end
+        dollar_open&&push!(
+            violations,(line=line_number,token="unclosed \$"))
     end
     violations
 end
@@ -116,27 +136,30 @@ end
     @test !_example_has_parse_error(Meta.parseall("x=1"))
 
     invalid_math=raw"""
-legacy \(x\), \[y\], and $z$
+legacy \(x\), \[y\], ``z``, and $unclosed
+| table | $|S|=p$ |
+$$display$$
 """
-    @test _prose_math_delimiter_violations(invalid_math)==[
-        (line=1,token=raw"\("),
-        (line=1,token=raw"\)"),
-        (line=1,token=raw"\["),
-        (line=1,token=raw"\]"),
-        (line=1,token="\$"),
-        (line=1,token="\$"),
-    ]
+    invalid_tokens=Set(
+        violation.token for violation in
+        _prose_math_syntax_violations(invalid_math))
+    @test all(token in invalid_tokens for token in (
+        raw"\(",raw"\)",raw"\[",raw"\]","``","unclosed \$",
+        "raw table |","\$\$"))
     valid_math=raw"""
-`inline code \(x\) and $x$`
-``inline Documenter math containing \(x\) and $x$``
+portable inline math $x^2+\mathrm{tr}(\rho)$
+`inline code \(x\), ``y``, and $z$`
 ```math
 \[x\] + $y$
 ```
 ```julia
 source = raw"\(x\) and $y$"
 ```
+| object | formula |
+|:--|:--|
+| subset | $\lvert S\rvert=p$ |
 """
-    @test isempty(_prose_math_delimiter_violations(valid_math))
+    @test isempty(_prose_math_syntax_violations(valid_math))
 
     example_directory=normpath(joinpath(@__DIR__,"..","examples"))
     entries=readdir(example_directory)
@@ -164,8 +187,7 @@ source = raw"\(x\) and $y$"
     for guide in guides
         markdown=read(joinpath(example_directory,guide),String)
         @test !occursin(raw"\operatorname",markdown)
-        @test isempty(_prose_math_delimiter_violations(
-            markdown;reject_single_dollar=false))
+        @test isempty(_prose_math_syntax_violations(markdown))
         @test occursin("## Expected output",markdown)
 
         matches=collect(eachmatch(
@@ -190,7 +212,7 @@ source = raw"\(x\) and $y$"
             path=joinpath(root,filename)
             markdown=read(path,String)
             markdown_count+=1
-            violations=_prose_math_delimiter_violations(markdown)
+            violations=_prose_math_syntax_violations(markdown)
             @test isempty(violations)
             for (opening_line,source) in _exact_julia_fences(markdown)
                 julia_fence_count+=1

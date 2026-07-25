@@ -50,7 +50,7 @@ are presentation metadata and do not alter the eigenvalues.
 
 `evans_uniqueness(H,jumps)` implements the finite-dimensional Evans
 commutant test by finding the joint nullspace of the vectorized commutators
-with ``H``, every ``L_k``, and every ``L_k^\dagger``. A scalar commutant
+with $H$, every $L_k$, and every $L_k^\dagger$. A scalar commutant
 certifies a unique stationary state for the trace-preserving GKSL semigroup.
 The result reports the numerical commutant dimension and tolerance; use
 `return_basis=true` to inspect its vectorized basis. This is an algebraic
@@ -97,11 +97,11 @@ negative or complex dissipative rates are rejected.
 
 `check_liouvillian_symmetry(L,U;kind=:unitary,basis=basis)` tests the weak
 covariance condition
-``\mathcal L\mathcal U=\mathcal U\mathcal L`` with
-``\mathcal U(\rho)=U\rho U^\dagger``. For `kind=:antiunitary`, it treats the
-Hilbert-space antiunitary as ``UK`` in the chosen computational basis and
-tests ``\mathcal L\mathcal U=\mathcal U\overline{\mathcal L}``, corresponding
-to ``\mathcal U(\rho)=U\rho^*U^\dagger``. Reports include absolute and relative
+$\mathcal L\mathcal U=\mathcal U\mathcal L$ with
+$\mathcal U(\rho)=U\rho U^\dagger$. For `kind=:antiunitary`, it treats the
+Hilbert-space antiunitary as $UK$ in the chosen computational basis and
+tests $\mathcal L\mathcal U=\mathcal U\overline{\mathcal L}$, corresponding
+to $\mathcal U(\rho)=U\rho^*U^\dagger$. Reports include absolute and relative
 residuals and the tolerance used. `is_liouvillian_symmetric` returns only the
 Boolean result.
 
@@ -113,7 +113,7 @@ Liouvillian, omit `basis` and pass its Hilbert-space unitary directly.
 
 `usual_liouvillian_symmetries` checks named clock/phase and cyclic-shift
 unitaries and complex conjugation. For qubits it additionally checks Pauli-X
-and Pauli-Z parity and spin time reversal ``i\sigma_yK``. Custom named tuples,
+and Pauli-Z parity and spin time reversal $i\sigma_yK$. Custom named tuples,
 dictionaries, or vectors of pairs can replace either candidate set. These are
 weak superoperator symmetries; they do not assert that every Hamiltonian and
 jump operator commutes individually with `U` (the stronger notion).
@@ -128,7 +128,7 @@ covariance test above while correctly failing this strong test. Reports use
 instead of being evaluated at an implicit time.
 
 The default search tests the diagonal clock (Pauli-Z parity for qubits) and
-solves the exact support constraints over ``\mathbb Z_2`` to find binary
+solves the exact support constraints over $\mathbb Z_2$ to find binary
 diagonal sign parities. Its completeness claim is limited to binary sign
 candidates represented by the supported microscopic matrices. Arbitrary
 continuous diagonal symmetries, non-diagonal symmetries, and unsupported
@@ -169,15 +169,14 @@ budget rather than applying the same budget independently to every charge.
 The package uses column-major vectorization. The exported constructors
 `left_superoperator(A)`, `right_superoperator(A)`, and
 `sandwich_superoperator(A,B)` implement, respectively,
-``X\mapsto AX``, ``X\mapsto XA``, and ``X\mapsto AXB^\dagger`` through the
-identities ``\mathrm{vec}(AXB^\dagger)=(\bar B\otimes A)
-\mathrm{vec}(X)``. `commutator_superoperator` and
+$X\mapsto AX$, $X\mapsto XA$, and $X\mapsto AXB^\dagger$ through the
+identities $\mathrm{vec}(AXB^\dagger)=(\bar B\otimes A) \mathrm{vec}(X)$. `commutator_superoperator` and
 `dissipator_superoperator` build the corresponding Hamiltonian and Lindblad
 pieces. Sparse PI Liouvillian assembly uses these same centralized identities.
 
 For small full-space reference calculations, `is_pi_operator(A,N,d)` tests
-``P_\pi A P_\pi^\dagger=A`` and `is_pi_superoperator(S,N,d)` tests covariance
-of a Liouville matrix under ``X\mapsto P_\pi X P_\pi^\dagger``. It is
+$P_\pi A P_\pi^\dagger=A$ and `is_pi_superoperator(S,N,d)` tests covariance
+of a Liouville matrix under $X\mapsto P_\pi X P_\pi^\dagger$. It is
 sufficient to check the `N-1` adjacent transpositions, so the implementation
 permutes matrix indices directly and constructs neither permutation matrices
 nor all `N!` group elements. These validation functions necessarily accept
@@ -187,7 +186,7 @@ simulation path. A `PIModel` returns `true` by construction.
 ## Prepared one-box Clebsch--Gordan coefficients
 
 One-body contractions and Appendix-D paths repeatedly use the same real
-one-box ``U(d)`` Clebsch--Gordan coefficients.  For several geometry setups on
+one-box $U(d)$ Clebsch--Gordan coefficients.  For several geometry setups on
 one exact basis, prepare them once and pass the read-only cache explicitly:
 
 ```julia
@@ -232,8 +231,8 @@ The explicit `coefficient_cache` keyword is accepted by `LiouvillianPlan`,
 validates exact basis ownership, required removal depth, and scalar precision
 before lowering any term.
 
-This is deliberately not a table of generic Wigner ``3j`` or ``6j`` symbols.
-The package's `three_nu_symbol` is a dyadic of two one-box ``U(d)``
+This is deliberately not a table of generic Wigner $3j$ or $6j$ symbols.
+The package's `three_nu_symbol` is a dyadic of two one-box $U(d)$
 coefficients, and Appendix-D isometries are products of the same one-box maps;
 a Wigner-symbol table would therefore add SU(2)-specific storage without
 accelerating the qudit geometry.  Qubit reduction and negativity instead
@@ -261,9 +260,9 @@ cancellation-risk blocks accumulate their error bound in preallocated real
 scratch while traversing the same packed support as the value kernel.
 
 `pbody_collective_operator(basis,X,p)` represents
-``\sum_{n_1<\cdots<n_p}X^{(n_1,\ldots,n_p)}``, while
+$\sum_{n_1<\cdots<n_p}X^{(n_1,\ldots,n_p)}$, while
 `pbody_kernel_operator(basis,X,Y,p)` represents the local superoperator
-``K_{X,Y}`` of equation (D.2). The term constructors are:
+$K_{X,Y}$ of equation (D.2). The term constructors are:
 
 - `PBodyHamiltonian(H,p)` for the symmetric sum of `p`-particle Hamiltonians;
 - `LocalPBodyJump(L,p)` for a sum of independent subset dissipators;
@@ -278,12 +277,12 @@ polynomial in `N`; the unavoidable local contraction cost grows with `d^(2p)`.
 
 `local_factor_trace` changes the local PI dimension while keeping all `N`
 particles. For a local factorization
-``\mathbb C^{d_1}\otimes\mathbb C^{d_2}``, it applies the same partial trace
+$\mathbb C^{d_1}\otimes\mathbb C^{d_2}$, it applies the same partial trace
 inside every supersite. This is not the particle reduction performed by
 `reduced_state`.
 
-Let ``E_{ab}`` be the matrix-unit basis on the kept factor and let
-``\mathbf n`` contain the occupation counts of its ``d_{\rm keep}^2``
+Let $E_{ab}$ be the matrix-unit basis on the kept factor and let
+$\mathbf n$ contain the occupation counts of its $d_{\rm keep}^2$
 letters. The normalized symmetric operator
 
 ```math
@@ -297,11 +296,11 @@ M_{\mathbf n}=\frac{N!}{\prod_r n_r!},
 
 is one member of an orthonormal basis of the kept-factor PI operator space.
 There are exactly
-``\binom{N+d_{\rm keep}^2-1}{N}`` such occupations. If
-``q_{\mathbf n}`` is its kept-factor Schur-coordinate vector and
-``\ell_{\mathbf n}`` is the source-coordinate vector after the adjoint
-insertion ``E_{ab}\mapsto E_{ab}\otimes I`` (or
-``I\otimes E_{ab}``), then
+$\binom{N+d_{\rm keep}^2-1}{N}$ such occupations. If
+$q_{\mathbf n}$ is its kept-factor Schur-coordinate vector and
+$\ell_{\mathbf n}$ is the source-coordinate vector after the adjoint
+insertion $E_{ab}\mapsto E_{ab}\otimes I$ (or
+$I\otimes E_{ab}$), then
 
 ```math
 x_{\rm kept}
@@ -311,7 +310,7 @@ Q=[q_{\mathbf n}],\quad L=[\ell_{\mathbf n}].
 ```
 
 The columns are constructed by polarizing the same one-box Schur recurrence
-used for tensor-power states. If ``P_{\lambda,\mathbf n}`` is the coefficient
+used for tensor-power states. If $P_{\lambda,\mathbf n}$ is the coefficient
 of the corresponding matrix-unit monomial in the physical irrep block, its
 stored equation-(7) block is
 
@@ -321,17 +320,17 @@ C_{\lambda,\mathbf n}
  P_{\lambda,\mathbf n}.
 ```
 
-Thus setup never enumerates ``d^N`` local words. A
-`LocalFactorTracePlan` retains the exact nonzero support of ``L`` and ``Q`` as
+Thus setup never enumerates $d^N$ local words. A
+`LocalFactorTracePlan` retains the exact nonzero support of $L$ and $Q$ as
 sparse CSC matrices; structural zeros are selected with `iszero`, never a
 numerical dropping tolerance. A
 `LocalFactorTraceWorkspace` owns the one short occupation vector used by the
 two matrix-vector contractions. The complete kept-factor output basis is
 required even for a sector-restricted source because local tracing can
 populate several output Young sectors. Setup validates
-``\lVert Q^\dagger Q-I\rVert_\infty`` one sparse Gram column at a time. It
+$\lVert Q^\dagger Q-I\rVert_\infty$ one sparse Gram column at a time. It
 retains row adjacency plus one stamped output-sized accumulator, rather than
-materializing the potentially dense ``Q^\dagger Q`` matrix.
+materializing the potentially dense $Q^\dagger Q$ matrix.
 
 ## Entanglement negativity
 
@@ -355,18 +354,18 @@ multiplicities into the stored coefficient blocks, so a representable physical
 answer is not lost merely because an intermediate per-copy block underflows.
 
 `reduced_state(rho, k)` returns the `k`-particle marginal as another normalized
-`PIState`. `reduced_purity(rho, k)` computes ``\mathrm{tr}(\rho_k^2)``, while
+`PIState`. `reduced_purity(rho, k)` computes $\mathrm{tr}(\rho_k^2)$, while
 `reduced_purities(rho)` returns the values for every subsystem size. None of
 these routines constructs the exponentially sized computational-basis
 marginal.
 
 `quantum_fisher_information(rho, G)` (or `qfi`) evaluates the exact mixed-state
 spectral formula for a collective observable. Passing a local matrix constructs
-``G=\sum_n G^{(n)}``; a `PIOperator` can be passed directly. Sector results are
+$G=\sum_n G^{(n)}$; a `PIOperator` can be passed directly. Sector results are
 weighted by their exact symmetric-group multiplicities, without constructing a
 full-Hilbert-space matrix. The implementation diagonalizes the bounded
-multiplicity-weighted blocks ``\sqrt{f^\nu}C_\nu`` rather than first forming the
-possibly unrepresentable physical block ``C_\nu/\sqrt{f^\nu}``.
+multiplicity-weighted blocks $\sqrt{f^\nu}C_\nu$ rather than first forming the
+possibly unrepresentable physical block $C_\nu/\sqrt{f^\nu}$.
 
 `quantum_fisher_information_matrix(rho, generators)` (alias `qfim`) extends
 this to multiparameter unitary estimation. It diagonalizes every density block
@@ -443,7 +442,7 @@ separates classical Fisher information from changing sector probabilities and
 the remaining intra-sector QFIM.
 
 `charge_resolved_negativity` resolves negativity into eigenspaces of the
-partial-transpose imbalance ``Q_A^T-Q_B``. It verifies the corresponding
+partial-transpose imbalance $Q_A^T-Q_B$. It verifies the corresponding
 charge symmetry rather than silently discarding off-block terms.
 `number_resolved_negativity` uses the local charge `diag(0:d-1)`.
 
@@ -548,7 +547,7 @@ for adaptive solvers.
 `quantum_trajectory(model,rho0,times;dt=...)` implements a stochastic
 quantum-jump unraveling entirely in PI coordinates. Collective and direct-PI
 jumps use their usual gain maps. A local channel is unresolved over particle
-labels and uses ``\sum_i L_i\rho L_i^\dagger``; consequently an individual PI
+labels and uses $\sum_i L_i\rho L_i^\dagger$; consequently an individual PI
 trajectory can be mixed even though its ensemble converges to the same master
 equation. Appendix-D local and collective channels follow the same rule.
 
@@ -569,7 +568,7 @@ adaptive-only vectors per worker. The default `mode=:full` supports both
 algorithms and is required for continuous event-time integration. An empty
 model accepts `T=Float32` (or another concrete real floating type) because it
 has no term from which to infer that precision. During no-jump propagation,
-the rate-weighted ``K^\dagger K`` Schur blocks are first combined into one
+the rate-weighted $K^\dagger K$ Schur blocks are first combined into one
 effective loss operator per sector. Individual channel intensities and a full
 gain state are formed only when an actual jump must be selected. Accepted
 Dormand--Prince stages supply a four-scalar quartic hazard interpolant, so
@@ -602,7 +601,7 @@ sources are rejected: use Floquet analysis for periodic dynamics or `freeze`
 only when the instantaneous autonomous generator is the intended question.
 
 The weak-PI pseudo-ket estimator follows the same path-level reduction, but
-the nonlinear density conversion is performed first. For path ``r`` and its
+the nonlinear density conversion is performed first. For path $r$ and its
 post-settling samples,
 
 ```math
@@ -616,8 +615,8 @@ post-settling samples,
 
 No cross-sector outer product is physical, and amplitudes must not be averaged
 before this map. `weak_pi_trajectory_steady_state` consequently returns a
-mixed `PIState`. Its Hilbert--Schmidt uncertainty uses ``\|C\|_2`` in the
-orthonormal PI coefficient basis and treats only the ``M`` path means as
+mixed `PIState`. Its Hilbert--Schmidt uncertainty uses $\|C\|_2$ in the
+orthonormal PI coefficient basis and treats only the $M$ path means as
 independent samples.
 Stochastic trajectories require finite, nonnegative real rates representable
 in the prepared precision; negative time-local rates remain supported by
@@ -639,7 +638,7 @@ the process-wide BLAS configuration.
 
 The returned trajectories intentionally own independent time grids, jump
 records, and saved PI states. Their unavoidable output payload therefore
-scales as ``O(n_{\rm traj} n_{\rm save} n_{\rm PI})`` even though plan and
+scales as $O(n_{\rm traj} n_{\rm save} n_{\rm PI})$ even though plan and
 integrator storage are shared or reused. For large PI dimensions, save only
 the times required for the analysis; retaining a dense time history can
 dominate both the batch workspace and the simulation kernel's temporary

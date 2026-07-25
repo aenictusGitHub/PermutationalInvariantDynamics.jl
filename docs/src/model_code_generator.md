@@ -249,38 +249,38 @@ auditable:
 
 | LaTeX ingredient | Meaning in generated code |
 |:--|:--|
-| ``J_x,J_y,J_z,J_\pm`` | Collective spin ``J_a=\sum_i j_a^{(i)}`` |
-| ``j_x,j_y,j_z,j_\pm`` | One-site spin-``(d-1)/2`` matrix, accepted for local jump seeds |
-| ``\sigma_x,\sigma_y,\sigma_z,\sigma_\pm`` | Qubit Pauli/lowering/raising matrices; requires `d = 2` |
-| ``\sum_i \sigma_a^{(i)}`` | Explicit Pauli sum; for ``a=x,y,z``, this is ``2J_a`` |
+| $J_x,J_y,J_z,J_\pm$ | Collective spin $J_a=\sum_i j_a^{(i)}$ |
+| $j_x,j_y,j_z,j_\pm$ | One-site spin-$(d-1)/2$ matrix, accepted for local jump seeds |
+| $\sigma_x,\sigma_y,\sigma_z,\sigma_\pm$ | Qubit Pauli/lowering/raising matrices; requires `d = 2` |
+| $\sum_i \sigma_a^{(i)}$ | Explicit Pauli sum; for $a=x,y,z$, this is $2J_a$ |
 | `+`, `-`, products, `/`, `^2` | Scalar combinations and collective polynomials |
 | `\frac{a}{b}`, `\sqrt{a}` | Scalar fraction and square root |
 | named Greek or ASCII scalars | Parameters defined in the numerical-value box |
 
 The pseudomode frequency, damping, thermal occupation, and two coupling
 strengths use the same real-scalar grammar. The system--mode coupling seed
-must be one linear local operator ``j_a`` or ``\sigma_a``. The generated
+must be one linear local operator $j_a$ or $\sigma_a$. The generated
 interaction is the package `PseudomodeCoupling`: the rotating part is
-``g L a^\dagger + g^* L^\dagger a``, with an optional counter-rotating
+$g L a^\dagger + g^* L^\dagger a$, with an optional counter-rotating
 strength. The assistant does not infer a coupling normalization or Kac
 scaling.
 
 For Hamiltonians, linear collective expressions lower to
-`LocalHamiltonian`, while collective polynomials such as ``J_z^2`` use a
+`LocalHamiltonian`, while collective polynomials such as $J_z^2$ use a
 compressed `PIOperator` and `DirectPIHamiltonian`. A local channel lowers to
 `LocalJump`; a collective channel lowers to `CollectiveJump`. No
-``d^N``-dimensional state or operator is generated.
+$d^N$-dimensional state or operator is generated.
 
 The rate box multiplies the standard package dissipator
-``\mathcal D[L]\rho=L\rho L^\dagger-\{L^\dagger L,\rho\}/2``.
-A coefficient placed inside ``L`` is therefore squared by the dissipator:
+$\mathcal D[L]\rho=L\rho L^\dagger-\{L^\dagger L,\rho\}/2$.
+A coefficient placed inside $L$ is therefore squared by the dissipator:
 write either rate `\gamma` with operator `j_-`, or rate `1` with operator
 `\sqrt{\gamma}j_-`, but do not count the same rate twice.
 
-An unsummed local observable such as ``j_z`` is interpreted as the identical
+An unsummed local observable such as $j_z$ is interpreted as the identical
 one-site expectation
-``\langle j_z^{(1)}\rangle=N^{-1}\langle J_z\rangle``. For clarity in papers,
-prefer writing the normalization explicitly as ``J_z/N``.
+$\langle j_z^{(1)}\rangle=N^{-1}\langle J_z\rangle$. For clarity in papers,
+prefer writing the normalization explicitly as $J_z/N$.
 
 ## Composite and pseudomode routes
 
@@ -294,9 +294,9 @@ generated numerical route:
 | One shared pseudomode | PI system factor times one finite mode factor | `GlobalPseudomodeModel` with factorized, matrix-free GMRES |
 
 For a local mode, the supersite dimension is
-``D=d(n_{\max}+1)``, and the complete PI coordinate count grows as
-``\binom{N+D^2-1}{N}``. Increasing the oscillator cutoff can therefore be
-expensive even at modest ``N``. For one shared mode, the composite coordinate
+$D=d(n_{\max}+1)$, and the complete PI coordinate count grows as
+$\binom{N+D^2-1}{N}$. Increasing the oscillator cutoff can therefore be
+expensive even at modest $N$. For one shared mode, the composite coordinate
 count is `pi_dimension(system_basis) * (nmax + 1)^2`; the generated code never
 forms its global Kronecker superoperator.
 
@@ -306,7 +306,7 @@ calculation at larger `nmax` and compare the observables or reduced states of
 interest. The global route evaluates a requested spin observable on
 `trace_pseudomodes(rho_ss, embedding)`. The local route lifts the spin
 observable into each system+mode supersite without reconstructing a
-``D^N``-dimensional state.
+$D^N$-dimensional state.
 
 ## Boundaries of the assistant
 
@@ -316,7 +316,7 @@ per constituent, and general LaTeX. The architecture selector covers the two
 specific one-mode Markovian embeddings above; it does not parse arbitrary
 generic composite tensor expressions such as `A \otimes B`. Those cases
 require a deliberate translation using the [framework guide](framework.md),
-[symmetric ``p``-body terms](api/representation.md),
+[symmetric p-body terms](api/representation.md),
 [local-pseudomode workflow](pseudomodes.md),
 [shared-pseudomode workflow](global_pseudomodes.md), or the
 [composite-system workflow](composite_systems.md).

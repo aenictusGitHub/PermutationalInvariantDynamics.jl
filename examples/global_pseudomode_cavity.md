@@ -19,8 +19,8 @@ In a resonant rotating frame, the master equation is
 H_{\mathrm{TC}}=g(J_-a^\dagger+J_+a),
 ```
 
-where ``J_-=\sum_i\sigma_-^{(i)}`` and
-``\mathcal D[a]\rho=a\rho a^\dagger-\{a^\dagger a,\rho\}/2``. The script
+where $J_-=\sum_i\sigma_-^{(i)}$ and
+$\mathcal D[a]\rho=a\rho a^\dagger-\{a^\dagger a,\rho\}/2$. The script
 starts with every emitter excited and the cavity in vacuum.
 
 This is a **global** pseudomode: permutations act on the emitters and leave
@@ -35,8 +35,8 @@ supersite model in which emitter `i` has its own independent mode `i`.
 
 ## Workflow
 
-`global_pseudomode_model` lifts the local lowering matrix to ``J_-`` without
-inserting a Kac or other ``N``-dependent factor. Its prepared fields have
+`global_pseudomode_model` lifts the local lowering matrix to $J_-$ without
+inserting a Kac or other $N$-dependent factor. Its prepared fields have
 separate roles:
 
 - `background` contains the system generator, cavity Hamiltonian, and coherent
@@ -47,7 +47,7 @@ separate roles:
 
 The example uses `time_evolution(model.generator, ...)`, then evaluates
 factorized observables for atomic excitation, cavity occupation, radiated flux
-``\kappa\langle a^\dagger a\rangle``, and population of the highest retained
+$\kappa\langle a^\dagger a\rangle$, and population of the highest retained
 cavity level. `trace_pseudomodes` returns the reduced PI emitter state, while
 `global_pseudomode_state` returns the dense reduced cavity state. The latter is
 checked against the generic `composite_reduced_state(rho, 2)` contraction.
@@ -58,7 +58,7 @@ checked against the generic `composite_reduced_state(rho, 2)` contraction.
 
 The left panel follows the exchange and decay of atomic excitations and shared
 cavity photons. The middle panel shows the emitted cavity flux
-``\kappa\langle a^\dagger a\rangle``. The logarithmic right panel monitors the
+$\kappa\langle a^\dagger a\rangle$. The logarithmic right panel monitors the
 population of the highest retained oscillator level; the plotted floor only
 makes exact numerical zeros visible and does not alter the computed array.
 This preview uses the default `N = 3`, coupling, damping, cutoff, time grid,
@@ -69,7 +69,7 @@ this unreachable-level check.
 ## Cutoff check
 
 The script chooses `nmax=N+1`. Under the rotating-wave Hamiltonian, the
-initial state has only ``N`` excitations and the level ``n=N+1`` is
+initial state has only $N$ excitations and the level $n=N+1$ is
 unreachable. Its top-level population should therefore remain at roundoff.
 For a driven, thermal, or counter-rotating calculation this argument no longer
 applies: increase `nmax` and compare physical observables and reduced states

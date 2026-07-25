@@ -7,7 +7,7 @@ Source: [`qubit_population_dynamics.jl`](qubit_population_dynamics.jl)
 Six qubits evolve under the standard local and collective emission,
 dephasing, and pumping channels constructed by `qubit_ensemble_model`. A
 diagonal one-particle Hamiltonian is included as well. In the package order
-``(|g>,|e>)``, the jump matrices are
+$(|g>,|e>)$, the jump matrices are
 
 ```math
 j_- = |g\rangle\langle e|,\qquad

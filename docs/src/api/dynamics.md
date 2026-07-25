@@ -115,7 +115,7 @@ solution = solve_dynamics(
 ```
 
 The output grid remains exact: each adjacent interval is propagated as
-``\exp(\Delta t\,\mathcal L)\rho``. One `KrylovExpvWorkspace` and one
+$\exp(\Delta t\,\mathcal L)\rho$. One `KrylovExpvWorkspace` and one
 task-owned Liouvillian application workspace are reused across all intervals.
 Rejected time slices only reevaluate the small projected exponential and
 reuse their Arnoldi factorization. Driven generators and parameter-dependent

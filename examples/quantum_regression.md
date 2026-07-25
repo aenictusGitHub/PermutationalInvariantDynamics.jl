@@ -110,7 +110,7 @@ offset rather than estimating it from the last sample.
 
 The left panel compares the real and imaginary parts of the sampled
 first-order correlation with the analytical damped oscillation. The middle
-panel shows the normalized antibunching curve, including ``g^{(2)}(0)=0``.
+panel shows the normalized antibunching curve, including $g^{(2)}(0)=0$.
 The right panel compares both components of the complex one-sided
 matrix-free resolvent spectrum with the analytical expression; it is not
 silently converted to a two-sided real spectrum. The preview uses the default

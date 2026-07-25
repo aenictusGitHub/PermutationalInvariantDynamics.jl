@@ -8,6 +8,16 @@ const REMOTE = Documenter.Remotes.GitHub(
 # source checkout without Git metadata build documentation with working links.
 const SOURCE_REVISION = get(ENV, "GITHUB_SHA", "main")
 const PACKAGE_ROOT = normpath(pkgdir(PermutationalInvariantDynamics))
+# Tracked Markdown is also read directly on GitHub, so `$...$` is the
+# canonical inline syntax. Keep that delimiter explicit instead of depending
+# on Documenter's default KaTeX configuration.
+const MATH_ENGINE = Documenter.KaTeX(Dict(
+    :delimiters => [
+        Dict(:left => raw"$", :right => raw"$", :display => false),
+        Dict(:left => raw"$$", :right => raw"$$", :display => true),
+        Dict(:left => raw"\[", :right => raw"\]", :display => true),
+    ],
+))
 
 function undocumented_exports(mod::Module)
     if isdefined(Base.Docs, :undocumented_names)
@@ -27,6 +37,7 @@ makedocs(sitename="PermutationalInvariantDynamics.jl", modules=[PermutationalInv
          checkdocs=:exports,
          remotes=Dict(PACKAGE_ROOT => (REMOTE, SOURCE_REVISION)),
          format=Documenter.HTML(
+             mathengine=MATH_ENGINE,
              canonical="https://aenictusgithub.github.io/PermutationalInvariantDynamics.jl/dev/",
              edit_link="main",
              repolink=REPOSITORY,

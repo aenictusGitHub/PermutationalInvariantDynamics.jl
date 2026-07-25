@@ -425,7 +425,7 @@ positivity, parity expectation, and the full Liouvillian residual are checked
 normally.
 
 There is an additional PI-compatible weak unitary symmetry for longitudinal
-coupling. With mode parity ``B=(-1)^{a^\dagger a}``, its local representative is
+coupling. With mode parity $B=(-1)^{a^\dagger a}$, its local representative is
 
 ```math
 R_{\mathrm{site}}=\sigma_x\otimes B,
@@ -500,7 +500,7 @@ manuscript-motivated, origin-constrained law
 
 One fit uses the `coupling=:minus` sign-change contour `Cxx=0`; the other uses
 the parity-selected `coupling=:z` witness contour
-`F_GHZx^max=0.5`. The fixed-exponent ``x^2`` law is tested first for both
+`F_GHZx^max=0.5`. The fixed-exponent $x^2$ law is tested first for both
 contours. They are nevertheless separate models, and their fitted coefficients
 should not be interpreted as two estimates of one common boundary. The
 executable prints both values of `alpha` rather than hard-coding them in this
@@ -512,7 +512,7 @@ logarithmic. It finds threshold crossings on every horizontal and vertical
 grid line, linearly interpolates each crossing in those physical coordinates,
 removes duplicate grid-vertex crossings, and rejects a row or column with
 multiple crossings rather than silently choosing a branch. For crossing
-points ``(x_i,y_i)``, the unweighted origin-constrained ordinary least-squares
+points $(x_i,y_i)$, the unweighted origin-constrained ordinary least-squares
 coefficient is
 
 ```math
@@ -527,7 +527,7 @@ crossing span and the sampled vertical plotting domain; it is not extrapolated
 beyond the scan. The returned diagnostics include the crossing points,
 residual vector, RMS
 residual, relative two-norm and maximum relative residual, pointwise
-``y_i/x_i^2`` values, and the range obtained by leaving out one crossing at a
+$y_i/x_i^2$ values, and the range obtained by leaving out one crossing at a
 time. `boundary_sides` and `touches_boundary` report whether an extracted
 contour reaches the edge of the scanned rectangle. A boundary touch warns
 that the visible branch may be truncated by the chosen parameter window. The
@@ -571,18 +571,18 @@ trial exponent, the amplitude is eliminated analytically,
 ```
 
 and the resulting one-dimensional problem is minimized in the original
-physical ``y=\kappa/\omega_c`` coordinate. Internally, scaled exponentials
+physical $y=\kappa/\omega_c$ coordinate. Internally, scaled exponentials
 avoid unnecessary overflow or underflow. A log--log regression supplies only
 an initial exponent; logarithmic residuals are not the fit objective. At least
 three positive crossing points and numerical rank two are required, leaving at
 least one residual degree of freedom.
 
-The result always retains the first ``\beta=2`` fit and its diagnostics.
+The result always retains the first $\beta=2$ fit and its diagnostics.
 Depending on the requested fallback, `general_quadratic` or `power_law`
 contains the second candidate's coefficients, residuals, rank diagnostics, and
 curve. `display_model` is `:origin_constrained`, `:general_quadratic`,
 `:power_law`, or `:raw_contour_only`. A fallback is selected only when its
-relative two-norm residual in physical ``y`` improves on the first fit and its
+relative two-norm residual in physical $y$ improves on the first fit and its
 curve remains positive and inside the sampled vertical domain. Thus the two
 residuals printed by the example use the same metric. The raw contour alone is
 shown if a triggered fallback is underdetermined, rank deficient, fails its
@@ -602,15 +602,15 @@ output report both the failed origin-constrained residual and the fallback
 residual.
 
 These fits are descriptive finite-grid guides. The compact run has only a
-``5\times5`` parameter grid, while `PI_PSEUDOMODE_FULL_SCAN=1` uses
-``9\times9``. Interpolated crossings from one grid are not independent data,
+$5\times5$ parameter grid, while `PI_PSEUDOMODE_FULL_SCAN=1` uses
+$9\times9$. Interpolated crossings from one grid are not independent data,
 and a small least-squares residual does not establish a scaling law. Refine
 both parameter axes, the pseudomode cutoff, and the stationary/long-time
 solves before interpreting the contour shape. In particular, `Cxx=0` is only
 a sign change of the common all-pair correlator, not a thermodynamic phase
 boundary. `F_GHZx^max=0.5` is a sufficient GHZ-fidelity witness threshold,
 not the boundary of the separable-state set. Finally, the manuscript's
-reported ``\kappa\sim J^2`` crossover concerns its nearest-neighbour chain and
+reported $\kappa\sim J^2$ crossover concerns its nearest-neighbour chain and
 correlation length; fitting the uniform-all-pair specialization does not
 reproduce or validate that chain result.
 

@@ -5,9 +5,9 @@ Source: [`spin_phase_space.jl`](spin_phase_space.jl)
 ## Model state
 
 This example uses four qubits and deliberately populates two inequivalent
-Schur sectors. With probability ``0.68`` the state is a coherent spin state
-in the fully symmetric ``j=2`` sector. The remaining probability occupies the
-``j=1,m=0`` Dicke state. For ``N=4`` the latter irrep has symmetric-group
+Schur sectors. With probability $0.68$ the state is a coherent spin state
+in the fully symmetric $j=2$ sector. The remaining probability occupies the
+$j=1,m=0$ Dicke state. For $N=4$ the latter irrep has symmetric-group
 multiplicity three, and `dicke_state` represents the uniform mixture over
 those indistinguishable multiplicity copies.
 
@@ -22,13 +22,13 @@ rho = PIState(
 )
 ```
 
-No ``2^N`` vector or matrix is constructed.
+No $2^N$ vector or matrix is constructed.
 
 ## One sphere per total-spin sector
 
 A general PI state does not belong to one spin irrep. `spin_husimi_q` and
 `spin_wigner` therefore compute one angular distribution for each retained
-partition and attach its exact ``j`` label, tableau multiplicity, and physical
+partition and attach its exact $j$ label, tableau multiplicity, and physical
 population:
 
 ```julia
@@ -37,11 +37,11 @@ w = spin_wigner(rho; ntheta=81, nphi=160, resolved=true)
 ```
 
 Both transforms use sphere-density normalization. Integrating a sector
-matrix against ``\sin\theta\,d\theta\,d\phi`` yields that sector's population,
-here ``0.68``, ``0.32``, and exactly zero for the retained ``j=0`` block.
+matrix against $\sin\theta\,d\theta\,d\phi$ yields that sector's population,
+here $0.68$, $0.32$, and exactly zero for the retained $j=0$ block.
 Zero-population retained sectors remain explicit; they are not dropped by a
 numerical threshold. The aggregate `values` matrix is the sum of these sector
-matrices. It is the angular marginal obtained after forgetting ``j``; it is
+matrices. It is the angular marginal obtained after forgetting $j$; it is
 not a claim that the mixed-sector state is one spin-2 state.
 
 Setting `resolved=false` would reuse one grid scratch matrix and retain only
@@ -59,7 +59,7 @@ P_Q(j=N/2,\Omega_0)=p_{N/2}\frac{N+1}{4\pi}.
 
 The script evaluates this point through a sector-selected call and checks the
 formula. Sector selection changes neither the block nor its normalization;
-the selected result integrates to ``p_{N/2}``, not one.
+the selected result integrates to $p_{N/2}$, not one.
 
 ## Husimi versus Wigner views
 
@@ -75,8 +75,8 @@ symmetric_wigner_figure = visualize_spin_phase_space(
     w; sector=Partition((4, 0)))
 ```
 
-The dependency-free SVG uses an equirectangular projection, with ``\phi`` on
-the horizontal axis and ``\theta`` on the vertical axis. Husimi data use a
+The dependency-free SVG uses an equirectangular projection, with $\phi$ on
+the horizontal axis and $\theta$ on the vertical axis. Husimi data use a
 sequential palette. Wigner data use a symmetric diverging palette centered at
 zero. Rendering reuses the numerical results and never repeats either
 transform.

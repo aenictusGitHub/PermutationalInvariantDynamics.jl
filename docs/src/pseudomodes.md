@@ -11,8 +11,8 @@ local tuple
 ```
 
 The package treats this tuple as one identical **supersite**. If the physical
-system has dimension ``d_S`` and mode ``\mu`` retains occupations
-``0:n_{\max,\mu}``, one supersite has dimension
+system has dimension $d_S$ and mode $\mu$ retains occupations
+$0:n_{\max,\mu}$, one supersite has dimension
 
 ```math
 D=d_S\prod_{\mu=1}^{M}(n_{\max,\mu}+1).
@@ -24,8 +24,8 @@ The exact complete PI operator space then has
 \binom{N+D^2-1}{N}
 ```
 
-coordinates. This is polynomial in ``N`` at fixed ``D`` and never constructs
-a ``D^N`` state, but it can still grow rapidly with the number and cutoff of
+coordinates. This is polynomial in $N$ at fixed $D$ and never constructs
+a $D^N$ state, but it can still grow rapidly with the number and cutoff of
 the local modes. Always preflight and converge the cutoffs.
 
 This construction describes identical **independent local** pseudomodes. It is
@@ -207,7 +207,7 @@ h\,L a + h^* L^\dagger a^\dagger.
 Internally, a complex strength is split into real rates multiplying Hermitian
 quadratures; Hamiltonian rates are never made complex. For Hermitian `L`, the
 rotating expression with a real strength is already proportional to
-``L(a+a^\dagger)``. Adding an equal real counter-rotating strength would add
+$L(a+a^\dagger)$. Adding an equal real counter-rotating strength would add
 the same operator again.
 
 The damping convention is the package convention
@@ -218,9 +218,9 @@ The damping convention is the package convention
 ```
 
 Thus `damping=kappa` produces
-``\kappa(\bar n+1)\mathcal D[a]`` and
-``\kappa\bar n\mathcal D[a^\dagger]``. The mode amplitude decays at
-``\kappa/2``. Convert explicitly when a paper defines its dissipator with an
+$\kappa(\bar n+1)\mathcal D[a]$ and
+$\kappa\bar n\mathcal D[a^\dagger]$. The mode amplitude decays at
+$\kappa/2$. Convert explicitly when a paper defines its dissipator with an
 extra factor of two.
 
 ## Product initial states

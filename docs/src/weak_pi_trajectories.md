@@ -9,10 +9,10 @@ direct sum of retained Schur irreps,
 |\psi\rangle=\bigoplus_\nu|\psi_\nu\rangle.
 ```
 
-Its dimension is ``\sum_\nu\dim U_\nu``. This is generally much smaller than
-both the PI density-coordinate dimension ``\sum_\nu(\dim U_\nu)^2`` and the
-full labeled-particle dimension ``d^N``. Production code constructs neither a
-``d^N`` ket nor a ``d^N\times d^N`` operator.
+Its dimension is $\sum_\nu\dim U_\nu$. This is generally much smaller than
+both the PI density-coordinate dimension $\sum_\nu(\dim U_\nu)^2$ and the
+full labeled-particle dimension $d^N$. Production code constructs neither a
+$d^N$ ket nor a $d^N\times d^N$ operator.
 
 Related literature includes Elliot W. Lloyd, Aleksandra A. Ziolkowska, and
 Jonathan Keeling,
@@ -34,23 +34,23 @@ C_\nu=\frac{|\psi_\nu\rangle\langle\psi_\nu|}{\sqrt{f^\nu}},
 \rho_\nu=\frac{C_\nu}{\sqrt{f^\nu}}.
 ```
 
-Consequently ``\sum_\nu\langle\psi_\nu|\psi_\nu\rangle=1`` is the physical
-trace condition. Relative phases between different ``\nu`` sectors disappear
+Consequently $\sum_\nu\langle\psi_\nu|\psi_\nu\rangle=1$ is the physical
+trace condition. Relative phases between different $\nu$ sectors disappear
 from every PI density operator and observable; they are not physical
-coherences. A weak-PI pseudo-ket is therefore not a pure state of ``N``
+coherences. A weak-PI pseudo-ket is therefore not a pure state of $N$
 labeled particles. It is also distinct from the density-valued conditional
 state returned by `quantum_trajectory`.
 
 `weak_pi_pseudoket(rho)` accepts only states whose multiplicity-weighted block
-``\sqrt{f^\nu}C_\nu`` has rank at most one in every occupied sector. A general
+$\sqrt{f^\nu}C_\nu$ has rank at most one in every occupied sector. A general
 mixed state is rejected rather than purified or approximated silently.
 `weak_pi_density(psi)` performs the reverse conversion.
 
 ## Sector-changing local Kraus branches
 
-For a fixed one-particle local channel ``L``, the PI gain map between input
-sector ``\nu`` and output sector ``\lambda`` factorizes over common one-box
-children ``\mu\vdash N-1``:
+For a fixed one-particle local channel $L$, the PI gain map between input
+sector $\nu$ and output sector $\lambda$ factorizes over common one-box
+children $\mu\vdash N-1$:
 
 ```math
 G_{\lambda\nu}(C_\nu)
@@ -60,7 +60,7 @@ G_{\lambda\nu}(C_\nu)
 ```
 
 The pseudo-density block is
-``\bar\rho_\nu=\sqrt{f^\nu}C_\nu``. Its Kraus matrices are therefore
+$\bar\rho_\nu=\sqrt{f^\nu}C_\nu$. Its Kraus matrices are therefore
 
 ```math
 K_{\lambda\mu\nu}
@@ -79,11 +79,11 @@ source sector,
 K_{\lambda\mu\nu}=Q_\nu,
 ```
 
-where ``Q_\nu`` is the prepared physical Schur block entering the no-jump
+where $Q_\nu$ is the prepared physical Schur block entering the no-jump
 generator. This makes the ensemble gain exactly the same CP map as the
 density-valued PI trajectory backend, up to floating-point setup error.
 
-Collective, direct-PI, and collective ``p``-body jump operators preserve the
+Collective, direct-PI, and collective $p$-body jump operators preserve the
 Schur sector and contribute one Kraus branch per nonzero sector block. Fixed
 one-body `LocalJump` channels may change sectors. The construction is the same
 for qubits and qudits.
@@ -168,7 +168,7 @@ are retained for bisection and the root pseudo-ket is reconstructed once from
 the retained stages; root localization performs no additional RHS trials.
 
 `WeakPIJumpRecord` stores the model channel, flattened Kraus branch, source
-partition, target partition, and the ``N-1`` child partition for a local
+partition, target partition, and the $N-1$ child partition for a local
 event. `weak_pi_trajectory_statistics` reports ordinary channel counts plus
 the sampled Schur-sector transition counts. Observable statistics accept the
 same Hermitian local matrices and PI operators as the density trajectory
@@ -227,7 +227,7 @@ This does not certify burn-in or finite-window bias; those qualifications are
 recorded explicitly in `batch_report.assumptions`.
 
 The density conversion must precede every average. For independent path
-``r`` and its ``K`` selected post-settling times, the path mean is
+$r$ and its $K$ selected post-settling times, the path mean is
 
 ```math
 \overline C^{(r)}_\nu
@@ -244,7 +244,7 @@ unphysical, and the stationary estimate is generally mixed. The function
 therefore returns a `PIState`, never a `WeakPIPseudoKet`.
 
 Time samples from one realization can be autocorrelated. They are first
-combined into ``\overline C^{(r)}``, and only the ``M`` independent path means
+combined into $\overline C^{(r)}$, and only the $M$ independent path means
 enter the uncertainty estimate. Because the equation-(7) PI coefficient basis
 is Hilbert--Schmidt orthonormal,
 
@@ -336,7 +336,7 @@ The runnable
 [`weak_pi_trajectories.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/weak_pi_trajectories.jl) example
 uses the decay model of Zhang, Zhang, and Mølmer,
 [*New J. Phys.* **20**, 112001 (2018)](https://doi.org/10.1088/1367-2630/aaec36).
-For the paper's ``\gamma_l/\Gamma_c=1`` case it compares four routes:
+For the paper's $\gamma_l/\Gamma_c=1$ case it compares four routes:
 certified population dynamics, general matrix-free PI master evolution,
 density-valued PI trajectories, and weak-PI pseudo-kets. The stochastic
 backends use equal ensemble sizes and identical fixed-step controls. Lloyd,
@@ -345,7 +345,7 @@ common-system weak-symmetry context, but this example does not reproduce its
 shared-cavity calculations.
 
 Two optional CairoMakie figures show the fluxes and 95% confidence bands,
-PI-state ensemble errors, sampled ``J\rightarrow J'`` sector changes,
+PI-state ensemble errors, sampled $J\rightarrow J'$ sector changes,
 representation-size scaling, and a warmed per-path timing from the current
 run. An equal-ensemble retained-history panel complements the asymptotic
 coordinate counts; it excludes plans, worker scratch, and transient peak RAM.
@@ -364,7 +364,7 @@ panel uses the exact complete-qubit counts
 \sum_\nu(\dim U_\nu)^2=\binom{N+3}{3},
 ```
 
-alongside ``2^N`` and ``4^N``. These curves are evaluated as formulas; no
+alongside $2^N$ and $4^N$. These curves are evaluated as formulas; no
 full-Hilbert state is constructed. The paired
 [`examples/weak_pi_trajectories.md`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/weak_pi_trajectories.md)
 guide gives the numerical checks, timing scope, figure panels, and

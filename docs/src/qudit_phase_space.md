@@ -1,13 +1,13 @@
 # Generalized qudit Husimi phase space
 
 `qudit_husimi_q` extends the sector-resolved Husimi transform beyond qubits.
-A phase-space point is a local unitary ``U\in U(d)`` (or a Hermitian generator
-``H`` with ``U=\exp(-iH)``). The same local transformation is lifted into each
-retained Schur irrep; no ``d^N`` state or operator is constructed.
+A phase-space point is a local unitary $U\in U(d)$ (or a Hermitian generator
+$H$ with $U=\exp(-iH)$). The same local transformation is lifted into each
+retained Schur irrep; no $d^N$ state or operator is constructed.
 
-For partition ``\nu``, the transform uses the extremal GT vector and the
+For partition $\nu$, the transform uses the extremal GT vector and the
 multiplicity-weighted state block
-``\bar\rho_\nu=\sqrt{f^\nu}C_\nu``:
+$\bar\rho_\nu=\sqrt{f^\nu}C_\nu$:
 
 ```math
 Q_\nu(U)=\dim(U_\nu)
@@ -54,7 +54,7 @@ point order but not a manifold coordinate system; the optional Makie adapter
 plots point index against aggregate Q. Use `sector_values` explicitly for
 resolved custom plots.
 
-For `d=2`, the normalized-Haar result equals ``4\pi`` times the package's
+For `d=2`, the normalized-Haar result equals $4\pi$ times the package's
 sphere-density `spin_husimi_q` convention at the corresponding spin-coherent
 direction. See `examples/qudit_coherent_state_q_distribution.jl` for that sanity check and a qutrit
 scan.

@@ -7,7 +7,7 @@ The runnable overview is
 
 ## Compressed spectra and populations
 
-`spectral_trace(rho,f)` evaluates ``\mathrm{tr}[f(\rho)]`` from physical
+`spectral_trace(rho,f)` evaluates $\mathrm{tr}[f(\rho)]$ from physical
 Schur eigenvalues with exact multiplicities. Specialized entropy routines
 remain preferable when logarithmic rescaling is needed. Population-coordinate
 iterators expose the exact sector, GT pattern, multiplicity, population index,
@@ -23,7 +23,7 @@ algebra. A certificate says nothing about omitted sectors.
 
 PI POVMs use the same scope. Sampling builds one cumulative categorical table;
 maximum-likelihood tomography uses a diluted, positivity-preserving
-``R\rho R`` iteration and always reports convergence.
+$R\rho R$ iteration and always reports convergence.
 
 ## Checkpoints
 

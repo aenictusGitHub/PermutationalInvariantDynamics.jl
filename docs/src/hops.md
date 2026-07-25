@@ -16,13 +16,13 @@ reported as converged only after all three have been varied independently.
 
 ## Physical convention
 
-For bath ``b``, [`HOPSBath`](@ref) represents
+For bath $b$, [`HOPSBath`](@ref) represents
 
 ```math
 C_b(t)=\sum_{k\in b}c_k e^{-\nu_k t},\qquad t\geq0,
 ```
 
-where ``\mathrm{Re}\,\nu_k>0``. Its PI coupling operator is ``L_b``.
+where $\mathrm{Re}\,\nu_k>0$. Its PI coupling operator is $L_b$.
 Different baths have independent proper complex Gaussian processes,
 
 ```math
@@ -31,7 +31,7 @@ Different baths have independent proper complex Gaussian processes,
  =\delta_{bb'}C_b(t-s).
 ```
 
-After flattening all exponential terms into one pole index ``k``, the linear
+After flattening all exponential terms into one pole index $k$, the linear
 hierarchy is
 
 ```math
@@ -47,8 +47,8 @@ hierarchy is
 ```
 
 Initially only the root is occupied:
-``\psi_{\boldsymbol 0}(0)=\psi_0`` and
-``\psi_{\boldsymbol n}(0)=0`` for ``\boldsymbol n\ne0``. The root of a
+$\psi_{\boldsymbol 0}(0)=\psi_0$ and
+$\psi_{\boldsymbol n}(0)=0$ for $\boldsymbol n\ne0$. The root of a
 linear HOPS trajectory is deliberately **not normalized**. The unbiased
 density estimator is
 
@@ -101,7 +101,7 @@ blocks, decay factors, and scaling data. [`HOPSWorkspace`](@ref) owns
 trajectory-local hierarchy, integration, and noise scratch. A workspace must
 not be shared by simultaneous tasks.
 
-No state or operator of dimension ``d^N`` is constructed. Every PI
+No state or operator of dimension $d^N$ is constructed. Every PI
 Hamiltonian and coupling acts blockwise on the direct sum of Schur irreps used
 by [`WeakPIPseudoKet`](@ref). The multiplicity spaces are spectators.
 
@@ -130,7 +130,7 @@ and is therefore rejected by this linear colored-noise backend.
 ## What “PI HOPS” means
 
 The exact reduced backend applies to a shared bath whose system coupling
-``L_b`` is itself PI. Such an operator is block diagonal in the Schur
+$L_b$ is itself PI. Such an operator is block diagonal in the Schur
 decomposition and acts as the identity on each multiplicity space. The HOPS
 path therefore remains representable by Schur-irrep amplitudes.
 
@@ -140,12 +140,12 @@ This condition excludes independent local colored noises,
 \sum_{i=1}^N L_i z_i(t),
 ```
 
-even when all ``z_i`` have identical statistics. A single realization has
-different values of ``z_i``, breaks permutation symmetry, and generally acts
+even when all $z_i$ have identical statistics. A single realization has
+different values of $z_i$, breaks permutation symmetry, and generally acts
 nontrivially on the Schur multiplicity spaces. The ensemble-averaged density
 may be PI, but an individual path is not a weak-PI pseudo-ket. Use PI--HEOM or
 the finite-cutoff local-pseudomode supersite backend for that problem.
-Replacing the independent ``z_i`` by one common process would describe a
+Replacing the independent $z_i$ by one common process would describe a
 different, collectively correlated environment.
 
 Likewise, a `WeakPIPseudoKet` is an auxiliary state in the direct sum of
@@ -155,11 +155,11 @@ data.
 
 ## Finite-temperature correlations
 
-For a self-adjoint coupling ``Q=Q^\dagger``, the linear equation above can
+For a self-adjoint coupling $Q=Q^\dagger$, the linear equation above can
 use the complete physical thermal correlation as one sum process. This is the
 finite-temperature construction described in the original HOPS work. The
 two-sided kernel must nevertheless be a valid Gaussian covariance:
-``C(-t)=C(t)^*``, ``C(0)`` must be real and nonnegative, and every finite
+$C(-t)=C(t)^*$, $C(0)$ must be real and nonnegative, and every finite
 covariance matrix sampled from it must be positive semidefinite.
 
 An arbitrary [`HEOMBath`](@ref) is therefore not automatically interchangeable
@@ -191,11 +191,11 @@ x(t+\Delta t)=e^{-\nu\Delta t}x(t)
  +\sqrt{c\left(1-e^{-2\mathrm{Re}(\nu)\Delta t}\right)}\,\eta,
 ```
 
-where ``\eta`` is a proper unit-variance complex Gaussian. The initial value
+where $\eta$ is a proper unit-variance complex Gaussian. The initial value
 is sampled from the stationary distribution,
-``x(0)=\sqrt c\,\eta_0``; setting it to zero would generate the wrong
+$x(0)=\sqrt c\,\eta_0$; setting it to zero would generate the wrong
 nonstationary covariance. Components belonging to the same bath are summed
-before applying ``L_b``.
+before applying $L_b$.
 
 A finite exponential representation may contain complex or negative
 individual coefficients even though its *total* correlation is physical.
@@ -224,7 +224,7 @@ With `scaling=:scaled`, the stored auxiliary is
  \prod_k\sqrt{n_k!\,a_k^{n_k}}},
 ```
 
-with positive prepared pole scales ``a_k``. The corresponding downward and
+with positive prepared pole scales $a_k$. The corresponding downward and
 upward coefficients are
 
 ```math
@@ -236,12 +236,12 @@ upward coefficients are
 respectively. This is an exact diagonal similarity transformation of the
 retained hierarchy. It changes neither the root nor the modeled bath.
 `scaling=:unscaled` is useful when comparing equations term by term.
-[`hops_coordinate_scale`](@ref) exposes ``s_{\boldsymbol n}`` for a retained
+[`hops_coordinate_scale`](@ref) exposes $s_{\boldsymbol n}$ for a retained
 node. Exact duplicate poles within one bath are combined before these scales
 and the hierarchy are built; exact cancellations are removed.
 
 `max_depth=D` retains multi-indices satisfying
-``\sum_k n_k\le D``. For ``P`` exponential poles, the number of retained
+$\sum_k n_k\le D$. For $P$ exponential poles, the number of retained
 auxiliary pure states is
 
 ```math
@@ -262,16 +262,16 @@ a small retained hierarchy even when the exact unpruned binomial count does
 not fit `Int`. [`hops_auxiliary_importances`](@ref) returns the retained
 scores. Report and converge this cutoff separately.
 
-For one Schur irrep of dimension ``m_\nu``, a trajectory stores quantities
-scaling as ``m_\nu\binom{P+D}{D}``, rather than the
-``m_\nu^2\binom{P+D}{D}`` density coordinates of an analogous HEOM
+For one Schur irrep of dimension $m_\nu$, a trajectory stores quantities
+scaling as $m_\nu\binom{P+D}{D}$, rather than the
+$m_\nu^2\binom{P+D}{D}$ density coordinates of an analogous HEOM
 hierarchy. HOPS exchanges that per-path reduction for Monte Carlo sampling.
 Which method is faster depends on the Schur support, hierarchy depth,
 sampling accuracy, and requested observables.
 
 Within one path, every prepared Schur block acts on all hierarchy nodes in a
 matrix--matrix kernel. Edges are grouped by bath, and one hierarchy-sized
-action buffer is reused for ``L`` and ``L^\dagger``. A self-adjoint coupling
+action buffer is reused for $L$ and $L^\dagger$. A self-adjoint coupling
 uses one combined edge pass; a non-Hermitian coupling overwrites the same
 buffer and uses separate downward/upward edge passes. Across paths,
 `hops_average(...; threaded=true)` uses deterministic balanced partitions
@@ -310,7 +310,7 @@ The HOPS examples separate three complementary workflows:
   compares the HOPS mean with deterministic PI--HEOM and the analytical
   coherence.
 - [`examples/pi_hops_collective_emission.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/pi_hops_collective_emission.jl)
-  uses the non-Hermitian coupling ``L=J_-`` in a one-excitation manifold. It
+  uses the non-Hermitian coupling $L=J_-$ in a one-excitation manifold. It
   validates the exact depth-one closure, prescribed conditioned noise,
   `hops_density`, hierarchy inspection, and deterministic `hops_rhs!`.
 - [`examples/pi_hops_mixed_multibath.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/pi_hops_mixed_multibath.jl)
