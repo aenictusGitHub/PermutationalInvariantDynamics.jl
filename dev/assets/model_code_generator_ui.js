@@ -7,7 +7,7 @@
       architecture: "pi",
       N: 8,
       d: 2,
-      target: "expectation",
+      calculation: "steady-observable",
       hamiltonian: String.raw`\frac{\Omega}{2}\sum_{i=1}^{N}\sigma_x^{(i)}`,
       jumps: [
         { kind: "local", operator: String.raw`\sigma_-`, rate: String.raw`\gamma_{\downarrow}` },
@@ -22,7 +22,7 @@
       architecture: "pi",
       N: 20,
       d: 2,
-      target: "expectation",
+      calculation: "steady-observable",
       hamiltonian: String.raw`\omega J_z + \Omega J_x`,
       jumps: [
         { kind: "collective", operator: "J_-", rate: String.raw`\Gamma` },
@@ -38,7 +38,7 @@
       architecture: "pi",
       N: 40,
       d: 2,
-      target: "expectation",
+      calculation: "steady-observable",
       hamiltonian: String.raw`-\frac{2h}{N}J_z-\frac{2\lambda}{N}J_x^2`,
       jumps: [
         { kind: "collective", operator: "J_-", rate: String.raw`\Gamma/N` },
@@ -54,7 +54,7 @@
       architecture: "pi",
       N: 6,
       d: 3,
-      target: "expectation",
+      calculation: "steady-observable",
       hamiltonian: String.raw`\Omega J_x + \Delta J_z`,
       jumps: [
         { kind: "local", operator: "j_-", rate: String.raw`\gamma` },
@@ -64,11 +64,89 @@
 \Delta = 0.2
 \gamma = 0.1`,
     },
+    dynamics: {
+      architecture: "pi",
+      N: 8,
+      d: 2,
+      calculation: "dynamics-observable",
+      steadyMethod: "deterministic",
+      hamiltonian: String.raw`\Omega J_x`,
+      jumps: [
+        { kind: "local", operator: String.raw`\sigma_-`, rate: String.raw`\gamma` },
+      ],
+      observable: "J_z/N",
+      parameters: String.raw`\Omega = 0.7
+\gamma = 0.12`,
+      initialState: { level: 2 },
+      dynamics: {
+        startTime: 0,
+        finalTime: 5,
+        samples: 51,
+        stepsPerInterval: 16,
+      },
+    },
+    trajectoryDynamics: {
+      architecture: "pi",
+      N: 8,
+      d: 2,
+      calculation: "dynamics-observable",
+      steadyMethod: "trajectory",
+      hamiltonian: String.raw`\Omega J_x`,
+      jumps: [
+        { kind: "local", operator: String.raw`\sigma_-`, rate: String.raw`\gamma` },
+      ],
+      observable: "J_z/N",
+      parameters: String.raw`\Omega = 0.7
+\gamma = 0.12`,
+      initialState: { level: 2 },
+      dynamics: {
+        startTime: 0,
+        finalTime: 5,
+        samples: 51,
+        stepsPerInterval: 16,
+      },
+      trajectory: {
+        trajectories: 256,
+        dt: 0.002,
+        maxJumpProbability: 0.02,
+        seed: 2026,
+      },
+    },
+    spectrum: {
+      architecture: "pi",
+      N: 8,
+      d: 2,
+      calculation: "liouvillian-spectrum",
+      steadyMethod: "deterministic",
+      hamiltonian: String.raw`\Omega J_x`,
+      jumps: [
+        { kind: "local", operator: String.raw`\sigma_-`, rate: String.raw`\gamma` },
+      ],
+      observable: "J_z/N",
+      parameters: String.raw`\Omega = 0.7
+\gamma = 0.12`,
+      spectrum: { target: "near-zero", nev: 6, seed: 2026 },
+    },
+    gap: {
+      architecture: "pi",
+      N: 8,
+      d: 2,
+      calculation: "liouvillian-gap",
+      steadyMethod: "deterministic",
+      hamiltonian: String.raw`\Omega J_x`,
+      jumps: [
+        { kind: "local", operator: String.raw`\sigma_-`, rate: String.raw`\gamma` },
+      ],
+      observable: "J_z/N",
+      parameters: String.raw`\Omega = 0.7
+\gamma = 0.12`,
+      gap: { nev: 8, krylovdim: 32 },
+    },
     localPseudomode: {
       architecture: "local-pseudomode",
       N: 3,
       d: 2,
-      target: "expectation",
+      calculation: "steady-observable",
       hamiltonian: String.raw`\Omega J_x`,
       jumps: [],
       observable: "J_z/N",
@@ -90,7 +168,7 @@ g = 0.15`,
       architecture: "global-pseudomode",
       N: 12,
       d: 2,
-      target: "expectation",
+      calculation: "steady-observable",
       hamiltonian: String.raw`\Delta J_z + \Omega J_x`,
       jumps: [
         { kind: "local", operator: String.raw`\sigma_-`, rate: String.raw`\gamma` },
@@ -122,6 +200,37 @@ g = 0.1`,
     couplingOperator: String.raw`\sigma_-`,
     couplingStrength: "g",
     counterrotatingStrength: "0",
+  };
+  const DEFAULT_INITIAL_STATE = { level: 1 };
+  const DEFAULT_TRAJECTORY = {
+    trajectories: 512,
+    dt: 0.002,
+    maxJumpProbability: 0.02,
+    seed: 2026,
+    settlingTime: 50,
+    samplesPerTrajectory: 5,
+    samplingInterval: 2,
+  };
+  const DEFAULT_DYNAMICS = {
+    startTime: 0,
+    finalTime: 10,
+    samples: 101,
+    stepsPerInterval: 16,
+  };
+  const DEFAULT_SPECTRUM = {
+    target: "largest-real",
+    nev: 6,
+    seed: 2026,
+  };
+  const DEFAULT_GAP = {
+    nev: 8,
+    krylovdim: 32,
+  };
+  const DEFAULT_ANALYSIS = {
+    purity: false,
+    entropy: false,
+    oneBodyRDM: false,
+    qfiAxis: "none",
   };
 
   function element(tag, options) {
@@ -212,10 +321,59 @@ g = 0.1`,
       root.querySelector("#pid-architecture").value = preset.architecture || "pi";
       root.querySelector("#pid-particle-count").value = preset.N;
       root.querySelector("#pid-local-dimension").value = preset.d;
-      root.querySelector("#pid-target").value = preset.target;
+      root.querySelector("#pid-calculation").value =
+        preset.calculation || "steady-observable";
+      root.querySelector("#pid-steady-method").value =
+        preset.steadyMethod || "deterministic";
       root.querySelector("#pid-hamiltonian").value = preset.hamiltonian;
       root.querySelector("#pid-parameters").value = preset.parameters;
       root.querySelector("#pid-observable").value = preset.observable;
+      const initialState = preset.initialState || DEFAULT_INITIAL_STATE;
+      root.querySelector("#pid-initial-level").value = initialState.level;
+      const trajectory = Object.assign(
+        {}, DEFAULT_TRAJECTORY, preset.trajectory || {},
+      );
+      root.querySelector("#pid-trajectory-count").value =
+        trajectory.trajectories;
+      root.querySelector("#pid-trajectory-dt").value = trajectory.dt;
+      root.querySelector("#pid-trajectory-max-jump-probability").value =
+        trajectory.maxJumpProbability;
+      root.querySelector("#pid-trajectory-seed").value = trajectory.seed;
+      root.querySelector("#pid-trajectory-settling-time").value =
+        trajectory.settlingTime;
+      root.querySelector("#pid-trajectory-samples").value =
+        trajectory.samplesPerTrajectory;
+      root.querySelector("#pid-trajectory-sampling-interval").value =
+        trajectory.samplingInterval;
+      const dynamics = Object.assign(
+        {}, DEFAULT_DYNAMICS, preset.dynamics || {},
+      );
+      root.querySelector("#pid-dynamics-start-time").value =
+        dynamics.startTime;
+      root.querySelector("#pid-dynamics-final-time").value =
+        dynamics.finalTime;
+      root.querySelector("#pid-dynamics-samples").value = dynamics.samples;
+      root.querySelector("#pid-dynamics-steps").value =
+        dynamics.stepsPerInterval;
+      const spectrum = Object.assign(
+        {}, DEFAULT_SPECTRUM, preset.spectrum || {},
+      );
+      root.querySelector("#pid-spectrum-target").value = spectrum.target;
+      root.querySelector("#pid-spectrum-nev").value = spectrum.nev;
+      root.querySelector("#pid-spectrum-seed").value = spectrum.seed;
+      const gap = Object.assign({}, DEFAULT_GAP, preset.gap || {});
+      root.querySelector("#pid-gap-nev").value = gap.nev;
+      root.querySelector("#pid-gap-krylovdim").value = gap.krylovdim;
+      const analysis = Object.assign(
+        {}, DEFAULT_ANALYSIS, preset.analysis || {},
+      );
+      root.querySelector("#pid-analysis-purity").checked = analysis.purity;
+      root.querySelector("#pid-analysis-entropy").checked = analysis.entropy;
+      root.querySelector("#pid-analysis-one-body-rdm").checked =
+        analysis.oneBodyRDM;
+      root.querySelector("#pid-analysis-qfi-axis").value = analysis.qfiAxis;
+      root.querySelector("#pid-memory-budget").value =
+        preset.memoryBudgetMiB || 512;
       const pseudomode = preset.pseudomode || DEFAULT_PSEUDOMODE;
       root.querySelector("#pid-pseudomode-cutoff").value = pseudomode.nmax;
       root.querySelector("#pid-pseudomode-frequency").value = pseudomode.frequency;
@@ -230,8 +388,7 @@ g = 0.1`,
         pseudomode.counterrotatingStrength;
       jumpContainer.replaceChildren();
       preset.jumps.forEach(addJump);
-      updateArchitectureVisibility();
-      updateObservableVisibility();
+      updateVisibility();
       generate();
     }
 
@@ -248,7 +405,56 @@ g = 0.1`,
         architecture: root.querySelector("#pid-architecture").value,
         N: Number(root.querySelector("#pid-particle-count").value),
         d: Number(root.querySelector("#pid-local-dimension").value),
-        target: root.querySelector("#pid-target").value,
+        calculation: root.querySelector("#pid-calculation").value,
+        steadyMethod: root.querySelector("#pid-steady-method").value,
+        initialState: {
+          level: Number(root.querySelector("#pid-initial-level").value),
+        },
+        trajectory: {
+          trajectories:
+            Number(root.querySelector("#pid-trajectory-count").value),
+          settlingTime:
+            Number(root.querySelector("#pid-trajectory-settling-time").value),
+          dt: Number(root.querySelector("#pid-trajectory-dt").value),
+          samplesPerTrajectory:
+            Number(root.querySelector("#pid-trajectory-samples").value),
+          samplingInterval:
+            Number(root.querySelector(
+              "#pid-trajectory-sampling-interval").value),
+          maxJumpProbability:
+            Number(root.querySelector(
+              "#pid-trajectory-max-jump-probability").value),
+          seed: Number(root.querySelector("#pid-trajectory-seed").value),
+        },
+        dynamics: {
+          startTime:
+            Number(root.querySelector("#pid-dynamics-start-time").value),
+          finalTime:
+            Number(root.querySelector("#pid-dynamics-final-time").value),
+          samples: Number(root.querySelector("#pid-dynamics-samples").value),
+          stepsPerInterval:
+            Number(root.querySelector("#pid-dynamics-steps").value),
+        },
+        spectrum: {
+          target: root.querySelector("#pid-spectrum-target").value,
+          nev: Number(root.querySelector("#pid-spectrum-nev").value),
+          seed: Number(root.querySelector("#pid-spectrum-seed").value),
+        },
+        gap: {
+          nev: Number(root.querySelector("#pid-gap-nev").value),
+          krylovdim: Number(root.querySelector("#pid-gap-krylovdim").value),
+        },
+        analysis: {
+          purity: root.querySelector("#pid-analysis-purity").checked,
+          entropy: root.querySelector("#pid-analysis-entropy").checked,
+          oneBodyRDM:
+            root.querySelector("#pid-analysis-one-body-rdm").checked,
+          qfiAxis: root.querySelector("#pid-analysis-qfi-axis").value,
+        },
+        resources: {
+          memoryBudgetMiB:
+            Number(root.querySelector("#pid-memory-budget").value),
+        },
         hamiltonian: root.querySelector("#pid-hamiltonian").value,
         jumps: readJumps(),
         observable: root.querySelector("#pid-observable").value,
@@ -280,6 +486,9 @@ g = 0.1`,
     function markField(field) {
       const mapping = {
         architecture: "#pid-architecture",
+        calculation: "#pid-calculation",
+        "calculation method": "#pid-steady-method",
+        "steady-state method": "#pid-steady-method",
         N: "#pid-particle-count",
         d: "#pid-local-dimension",
         hamiltonian: "#pid-hamiltonian",
@@ -293,6 +502,27 @@ g = 0.1`,
         "pseudomode coupling strength": "#pid-pseudomode-coupling-strength",
         "pseudomode counter-rotating strength":
           "#pid-pseudomode-counterrotating-strength",
+        trajectories: "#pid-trajectory-count",
+        "initial local level": "#pid-initial-level",
+        "settling time": "#pid-trajectory-settling-time",
+        "trajectory dt": "#pid-trajectory-dt",
+        "samples per trajectory": "#pid-trajectory-samples",
+        "sampling interval": "#pid-trajectory-sampling-interval",
+        "maximum jump probability":
+          "#pid-trajectory-max-jump-probability",
+        "trajectory seed": "#pid-trajectory-seed",
+        "dynamics start time": "#pid-dynamics-start-time",
+        "dynamics final time": "#pid-dynamics-final-time",
+        "dynamics samples": "#pid-dynamics-samples",
+        "steps per output interval": "#pid-dynamics-steps",
+        "spectrum target": "#pid-spectrum-target",
+        "spectrum eigenvalues": "#pid-spectrum-nev",
+        "spectrum seed": "#pid-spectrum-seed",
+        "gap eigenvalues": "#pid-gap-nev",
+        "gap Krylov dimension": "#pid-gap-krylovdim",
+        "QFI axis": "#pid-analysis-qfi-axis",
+        "state analysis": "#pid-analysis-section",
+        "memory budget": "#pid-memory-budget",
       };
       const selector = mapping[field];
       let node = selector ? root.querySelector(selector) : null;
@@ -316,6 +546,7 @@ g = 0.1`,
         result.summary.topology,
         termDescription,
         `${result.summary.jumps} jump channel${result.summary.jumps === 1 ? "" : "s"}`,
+        result.summary.method,
         result.summary.cutoff === null || result.summary.cutoff === undefined
           ? null
           : `pseudomode cutoff nmax=${result.summary.cutoff}`,
@@ -359,15 +590,75 @@ g = 0.1`,
       }
     }
 
-    function updateObservableVisibility() {
-      const visible = root.querySelector("#pid-target").value === "expectation";
-      const section = root.querySelector("#pid-observable-section");
-      section.hidden = !visible;
-      root.querySelector("#pid-observable").required = visible;
-    }
-
-    function updateArchitectureVisibility() {
+    function updateVisibility() {
+      const calculation = root.querySelector("#pid-calculation").value;
+      const method = root.querySelector("#pid-steady-method").value;
       const architecture = root.querySelector("#pid-architecture").value;
+      const stationary =
+        calculation === "steady-state" ||
+        calculation === "steady-observable";
+      const dynamics = calculation === "dynamics-observable";
+      const spectrum = calculation === "liouvillian-spectrum";
+      const gap = calculation === "liouvillian-gap";
+      const trajectory = method === "trajectory";
+
+      function setRequired(section, visible, selector) {
+        section.hidden = !visible;
+        section.querySelectorAll(selector || "input, select").forEach((control) => {
+          control.required = visible && control.type !== "checkbox";
+        });
+      }
+
+      // Spectral calculations have only one valid deterministic method. If an
+      // incompatible trajectory selection is retained while switching targets,
+      // keep the selector visible so the core error can be corrected explicitly.
+      root.querySelector("#pid-method-section").hidden =
+        (spectrum || gap) && method === "deterministic";
+
+      const needsInitialState = dynamics || (stationary && trajectory);
+      setRequired(
+        root.querySelector("#pid-initial-state-section"),
+        needsInitialState,
+      );
+
+      const trajectoryVisible = trajectory && (stationary || dynamics);
+      const trajectorySection = root.querySelector("#pid-trajectory-section");
+      setRequired(trajectorySection, trajectoryVisible);
+      const stationaryTrajectory =
+        root.querySelector("#pid-trajectory-stationary-controls");
+      stationaryTrajectory.hidden = !(trajectoryVisible && stationary);
+      stationaryTrajectory.querySelectorAll("input").forEach((input) => {
+        input.required = trajectoryVisible && stationary;
+      });
+
+      setRequired(root.querySelector("#pid-dynamics-section"), dynamics);
+      const stepsField = root.querySelector("#pid-dynamics-steps-field");
+      stepsField.hidden = dynamics && trajectory;
+      root.querySelector("#pid-dynamics-steps").required =
+        dynamics && !trajectory;
+
+      setRequired(root.querySelector("#pid-spectrum-section"), spectrum);
+      setRequired(root.querySelector("#pid-gap-section"), gap);
+
+      const needsObservable =
+        calculation === "steady-observable" || dynamics;
+      const observableSection = root.querySelector("#pid-observable-section");
+      observableSection.hidden = !needsObservable;
+      root.querySelector("#pid-observable").required = needsObservable;
+
+      const analysisSection = root.querySelector("#pid-analysis-section");
+      const analysisSelected =
+        root.querySelector("#pid-analysis-purity").checked ||
+        root.querySelector("#pid-analysis-entropy").checked ||
+        root.querySelector("#pid-analysis-one-body-rdm").checked ||
+        root.querySelector("#pid-analysis-qfi-axis").value !== "none";
+      // Keep an incompatible retained selection visible so it can be cleared;
+      // changing the calculation never silently discards the user's analysis.
+      analysisSection.hidden = !stationary && !analysisSelected;
+      analysisSection.querySelectorAll("input, select").forEach((control) => {
+        control.required = false;
+      });
+
       const isPseudomode = architecture !== "pi";
       const panel = root.querySelector("#pid-pseudomode-section");
       panel.hidden = !isPseudomode;
@@ -409,9 +700,20 @@ g = 0.1`,
       const link = element("a");
       link.href = url;
       const architecture = root.querySelector("#pid-architecture").value;
-      link.download = architecture === "pi"
-        ? "generated_pi_steady_state.jl"
-        : `generated_${architecture.replace(/-/g, "_")}_steady_state.jl`;
+      const method = root.querySelector("#pid-steady-method").value;
+      const calculation = root.querySelector("#pid-calculation").value;
+      const stem = architecture === "pi"
+        ? "pi"
+        : architecture.replace(/-/g, "_");
+      const calculationStem = calculation.replace(/-/g, "_");
+      const methodStem =
+        calculation === "steady-state" ||
+        calculation === "steady-observable" ||
+        calculation === "dynamics-observable"
+          ? `${method}_`
+          : "";
+      link.download =
+        `generated_${stem}_${methodStem}${calculationStem}.jl`;
       document.body.append(link);
       link.click();
       link.remove();
@@ -431,11 +733,16 @@ g = 0.1`,
     root.querySelector("#pid-preset").addEventListener("change", function (event) {
       loadPreset(event.target.value);
     });
-    root.querySelector("#pid-target").addEventListener("change", updateObservableVisibility);
-    root.querySelector("#pid-architecture").addEventListener(
-      "change",
-      updateArchitectureVisibility,
-    );
+    for (const selector of [
+      "#pid-calculation",
+      "#pid-steady-method",
+      "#pid-architecture",
+    ]) {
+      root.querySelector(selector).addEventListener("change", function () {
+        updateVisibility();
+        generate();
+      });
+    }
     copyButton.addEventListener("click", copyCode);
     downloadButton.addEventListener("click", downloadCode);
 
