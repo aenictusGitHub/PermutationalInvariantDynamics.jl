@@ -8,7 +8,7 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
   "use strict";
 
-  const VERSION = "1.3.0";
+  const VERSION = "1.4.0";
   const MAX_FORMULA_LENGTH = 2000;
   const JULIA_RESERVED = new Set([
     "baremodule", "begin", "break", "catch", "const", "continue", "do",
@@ -42,6 +42,8 @@
     "system_purity", "system_entropy", "qfi_plan", "qfi_value",
     "system_observable", "streaming_observable",
     "composite_trajectory_plan", "evolution_workspace", "current",
+    "trajectory_preflight",
+    "experiment", "experiment_plan", "experiment_result",
     "Random", "LinearAlgebra", "index", "time", "value",
   ]);
   const GREEK = new Set([
@@ -771,6 +773,23 @@
         "Choose the deterministic stationary solver or the quantum-trajectory estimator.",
       );
     }
+    const workflowAliases = new Map([
+      ["direct-api", "direct-api"],
+      ["direct", "direct-api"],
+      ["verified-experiment", "verified-experiment"],
+      ["experiment", "verified-experiment"],
+      ["verified", "verified-experiment"],
+    ]);
+    const requestedWorkflow = config.workflow === undefined
+      ? "direct-api"
+      : String(config.workflow);
+    const workflow = workflowAliases.get(requestedWorkflow);
+    if (!workflow) {
+      fail(
+        "workflow",
+        "Choose the direct high-level API or the typed verified PIExperiment workflow.",
+      );
+    }
     if (isSpectral && steadyMethod !== "deterministic") {
       fail(
         "calculation method",
@@ -795,6 +814,17 @@
       fail(
         "calculation method",
         "Shared-mode deterministic dynamics currently lacks a memory-guarded state-free observable streamer. Select quantum trajectories, or use the documented advanced composite time-evolution API explicitly.",
+      );
+    }
+    if (
+      workflow === "verified-experiment" &&
+      (steadyMethod !== "deterministic" ||
+       isSpectral ||
+       architecture === "global-pseudomode")
+    ) {
+      fail(
+        "workflow",
+        "The typed PIExperiment route currently supports deterministic stationary states and deterministic dynamics on ordinary PI or identical-local-pseudomode models. Use the direct API for trajectories, spectra, gaps, and a shared global mode.",
       );
     }
 
@@ -1086,6 +1116,21 @@
         "The iterative gap route reports certification flags. Treat the numerical gap as certified only when gap_certified is true.",
       );
     }
+    if (workflow === "verified-experiment") {
+      warnings.push(
+        "The typed experiment route records an explainable resource plan, verification report, and deterministic provenance digest.",
+      );
+      if (isDynamics) {
+        warnings.push(
+          "Verified dynamics retains every requested PI state so physical-state checks can be performed. Reduce the output grid or use the direct state-free route when that history does not fit the declared memory budget.",
+        );
+      }
+    }
+    if (isStationary && architecture === "global-pseudomode") {
+      warnings.push(
+        "The generated shared-mode validation checks the full composite trace and Hermiticity plus the reduced system state; it does not certify positivity of the complete composite density operator.",
+      );
+    }
 
     let pseudomode = null;
     if (architecture !== "pi") {
@@ -1157,8 +1202,10 @@
         warnings.push("nmax = 0 removes every pseudomode excitation; increase the cutoff for a nontrivial embedding.");
       }
       if (architecture === "local-pseudomode") {
+        const exactSupersiteDimension =
+          BigInt(localDimension) * (BigInt(cutoff) + 1n);
         warnings.push(
-          `Each system has its own mode. The supersite dimension is d*(nmax+1) = ${localDimension * (cutoff + 1)}, so converge the cutoff and inspect the memory preflight.`,
+          `Each system has its own mode. The supersite dimension is d*(nmax+1) = ${exactSupersiteDimension}, so converge the cutoff and inspect the memory preflight.`,
         );
       } else {
         warnings.push(
@@ -1205,7 +1252,13 @@
       const input = inputJumps[index];
       if (!input || !String(input.operator || "").trim()) continue;
       const field = `jump ${index + 1}`;
-      const kind = input.kind === "collective" ? "collective" : "local";
+      if (input.kind !== "local" && input.kind !== "collective") {
+        fail(
+          `${field} kind`,
+          "Choose explicitly between an independent local channel and one collective channel.",
+        );
+      }
+      const kind = input.kind;
       const operator = parseFormula(String(input.operator), field);
       const operatorInfo = analyze(operator.ast, field);
       if (operatorInfo.kind !== "operator" || !operatorInfo.linear) {
@@ -1226,7 +1279,11 @@
           [...operatorInfo.families].some((family) => family.includes("pauli"))) {
         fail(field, "Pauli sigma symbols require d = 2. Use local j_a or collective J_a for qudits.");
       }
-      const rate = parseFormula(String(input.rate || "1"), `${field} rate`);
+      const rawRate =
+        input.rate === undefined || String(input.rate).trim() === ""
+          ? "1"
+          : String(input.rate);
+      const rate = parseFormula(rawRate, `${field} rate`);
       const rateInfo = analyze(rate.ast, `${field} rate`);
       if (rateInfo.kind !== "scalar") fail(`${field} rate`, "A jump rate must be scalar.");
       const operatorParameters = new Set();
@@ -1424,6 +1481,7 @@
       isDynamics,
       isSpectral,
       steadyMethod,
+      workflow,
       initialState,
       trajectory,
       dynamics,
@@ -1472,8 +1530,200 @@
     return `observable_${name}`;
   }
 
+  function boundedBinomial(n, k, maximumFactors) {
+    let retained = k;
+    if (retained < 0n || retained > n) return 0n;
+    if (retained > n - retained) retained = n - retained;
+    if (retained > maximumFactors) return null;
+    let value = 1n;
+    for (let index = 1n; index <= retained; index += 1n) {
+      value = (value * (n - retained + index)) / index;
+    }
+    return value;
+  }
+
+  function resourceSummary(parsed) {
+    const N = BigInt(parsed.particleCount);
+    const d = BigInt(parsed.localDimension);
+    const modeLevels = parsed.pseudomode
+      ? BigInt(parsed.pseudomode.nmax) + 1n
+      : 1n;
+    const siteDimension = parsed.architecture === "local-pseudomode"
+      ? d * modeLevels
+      : d;
+    const siteOperatorDimension = siteDimension * siteDimension;
+    const coordinateFormula = parsed.architecture === "global-pseudomode"
+      ? "binomial(N + d^2 - 1, N) * (nmax + 1)^2"
+      : parsed.architecture === "local-pseudomode"
+        ? "binomial(N + (d*(nmax + 1))^2 - 1, N)"
+        : "binomial(N + d^2 - 1, N)";
+    let coordinates = boundedBinomial(
+      N + siteOperatorDimension - 1n, N, 256n,
+    );
+    if (coordinates !== null && parsed.architecture === "global-pseudomode") {
+      coordinates *= modeLevels * modeLevels;
+    }
+    const oneComplexVectorBytes =
+      coordinates === null ? null : 16n * coordinates;
+    const memoryBudgetBytes =
+      BigInt(parsed.memoryBudgetMiB) * 1024n * 1024n;
+    const representation = parsed.architecture === "pi"
+      ? "complete PI Schur basis of N d-level systems"
+      : parsed.architecture === "local-pseudomode"
+        ? "complete PI Schur basis of identical system+pseudomode supersites"
+        : "factorized complete system PI basis and one finite-mode operator factor";
+    return {
+      representation,
+      scalarType: "ComplexF64",
+      coordinateFormula,
+      exactCoordinateCount:
+        coordinates === null ? null : coordinates.toString(),
+      oneComplexVectorBytes:
+        oneComplexVectorBytes === null
+          ? null
+          : oneComplexVectorBytes.toString(),
+      memoryBudgetBytes: memoryBudgetBytes.toString(),
+      oneVectorFitsBudget:
+        oneComplexVectorBytes === null
+          ? null
+          : oneComplexVectorBytes <= memoryBudgetBytes,
+      caveat:
+        "One-vector storage is a lower bound, not a solver peak. The generated Julia preflight accounts for prepared geometry, workspaces, Krylov history, and requested output.",
+    };
+  }
+
+  function generatedStem(parsed) {
+    const architecture = parsed.architecture === "pi"
+      ? "pi"
+      : parsed.architecture.replace(/-/g, "_");
+    const method =
+      parsed.isStationary || parsed.isDynamics
+        ? `${parsed.steadyMethod}_`
+        : "";
+    const workflow = parsed.workflow === "verified-experiment"
+      ? "verified_"
+      : "";
+    return `generated_${architecture}_${workflow}${method}` +
+      parsed.calculation.replace(/-/g, "_");
+  }
+
+  function manifestFor(parsed, summary, resources) {
+    const parameterValues = Object.create(null);
+    for (const parameter of parsed.parameters) {
+      parameterValues[parameter] =
+        parsed.parameterValues.values.get(parameter);
+    }
+    const manifest = {
+      schema: "permutational-invariant-dynamics/model-assistant/v1",
+      generatorVersion: VERSION,
+      workflow: parsed.workflow,
+      model: {
+        architecture: parsed.architecture,
+        particles: parsed.particleCount,
+        localDimension: parsed.localDimension,
+        hamiltonian: parsed.hamiltonian
+          ? parsed.hamiltonian.normalized
+          : "",
+        jumps: parsed.jumps.map((jump) => ({
+          kind: jump.kind,
+          operator: jump.operator.normalized,
+          rate: jump.rate.normalized,
+        })),
+        pseudomode: parsed.pseudomode
+          ? {
+            cutoff: parsed.pseudomode.nmax,
+            frequency: parsed.pseudomode.frequency.normalized,
+            damping: parsed.pseudomode.damping.normalized,
+            thermalOccupation:
+              parsed.pseudomode.thermalOccupation.normalized,
+            couplingOperator:
+              parsed.pseudomode.couplingOperator.normalized,
+            couplingStrength: parsed.pseudomode.strength.normalized,
+            counterrotatingStrength:
+              parsed.pseudomode.counterrotatingStrength.normalized,
+          }
+          : null,
+        parameters: parameterValues,
+      },
+      calculation: {
+        task: parsed.calculation,
+        method: parsed.steadyMethod,
+        observable: parsed.observable ? parsed.observable.normalized : "",
+        initialState: parsed.initialState,
+        dynamics: parsed.dynamics,
+        trajectory: parsed.trajectory,
+        spectrum: parsed.spectrum,
+        gap: parsed.gap,
+        analysis: parsed.analysis,
+      },
+      representation: resources,
+      route: summary.route,
+      warnings: parsed.warnings.slice(),
+    };
+    return manifest;
+  }
+
+  function readmeFor(stem, parsed, resources) {
+    const coordinateText = resources.exactCoordinateCount === null
+      ? `${resources.coordinateFormula} (not expanded in the browser)`
+      : `${resources.exactCoordinateCount} (${resources.coordinateFormula})`;
+    return [
+      "PermutationalInvariantDynamics.jl generated experiment",
+      "======================================================",
+      "",
+      `Generator version: ${VERSION}`,
+      `Workflow: ${parsed.workflow}`,
+      `Architecture: ${parsed.architecture}`,
+      `Calculation: ${parsed.calculation}`,
+      `Representation: ${resources.representation}`,
+      `Exact coordinate count: ${coordinateText}`,
+      `Memory budget: ${resources.memoryBudgetBytes} bytes`,
+      "",
+      "Files",
+      "-----",
+      `${stem}.jl        Commented Julia program.`,
+      `${stem}.json      Machine-readable normalized model and resource manifest.`,
+      `${stem}_README.txt  This file.`,
+      "",
+      "License",
+      "-------",
+      "The generated Julia program contains template code from",
+      "PermutationalInvariantDynamics.jl and is licensed under",
+      "GPL-3.0-only, without an output-license exception. Redistribution or",
+      "modification of that program must comply with version 3 of the GNU",
+      "General Public License. The complete license is available in the",
+      "package root LICENSE file and at:",
+      "https://www.gnu.org/licenses/gpl-3.0.html",
+      "",
+      "The JSON file is descriptive metadata containing the normalized model",
+      "and resource information. It contains no copied Julia or JavaScript",
+      "program template. This README repeats the program's license so that",
+      "the three separately downloaded bundle files remain understandable.",
+      "",
+      "Run",
+      "---",
+      `julia --project=. ${stem}.jl`,
+      "",
+      "The browser performs no solve. Review the physical PI assumption, jump",
+      "semantics, parameter values, solver diagnostics, and convergence before",
+      "using a result. One-vector storage is not the solver peak; the Julia",
+      "program keeps the package memory preflight enabled.",
+      "",
+    ].join("\n");
+  }
+
   function generate(config) {
     const parsed = parseModel(config);
+    const resources = resourceSummary(parsed);
+    if (resources.oneVectorFitsBudget === false) {
+      parsed.warnings.push(
+        "One ComplexF64 coordinate vector already exceeds the declared memory budget. The Julia preflight will reject any route requiring that vector; reduce the representation or raise the budget deliberately.",
+      );
+    } else if (resources.exactCoordinateCount === null) {
+      parsed.warnings.push(
+        "The exact coordinate formula is retained in the manifest, but this unusually large combinatorial count was not expanded in the browser. Inspect pi_dimension and the Julia resource preflight before running.",
+      );
+    }
     const lines = [];
     const isPseudomode = parsed.architecture !== "pi";
     const isLocalPseudomode = parsed.architecture === "local-pseudomode";
@@ -1483,6 +1733,7 @@
     const isSpectrum = parsed.calculation === "liouvillian-spectrum";
     const isGap = parsed.calculation === "liouvillian-gap";
     const isTrajectory = parsed.steadyMethod === "trajectory";
+    const isExperiment = parsed.workflow === "verified-experiment";
     const hamiltonianEntries = [];
     const linearHamiltonian = [];
     const nonlinearHamiltonianEntries = [];
@@ -1494,6 +1745,21 @@
       }
     }
 
+    // REUSE-IgnoreStart
+    // The SPDX lines below describe the generated Julia program, not this
+    // JavaScript source file.
+    lines.push("# SPDX-FileCopyrightText: 2026 PermutationalInvariantDynamics.jl contributors");
+    lines.push("#");
+    lines.push("# SPDX-License-Identifier: GPL-3.0-only");
+    lines.push("#");
+    lines.push("# This generated program contains template code from");
+    lines.push("# PermutationalInvariantDynamics.jl and is licensed under version 3");
+    lines.push("# of the GNU General Public License, with no option to use a later");
+    lines.push("# version. This program comes with ABSOLUTELY NO WARRANTY.");
+    lines.push("# See the package LICENSE file or");
+    lines.push("# https://www.gnu.org/licenses/gpl-3.0.html.");
+    lines.push("#");
+    // REUSE-IgnoreEnd
     lines.push("# Generated by the PermutationalInvariantDynamics.jl model assistant.");
     lines.push("# Review the PI assumption: every constituent must be physically equivalent");
     lines.push("# and every local term/channel must act identically on all constituents.");
@@ -1505,6 +1771,19 @@
       lines.push("# Topology: one finite-cutoff pseudomode is shared by the PI ensemble.");
       lines.push("# The coupling is collective and no Kac scaling is inserted automatically.");
     }
+    lines.push(`# Representation: ${resources.representation}.`);
+    lines.push(`# Coordinate formula: ${resources.coordinateFormula}.`);
+    if (resources.exactCoordinateCount !== null) {
+      lines.push(
+        `# Exact PI/composite coordinates: ${resources.exactCoordinateCount}.`,
+      );
+      lines.push(
+        `# One ComplexF64 coordinate vector: ${resources.oneComplexVectorBytes} bytes.`,
+      );
+    } else {
+      lines.push("# The browser did not expand the exact coordinate count; Julia prints it below.");
+    }
+    lines.push("# One-vector storage is only a lower bound; the solver preflight remains authoritative.");
     if (isGlobalPseudomode) lines.push("using LinearAlgebra");
     if (isSpectrum) lines.push("using Random");
     lines.push("using PermutationalInvariantDynamics");
@@ -1517,7 +1796,7 @@
       lines.push("const STEADY_ATOL = 1e-11");
       lines.push("const STEADY_RTOL = 1e-9");
     }
-    if (isStationary) {
+    if (isStationary || isExperiment) {
       lines.push("const STATE_VALIDATION_TOL = 1e-8");
     }
     if (parsed.initialState) {
@@ -1541,7 +1820,11 @@
     }
     if (isDynamics) {
       lines.push("");
-      lines.push("# Output is streamed at these physical times; no state history is retained.");
+      lines.push(
+        isExperiment
+          ? "# Verified output is sampled at these physical times; retained states are memory guarded."
+          : "# Output is streamed at these physical times; no state history is retained.",
+      );
       lines.push(
         `const DYNAMICS_START_TIME = ${floatLiteral(parsed.dynamics.startTime)}`,
       );
@@ -1631,6 +1914,16 @@
       lines.push("");
       for (const line of initialStateLines) lines.push(line);
       lines.push("");
+      lines.push("# Preflight preparation before allocating the term-resolved trajectory plan.");
+      lines.push("trajectory_preflight = recommend_solver(");
+      lines.push("    model; task=:dynamics, algorithm=:rk4,");
+      lines.push("    samples=1, saved_states=0,");
+      lines.push("    memory_budget=MEMORY_BUDGET,");
+      lines.push(")");
+      lines.push("trajectory_preflight.budget_status === :exceeds && error(");
+      lines.push("    \"trajectory preparation exceeds MEMORY_BUDGET\")");
+      lines.push("println(\"trajectory preparation budget status = \",");
+      lines.push("    trajectory_preflight.budget_status)");
       lines.push("# Preserve term-resolved physical jump channels for trajectory sampling.");
       lines.push("trajectory_plan = TrajectoryPlan(model)");
       lines.push("# Fixed-capacity worker scratch is reused across all independent paths.");
@@ -1653,8 +1946,58 @@
       lines.push("    seed=TRAJECTORY_SEED,");
       lines.push("    threaded=trajectory_workers > 1,");
       lines.push("    workspace=trajectory_workspace,");
+      lines.push("    memory_budget=MEMORY_BUDGET,");
       lines.push("    return_info=true,");
       lines.push(")");
+    }
+
+    function emitRepresentationSummary(coordinateExpression) {
+      lines.push("");
+      lines.push("# Report the retained representation before any expensive analysis.");
+      lines.push(
+        `println("representation = ${resources.representation}")`,
+      );
+      lines.push(`println("retained coordinates = ", ${coordinateExpression})`);
+      lines.push("println(\"declared memory budget (bytes) = \", MEMORY_BUDGET)");
+      lines.push("# The coordinate-vector size is not the solver peak.");
+    }
+
+    function emitDeterministicStationarySolve() {
+      lines.push("");
+      if (isExperiment) {
+        lines.push("# Typed experiment planning explains the route before the solve.");
+        lines.push("experiment = PIExperiment(");
+        lines.push("    model; task=:steady_state, algorithm=AutoAlgorithm(),");
+        lines.push("    memory_budget=MEMORY_BUDGET,");
+        lines.push("    verification=VerificationSpec(");
+        lines.push("        atol=STATE_VALIDATION_TOL,");
+        lines.push("        rtol=STATE_VALIDATION_TOL,");
+        lines.push("    ),");
+        lines.push("    solver_options=(atol=STEADY_ATOL, rtol=STEADY_RTOL),");
+        lines.push(
+          `    metadata=(generator_version="${VERSION}", ` +
+          `architecture="${parsed.architecture}"),`,
+        );
+        lines.push(")");
+        lines.push("experiment_plan = explain_experiment(experiment)");
+        lines.push("println(\"experiment plan = \", experiment_plan)");
+        lines.push("experiment_result = verified_solve(experiment)");
+        lines.push("println(\"verification report = \", experiment_result.report)");
+        lines.push("println(\"provenance digest = \",");
+        lines.push("    experiment_result.provenance.structural_digest)");
+        lines.push("steady = experiment_result.solution");
+        lines.push("# Optional: save_experiment(\"result.pidrun\", experiment_result)");
+      } else {
+        lines.push("# :auto selects the sparse/direct or matrix-free route from the compiled problem.");
+        lines.push("# For a large run, inspect recommend_solver(model; task=:steady_state) first.");
+        lines.push("prepared = compile(");
+        lines.push("    model; backend=:auto, memory_budget=MEMORY_BUDGET)");
+        lines.push("steady = stationary_state(");
+        lines.push("    prepared;");
+        lines.push("    atol=STEADY_ATOL, rtol=STEADY_RTOL,");
+        lines.push("    return_info=true, memory_budget=MEMORY_BUDGET,");
+        lines.push(")");
+      }
     }
 
     function emitInitialState() {
@@ -1753,6 +2096,7 @@
       for (const termLine of termLines) lines.push(`    ${termLine}`);
       lines.push(")");
       lines.push("model = PIModel(basis, terms)");
+      emitRepresentationSummary("pi_dimension(basis)");
       if (isStationary) {
         if (isTrajectory) {
           emitTrajectorySolve([
@@ -1760,16 +2104,7 @@
             "rho0 = computational_product_state(basis, INITIAL_LEVEL)",
           ]);
         } else {
-          lines.push("");
-          lines.push("# :auto selects the sparse/direct or matrix-free route from the compiled problem.");
-          lines.push("# For a large run, inspect recommend_solver(model; task=:steady_state) first.");
-          lines.push("prepared = compile(");
-          lines.push("    model; backend=:auto, memory_budget=MEMORY_BUDGET)");
-          lines.push("steady = stationary_state(");
-          lines.push("    prepared;");
-          lines.push("    atol=STEADY_ATOL, rtol=STEADY_RTOL,");
-          lines.push("    return_info=true, memory_budget=MEMORY_BUDGET,");
-          lines.push(")");
+          emitDeterministicStationarySolve();
         }
       }
     } else {
@@ -1837,6 +2172,7 @@
         lines.push("    memory_budget=MEMORY_BUDGET,");
         lines.push(")");
         lines.push("model = embedding.model");
+        emitRepresentationSummary("pi_dimension(basis)");
         if (isStationary) {
           if (isTrajectory) {
             emitTrajectorySolve([
@@ -1847,15 +2183,7 @@
               "    site, system_initial; memory_budget=MEMORY_BUDGET)",
             ]);
           } else {
-            lines.push("");
-            lines.push("# :auto remains memory guarded and selects the cheapest exact prepared route.");
-            lines.push("prepared = compile(");
-            lines.push("    model; backend=:auto, memory_budget=MEMORY_BUDGET)");
-            lines.push("steady = stationary_state(");
-            lines.push("    prepared;");
-            lines.push("    atol=STEADY_ATOL, rtol=STEADY_RTOL,");
-            lines.push("    return_info=true, memory_budget=MEMORY_BUDGET,");
-            lines.push(")");
+            emitDeterministicStationarySolve();
           }
         }
       } else {
@@ -1870,6 +2198,7 @@
         lines.push("    couplings=(coupling,),");
         lines.push("    memory_budget=MEMORY_BUDGET,");
         lines.push(")");
+        emitRepresentationSummary("length(embedding.basis)");
         if (isStationary) {
           lines.push("");
           lines.push("# The shared-mode model is already factorized; its automatic route is matrix-free GMRES.");
@@ -1942,16 +2271,48 @@
         lines.push("# Columns: time, Monte Carlo mean, standard error, lower CI, upper CI.");
       } else {
         lines.push("");
-        lines.push("# Matrix-free RK4 streams the observable and retains no sampled states.");
-        lines.push("prepared = compile(");
-        lines.push("    model; backend=:matrixfree, memory_budget=MEMORY_BUDGET)");
-        lines.push("dynamics = solve_dynamics(");
-        lines.push("    prepared, rho0, (DYNAMICS_START_TIME, DYNAMICS_FINAL_TIME);");
-        lines.push("    saveat=times, steps_per_interval=STEPS_PER_INTERVAL,");
-        lines.push("    observables=(observable=streaming_observable,),");
-        lines.push("    save_states=false, memory_budget=MEMORY_BUDGET,");
-        lines.push(")");
-        lines.push("observable_values = dynamics.observables[:observable]");
+        if (isExperiment) {
+          lines.push("# Verified dynamics retains sampled PI states for physicality checks.");
+          lines.push("# The memory preflight counts this history before propagation.");
+          lines.push("experiment = PIExperiment(");
+          lines.push("    model; task=:dynamics, initial_state=rho0,");
+          lines.push("    algorithm=:rk4,");
+          lines.push("    tspan=(DYNAMICS_START_TIME, DYNAMICS_FINAL_TIME),");
+          lines.push("    saveat=times, steps_per_interval=STEPS_PER_INTERVAL,");
+          lines.push("    observables=(observable=streaming_observable,),");
+          lines.push("    save_states=true, memory_budget=MEMORY_BUDGET,");
+          lines.push("    verification=VerificationSpec(");
+          lines.push("        atol=STATE_VALIDATION_TOL,");
+          lines.push("        rtol=STATE_VALIDATION_TOL,");
+          lines.push("    ),");
+          lines.push(
+            `    metadata=(generator_version="${VERSION}", ` +
+            `architecture="${parsed.architecture}"),`,
+          );
+          lines.push(")");
+          lines.push("experiment_plan = explain_experiment(experiment)");
+          lines.push("println(\"experiment plan = \", experiment_plan)");
+          lines.push("experiment_result = verified_solve(experiment)");
+          lines.push("println(\"verification report = \", experiment_result.report)");
+          lines.push("println(\"provenance digest = \",");
+          lines.push("    experiment_result.provenance.structural_digest)");
+          lines.push("dynamics = experiment_result.solution");
+          lines.push(
+            "observable_values = experiment_result.observables[:observable]",
+          );
+          lines.push("# Optional: save_experiment(\"result.pidrun\", experiment_result)");
+        } else {
+          lines.push("# Matrix-free RK4 streams the observable and retains no sampled states.");
+          lines.push("prepared = compile(");
+          lines.push("    model; backend=:matrixfree, memory_budget=MEMORY_BUDGET)");
+          lines.push("dynamics = solve_dynamics(");
+          lines.push("    prepared, rho0, (DYNAMICS_START_TIME, DYNAMICS_FINAL_TIME);");
+          lines.push("    saveat=times, steps_per_interval=STEPS_PER_INTERVAL,");
+          lines.push("    observables=(observable=streaming_observable,),");
+          lines.push("    save_states=false, memory_budget=MEMORY_BUDGET,");
+          lines.push(")");
+          lines.push("observable_values = dynamics.observables[:observable]");
+        }
         lines.push("");
         lines.push("for (time, value) in zip(dynamics.times, observable_values)");
         lines.push("    println(time, \"  \", value)");
@@ -2007,6 +2368,7 @@
       lines.push("rho_ss = steady.state");
       if (isGlobalPseudomode) {
       lines.push("# Packed model-owned reductions avoid any full-system reconstruction.");
+      lines.push("# This does not certify positivity of the complete composite state.");
       lines.push("LinearAlgebra.ishermitian(");
       lines.push("    rho_ss; atol=STATE_VALIDATION_TOL, rtol=STATE_VALIDATION_TOL) ||");
       lines.push("    error(\"stationary composite state is not Hermitian\")");
@@ -2245,6 +2607,10 @@
         ? "automatic backend with compressed collective PI operators"
         : "automatic backend with prepared one-body kernels";
     }
+    if (isExperiment) {
+      route =
+        `typed PIExperiment planning and verified_solve over ${route}`;
+    }
     const methodLabels = {
       "steady-state": isTrajectory
         ? "quantum-trajectory steady-state estimate"
@@ -2258,19 +2624,54 @@
       "liouvillian-spectrum": "selected Liouvillian spectrum",
       "liouvillian-gap": "certification-aware Liouvillian gap",
     };
+    const code = `${lines.join("\n")}\n`;
+    const summary = {
+      terms: userTermCount,
+      jumps: parsed.jumps.length,
+      target: parsed.target,
+      calculation: parsed.calculation,
+      method: methodLabels[parsed.calculation],
+      workflow: parsed.workflow,
+      architecture: parsed.architecture,
+      topology: architectureLabels[parsed.architecture],
+      cutoff: parsed.pseudomode ? parsed.pseudomode.nmax : null,
+      route,
+      representation: resources.representation,
+      coordinates: resources.exactCoordinateCount,
+      coordinateFormula: resources.coordinateFormula,
+      oneComplexVectorBytes: resources.oneComplexVectorBytes,
+      memoryBudgetBytes: resources.memoryBudgetBytes,
+    };
+    const manifest = manifestFor(parsed, summary, resources);
+    const stem = generatedStem(parsed);
+    const manifestText = `${JSON.stringify(manifest, null, 2)}\n`;
+    const readme = readmeFor(stem, parsed, resources);
     return {
-      code: `${lines.join("\n")}\n`,
+      code,
       warnings: parsed.warnings,
-      summary: {
-        terms: userTermCount,
-        jumps: parsed.jumps.length,
-        target: parsed.target,
-        calculation: parsed.calculation,
-        method: methodLabels[parsed.calculation],
-        architecture: parsed.architecture,
-        topology: architectureLabels[parsed.architecture],
-        cutoff: parsed.pseudomode ? parsed.pseudomode.nmax : null,
-        route,
+      summary,
+      manifest,
+      manifestText,
+      resources,
+      bundle: {
+        stem,
+        files: [
+          {
+            name: `${stem}.jl`,
+            mediaType: "text/x-julia;charset=utf-8",
+            contents: code,
+          },
+          {
+            name: `${stem}.json`,
+            mediaType: "application/json;charset=utf-8",
+            contents: manifestText,
+          },
+          {
+            name: `${stem}_README.txt`,
+            mediaType: "text/plain;charset=utf-8",
+            contents: readme,
+          },
+        ],
       },
       normalized: {
         hamiltonian: parsed.hamiltonian ? parsed.hamiltonian.normalized : "",

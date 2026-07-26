@@ -258,7 +258,9 @@ g = 0.1`,
     const summary = root.querySelector("#pid-generator-summary");
     const copyButton = root.querySelector("#pid-copy-code");
     const downloadButton = root.querySelector("#pid-download-code");
+    const bundleButton = root.querySelector("#pid-download-bundle");
     let generatedCode = "";
+    let generatedBundle = null;
 
     function labelledControl(labelText, control) {
       const wrapper = element("label", { className: "pid-jump-control" });
@@ -323,6 +325,8 @@ g = 0.1`,
       root.querySelector("#pid-local-dimension").value = preset.d;
       root.querySelector("#pid-calculation").value =
         preset.calculation || "steady-observable";
+      root.querySelector("#pid-workflow").value =
+        preset.workflow || "direct-api";
       root.querySelector("#pid-steady-method").value =
         preset.steadyMethod || "deterministic";
       root.querySelector("#pid-hamiltonian").value = preset.hamiltonian;
@@ -406,6 +410,7 @@ g = 0.1`,
         N: Number(root.querySelector("#pid-particle-count").value),
         d: Number(root.querySelector("#pid-local-dimension").value),
         calculation: root.querySelector("#pid-calculation").value,
+        workflow: root.querySelector("#pid-workflow").value,
         steadyMethod: root.querySelector("#pid-steady-method").value,
         initialState: {
           level: Number(root.querySelector("#pid-initial-level").value),
@@ -487,6 +492,7 @@ g = 0.1`,
       const mapping = {
         architecture: "#pid-architecture",
         calculation: "#pid-calculation",
+        workflow: "#pid-workflow",
         "calculation method": "#pid-steady-method",
         "steady-state method": "#pid-steady-method",
         N: "#pid-particle-count",
@@ -542,15 +548,29 @@ g = 0.1`,
       const termDescription = result.summary.architecture === "pi"
         ? `${result.summary.terms} compiled term${result.summary.terms === 1 ? "" : "s"}`
         : `${result.summary.terms} bare-system term source${result.summary.terms === 1 ? "" : "s"}`;
+      const coordinateDescription = result.summary.coordinates === null
+        ? `coordinates: ${result.summary.coordinateFormula}`
+        : result.summary.coordinates.length <= 24
+          ? `${result.summary.coordinates} retained coordinates`
+          : `${result.summary.coordinates.length}-digit exact coordinate count (see manifest)`;
       const items = [
         result.summary.topology,
         termDescription,
         `${result.summary.jumps} jump channel${result.summary.jumps === 1 ? "" : "s"}`,
+        result.summary.workflow === "verified-experiment"
+          ? "typed verified experiment"
+          : "direct high-level API",
         result.summary.method,
         result.summary.cutoff === null || result.summary.cutoff === undefined
           ? null
           : `pseudomode cutoff nmax=${result.summary.cutoff}`,
         result.summary.route,
+        coordinateDescription,
+        result.summary.oneComplexVectorBytes === null
+          ? null
+          : result.summary.oneComplexVectorBytes.length <= 24
+            ? `${result.summary.oneComplexVectorBytes} bytes per ComplexF64 vector`
+            : `${result.summary.oneComplexVectorBytes.length}-digit one-vector byte count`,
       ].filter(Boolean);
       for (const text of items) {
         summary.append(element("span", { className: "pid-summary-chip", text }));
@@ -568,6 +588,7 @@ g = 0.1`,
       try {
         const result = api.generate(readConfiguration());
         generatedCode = result.code;
+        generatedBundle = result.bundle;
         output.textContent = generatedCode;
         renderSummary(result);
         renderWarnings(result.warnings);
@@ -575,11 +596,14 @@ g = 0.1`,
         status.textContent = "Code generated locally in your browser.";
         copyButton.disabled = false;
         downloadButton.disabled = false;
+        bundleButton.disabled = false;
       } catch (error) {
         generatedCode = "";
+        generatedBundle = null;
         output.textContent = "# Correct the model input to generate Julia code.";
         copyButton.disabled = true;
         downloadButton.disabled = true;
+        bundleButton.disabled = true;
         status.className = "pid-status pid-status-error";
         if (error instanceof api.GeneratorError) {
           status.textContent = `${error.field}: ${error.message}`;
@@ -693,31 +717,37 @@ g = 0.1`,
       }
     }
 
-    function downloadCode() {
-      if (!generatedCode) return;
-      const blob = new Blob([generatedCode], { type: "text/x-julia;charset=utf-8" });
+    function downloadArtifact(artifact) {
+      const blob = new Blob(
+        [artifact.contents], { type: artifact.mediaType },
+      );
       const url = URL.createObjectURL(blob);
       const link = element("a");
       link.href = url;
-      const architecture = root.querySelector("#pid-architecture").value;
-      const method = root.querySelector("#pid-steady-method").value;
-      const calculation = root.querySelector("#pid-calculation").value;
-      const stem = architecture === "pi"
-        ? "pi"
-        : architecture.replace(/-/g, "_");
-      const calculationStem = calculation.replace(/-/g, "_");
-      const methodStem =
-        calculation === "steady-state" ||
-        calculation === "steady-observable" ||
-        calculation === "dynamics-observable"
-          ? `${method}_`
-          : "";
-      link.download =
-        `generated_${stem}_${methodStem}${calculationStem}.jl`;
+      link.download = artifact.name;
       document.body.append(link);
       link.click();
       link.remove();
-      URL.revokeObjectURL(url);
+      window.setTimeout(function () {
+        URL.revokeObjectURL(url);
+      }, 1000);
+    }
+
+    function downloadCode() {
+      if (!generatedBundle) return;
+      downloadArtifact(generatedBundle.files[0]);
+    }
+
+    function downloadBundle() {
+      if (!generatedBundle) return;
+      // Keep the implementation dependency-free: each artifact is a normal
+      // local browser download rather than a remotely assembled archive.
+      for (const artifact of generatedBundle.files) {
+        downloadArtifact(artifact);
+      }
+      status.className = "pid-status pid-status-success";
+      status.textContent =
+        "Experiment bundle downloaded: Julia script, JSON manifest, and README.";
     }
 
     form.addEventListener("submit", function (event) {
@@ -737,6 +767,7 @@ g = 0.1`,
       "#pid-calculation",
       "#pid-steady-method",
       "#pid-architecture",
+      "#pid-workflow",
     ]) {
       root.querySelector(selector).addEventListener("change", function () {
         updateVisibility();
@@ -745,6 +776,7 @@ g = 0.1`,
     }
     copyButton.addEventListener("click", copyCode);
     downloadButton.addEventListener("click", downloadCode);
+    bundleButton.addEventListener("click", downloadBundle);
 
     loadPreset("driven");
   }
