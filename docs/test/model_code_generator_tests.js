@@ -50,8 +50,110 @@
   assertIncludes(driven.code, "gamma_down = 0.12", "subscripted parameter");
   assertIncludes(driven.code, "CollectiveObservablePlan", "prepared observable");
   assertIncludes(driven.code, "backend=:auto", "automatic backend");
+  assertIncludes(driven.code, "stationary_state(", "default deterministic stationary route");
+  assert(
+    !driven.code.includes("trajectory_steady_state("),
+    "the default route must not silently select stochastic estimation",
+  );
   assert(!driven.code.includes("TODO"), "provided parameters must not receive placeholders");
   assert(driven.summary.terms === 4, "term count");
+
+  const trajectorySteady = api.generate({
+    architecture: "pi",
+    N: 3,
+    d: 2,
+    target: "steady",
+    steadyMethod: "trajectory",
+    hamiltonian: String.raw`\Omega J_x`,
+    jumps: [
+      { kind: "local", operator: String.raw`\sigma_-`, rate: String.raw`\gamma` },
+    ],
+    parameters: String.raw`\Omega=0.2
+\gamma=0.1`,
+    trajectory: {
+      trajectories: 24,
+      initialLevel: 2,
+      settlingTime: 3.0,
+      dt: 0.01,
+      samplesPerTrajectory: 4,
+      samplingInterval: 0.5,
+      maxJumpProbability: 0.02,
+      seed: 17,
+    },
+  });
+  assertIncludes(
+    trajectorySteady.code,
+    "rho0 = computational_product_state(basis, INITIAL_LEVEL)",
+    "trajectory route emits an explicit PI initial state",
+  );
+  assertIncludes(
+    trajectorySteady.code,
+    "TrajectoryPlan(model)",
+    "trajectory route prepares channel-resolved kernels once",
+  );
+  assertIncludes(
+    trajectorySteady.code,
+    "TrajectoryBatchWorkspace(",
+    "trajectory route reuses task-owned batch scratch",
+  );
+  assertIncludes(
+    trajectorySteady.code,
+    "trajectory_steady_state(",
+    "trajectory stationary estimator",
+  );
+  assertIncludes(
+    trajectorySteady.code,
+    "return_info=true",
+    "trajectory diagnostics are retained",
+  );
+  assertIncludes(
+    trajectorySteady.code,
+    "const TRAJECTORIES = 24",
+    "trajectory count is emitted explicitly",
+  );
+  assertIncludes(
+    trajectorySteady.code,
+    "const INITIAL_LEVEL = 2",
+    "trajectory initial level is emitted explicitly",
+  );
+  assertIncludes(
+    trajectorySteady.code,
+    "const SETTLING_TIME = 3.0",
+    "trajectory settling time is emitted explicitly",
+  );
+  assertIncludes(
+    trajectorySteady.code,
+    "const TRAJECTORY_DT = 0.01",
+    "trajectory time step is emitted explicitly",
+  );
+  assertIncludes(
+    trajectorySteady.code,
+    "const SAMPLES_PER_TRAJECTORY = 4",
+    "within-path sample count is emitted explicitly",
+  );
+  assertIncludes(
+    trajectorySteady.code,
+    "const SAMPLING_INTERVAL = 0.5",
+    "within-path sampling interval is emitted explicitly",
+  );
+  assertIncludes(
+    trajectorySteady.code,
+    "const MAX_JUMP_PROBABILITY = 0.02",
+    "jump-probability guard is emitted explicitly",
+  );
+  assertIncludes(
+    trajectorySteady.code,
+    "const TRAJECTORY_SEED = 17",
+    "trajectory seed is emitted explicitly",
+  );
+  assert(
+    !trajectorySteady.code.includes("stationary_state("),
+    "trajectory route must not also invoke a deterministic stationary solver",
+  );
+  assert(
+    !trajectorySteady.code.includes("steady.info."),
+    "trajectory result fields must not be confused with deterministic solver info",
+  );
 
   const nonlinear = api.generate({
     N: 20,
@@ -147,6 +249,63 @@ g_cr=0`,
   assert(localPseudomode.summary.architecture === "local-pseudomode", "local topology summary");
   assert(localPseudomode.summary.cutoff === 1, "local cutoff summary");
 
+  const localPseudomodeTrajectory = api.generate({
+    architecture: "local-pseudomode",
+    N: 2,
+    d: 2,
+    target: "steady",
+    steadyMethod: "trajectory",
+    hamiltonian: String.raw`\Omega J_x`,
+    jumps: [],
+    pseudomode: {
+      nmax: 1,
+      frequency: String.raw`\omega_c`,
+      damping: String.raw`\kappa`,
+      thermalOccupation: "0",
+      couplingOperator: String.raw`\sigma_z`,
+      couplingStrength: "g",
+      counterrotatingStrength: "0",
+    },
+    parameters: String.raw`\Omega=0.2
+\omega_c=1
+\kappa=0.3
+g=0.1`,
+    trajectory: {
+      trajectories: 8,
+      initialLevel: 2,
+      settlingTime: 2,
+      dt: 0.01,
+      samplesPerTrajectory: 2,
+      samplingInterval: 0.5,
+      maxJumpProbability: 0.02,
+      seed: 9,
+    },
+  });
+  assertIncludes(
+    localPseudomodeTrajectory.code,
+    "rho0 = pseudomode_product_state(",
+    "local-pseudomode trajectory route emits a supersite product state",
+  );
+  assertIncludes(
+    localPseudomodeTrajectory.code,
+    "system_initial[INITIAL_LEVEL] = 1",
+    "local-pseudomode trajectory route applies the selected system level",
+  );
+  assertIncludes(
+    localPseudomodeTrajectory.code,
+    "trajectory_plan = TrajectoryPlan(model)",
+    "local-pseudomode trajectory route uses the embedded PI model",
+  );
+  assert(
+    !localPseudomodeTrajectory.code.includes("stationary_state(") &&
+      !localPseudomodeTrajectory.code.includes("prepared = compile("),
+    "local-pseudomode trajectory route does not prepare a deterministic solve",
+  );
+  assert(
+    localPseudomodeTrajectory.summary.route.includes("streaming path reduction"),
+    "local-pseudomode trajectory route summary",
+  );
+
   const globalPseudomode = api.generate({
     architecture: "global-pseudomode",
     N: 3,
@@ -182,6 +341,318 @@ g=0.15`,
   assert(!globalPseudomode.code.includes("compile(\n    embedding"), "shared model must not be compiled as an ordinary PI model");
   assert(!globalPseudomode.code.includes("kron("), "shared model stays factorized");
   assert(globalPseudomode.summary.route.includes("matrix-free GMRES"), "global route summary");
+
+  const deterministicDynamics = api.generate({
+    architecture: "pi",
+    N: 2,
+    d: 2,
+    calculation: "dynamics-observable",
+    steadyMethod: "deterministic",
+    initialState: { level: 2 },
+    hamiltonian: String.raw`\Omega J_x`,
+    jumps: [{ kind: "local", operator: String.raw`\sigma_-`, rate: String.raw`\gamma` }],
+    observable: "J_z/N",
+    parameters: String.raw`\Omega=0.2
+\gamma=0.1`,
+    dynamics: { startTime: 0, finalTime: 0.1, samples: 3, stepsPerInterval: 2 },
+    resources: { memoryBudgetMiB: 96 },
+  });
+  assertIncludes(deterministicDynamics.code, "const INITIAL_LEVEL = 2", "deterministic dynamics initial state");
+  assertIncludes(deterministicDynamics.code, "const MEMORY_BUDGET = 96 * 1024^2", "custom memory budget");
+  assertIncludes(deterministicDynamics.code, "backend=:matrixfree", "deterministic dynamics matrix-free compilation");
+  assertIncludes(deterministicDynamics.code, "dynamics = solve_dynamics(", "deterministic observable dynamics");
+  assertIncludes(deterministicDynamics.code, "save_states=false", "state-free deterministic output");
+  assertIncludes(deterministicDynamics.code, "dynamics.observables[:observable]", "streamed deterministic observable");
+  assert(deterministicDynamics.summary.calculation === "dynamics-observable", "deterministic dynamics summary");
+
+  const localPseudomodeDynamics = api.generate({
+    architecture: "local_pseudomode",
+    N: 2,
+    d: 2,
+    calculation: "dynamics",
+    initialState: { level: 1 },
+    hamiltonian: String.raw`\Omega J_x`,
+    jumps: [],
+    observable: "J_z",
+    pseudomode: {
+      nmax: 1,
+      frequency: String.raw`\omega_c`,
+      damping: String.raw`\kappa`,
+      thermalOccupation: "0",
+      couplingOperator: String.raw`\sigma_z`,
+      couplingStrength: "g",
+      counterrotatingStrength: "0",
+    },
+    parameters: String.raw`\Omega=0.2
+\omega_c=1
+\kappa=0.3
+g=0.1`,
+    dynamics: { startTime: 0, finalTime: 0.1, samples: 3, stepsPerInterval: 2 },
+  });
+  assertIncludes(localPseudomodeDynamics.code, "rho0 = pseudomode_product_state(", "local-mode deterministic initial state");
+  assertIncludes(localPseudomodeDynamics.code, "lift_system_operator(site, spin.jz", "local-mode physical observable lift");
+  assertIncludes(localPseudomodeDynamics.code, "dynamics = solve_dynamics(", "local-mode deterministic dynamics");
+  assertIncludes(localPseudomodeDynamics.code, "save_states=false", "local-mode state-free output");
+  assert(localPseudomodeDynamics.summary.route.includes("PI-supersite dynamics"), "local-mode deterministic route summary");
+
+  const trajectoryDynamics = api.generate({
+    architecture: "pi",
+    N: 2,
+    d: 2,
+    calculation: "transient",
+    steadyMethod: "quantum_trajectories",
+    initialState: { level: 2 },
+    hamiltonian: String.raw`\Omega J_x`,
+    jumps: [{ kind: "local", operator: String.raw`\sigma_-`, rate: String.raw`\gamma` }],
+    observable: "J_z",
+    parameters: String.raw`\Omega=0.2
+\gamma=0.1`,
+    trajectory: { trajectories: 3, dt: 0.01, maxJumpProbability: 0.02, seed: 41 },
+    dynamics: { startTime: 0, finalTime: 0.1, samples: 3, stepsPerInterval: 2 },
+  });
+  assertIncludes(trajectoryDynamics.code, "TrajectoryPlan(model)", "trajectory dynamics channel plan");
+  assertIncludes(trajectoryDynamics.code, "dynamics = quantum_trajectories(", "ordinary trajectory dynamics");
+  assertIncludes(trajectoryDynamics.code, "dynamics_statistics.standard_error", "trajectory uncertainty output");
+  assertIncludes(trajectoryDynamics.code, "save_states=false, jump_statistics=false", "trajectory histories remain disabled");
+  assert(
+    trajectoryDynamics.summary.method === "quantum-trajectory observable dynamics",
+    "trajectory alias normalization",
+  );
+
+  const localPseudomodeTrajectoryDynamics = api.generate({
+    architecture: "local-pseudomode",
+    N: 2,
+    d: 2,
+    calculation: "dynamics_observable",
+    steadyMethod: "trajectory",
+    initialState: { level: 1 },
+    hamiltonian: String.raw`\Omega J_x`,
+    jumps: [],
+    observable: "J_z",
+    pseudomode: {
+      nmax: 1,
+      frequency: "1",
+      damping: "0.3",
+      thermalOccupation: "0",
+      couplingOperator: String.raw`\sigma_z`,
+      couplingStrength: "0.1",
+      counterrotatingStrength: "0",
+    },
+    parameters: String.raw`\Omega=0.2`,
+    trajectory: { trajectories: 3, dt: 0.01, maxJumpProbability: 0.02, seed: 43 },
+    dynamics: { startTime: 0, finalTime: 0.1, samples: 3, stepsPerInterval: 2 },
+  });
+  assertIncludes(localPseudomodeTrajectoryDynamics.code, "pseudomode_product_state(", "local-mode trajectory initial state");
+  assertIncludes(localPseudomodeTrajectoryDynamics.code, "TrajectoryBatchWorkspace(", "local-mode trajectory batch workspace");
+  assertIncludes(localPseudomodeTrajectoryDynamics.code, "dynamics = quantum_trajectories(", "local-mode trajectory dynamics");
+  assert(localPseudomodeTrajectoryDynamics.summary.route.includes("PI-supersite trajectories"), "local-mode trajectory route summary");
+
+  const globalPseudomodeTrajectoryDynamics = api.generate({
+    architecture: "global_pseudomode",
+    N: 2,
+    d: 2,
+    calculation: "transient-observable",
+    steadyMethod: "trajectory",
+    initialState: { level: 1 },
+    hamiltonian: String.raw`\Omega J_x`,
+    jumps: [{ kind: "local", operator: String.raw`\sigma_-`, rate: "0.1" }],
+    observable: "J_z",
+    pseudomode: {
+      nmax: 1,
+      frequency: "1",
+      damping: "0.3",
+      thermalOccupation: "0",
+      couplingOperator: String.raw`\sigma_-`,
+      couplingStrength: "0.1",
+      counterrotatingStrength: "0",
+    },
+    parameters: String.raw`\Omega=0.2`,
+    trajectory: { trajectories: 3, dt: 0.01, maxJumpProbability: 0.02, seed: 47 },
+    dynamics: { startTime: 0, finalTime: 0.1, samples: 3, stepsPerInterval: 2 },
+  });
+  assertIncludes(globalPseudomodeTrajectoryDynamics.code, "CompositeTrajectoryPlan(", "shared-mode composite trajectory plan");
+  assertIncludes(globalPseudomodeTrajectoryDynamics.code, "CompositeTrajectoryBatchWorkspace(", "shared-mode trajectory workspace");
+  assertIncludes(globalPseudomodeTrajectoryDynamics.code, "embedding.background, embedding.damping_channels...", "shared-mode monitored-channel split");
+  assertIncludes(
+    globalPseudomodeTrajectoryDynamics.code,
+    "streaming_observable = observable",
+    "shared-mode trajectories use the Hermitian observable without requiring a composite adjoint",
+  );
+  assertIncludes(globalPseudomodeTrajectoryDynamics.code, "dynamics = quantum_trajectories(", "shared-mode trajectory dynamics");
+  assert(globalPseudomodeTrajectoryDynamics.summary.route.includes("factorized composite trajectories"), "shared-mode trajectory route summary");
+
+  const selectedSpectrum = api.generate({
+    architecture: "pi",
+    N: 2,
+    d: 2,
+    calculation: "spectrum",
+    hamiltonian: String.raw`\Omega J_x`,
+    jumps: [{ kind: "local", operator: String.raw`\sigma_-`, rate: "0.1" }],
+    parameters: String.raw`\Omega=0.2`,
+    spectrum: { target: "largest-real", nev: 3, seed: 53 },
+  });
+  assertIncludes(selectedSpectrum.code, "spectrum = liouvillian_spectrum(", "ordinary selected spectrum");
+  assertIncludes(selectedSpectrum.code, "target=:largest_real, nev=SPECTRUM_NEV", "spectrum target and count");
+  assertIncludes(selectedSpectrum.code, "Random.MersenneTwister(SPECTRUM_SEED)", "reproducible spectral seed");
+  assertIncludes(selectedSpectrum.code, "return_info=true", "spectrum metadata");
+  assert(selectedSpectrum.summary.calculation === "liouvillian-spectrum", "spectrum alias normalization");
+
+  const globalSelectedSpectrum = api.generate({
+    architecture: "global-pseudomode",
+    N: 2,
+    d: 2,
+    calculation: "liouvillian_spectrum",
+    hamiltonian: String.raw`\Omega J_x`,
+    jumps: [{ kind: "local", operator: String.raw`\sigma_-`, rate: "0.1" }],
+    pseudomode: {
+      nmax: 1,
+      frequency: "1",
+      damping: "0.3",
+      thermalOccupation: "0",
+      couplingOperator: String.raw`\sigma_-`,
+      couplingStrength: "0.1",
+      counterrotatingStrength: "0",
+    },
+    parameters: String.raw`\Omega=0.2`,
+    spectrum: { target: "near_zero", nev: 3, seed: 59 },
+  });
+  assertIncludes(globalSelectedSpectrum.code, "spectrum = liouvillian_spectrum(\n    embedding;", "shared-mode selected spectrum");
+  assertIncludes(globalSelectedSpectrum.code, "target=:near_zero", "shared-mode near-zero target");
+  assert(globalSelectedSpectrum.summary.route.includes("factorized automatic matrix-free selected spectrum"), "shared-mode spectrum route summary");
+
+  const ordinaryGap = api.generate({
+    architecture: "pi",
+    N: 2,
+    d: 2,
+    calculation: "gap",
+    hamiltonian: String.raw`\Omega J_x`,
+    jumps: [{ kind: "local", operator: String.raw`\sigma_-`, rate: "0.1" }],
+    parameters: String.raw`\Omega=0.2`,
+    gap: { nev: 3, krylovdim: 8 },
+  });
+  assertIncludes(ordinaryGap.code, "gap_source = model", "ordinary gap source");
+  assertIncludes(ordinaryGap.code, "gap_result = pi_liouvillian_gap(", "ordinary gap solver");
+  assertIncludes(ordinaryGap.code, "nev=GAP_NEV, krylovdim=GAP_KRYLOVDIM", "gap Krylov controls");
+  assertIncludes(ordinaryGap.code, "gap_result.gap_certified", "gap certification output");
+  assert(ordinaryGap.summary.calculation === "liouvillian-gap", "gap alias normalization");
+
+  const globalGap = api.generate({
+    architecture: "global-pseudomode",
+    N: 2,
+    d: 2,
+    calculation: "liouvillian-gap",
+    hamiltonian: String.raw`\Omega J_x`,
+    jumps: [{ kind: "local", operator: String.raw`\sigma_-`, rate: "0.1" }],
+    pseudomode: {
+      nmax: 1,
+      frequency: "1",
+      damping: "0.3",
+      thermalOccupation: "0",
+      couplingOperator: String.raw`\sigma_-`,
+      couplingStrength: "0.1",
+      counterrotatingStrength: "0",
+    },
+    parameters: String.raw`\Omega=0.2`,
+    gap: { nev: 3, krylovdim: 8 },
+  });
+  assertIncludes(globalGap.code, "gap_source = global_pseudomode_matrixfree(", "shared-mode factorized gap source");
+  assertIncludes(globalGap.code, "gap_result = pi_liouvillian_gap(", "shared-mode gap solver");
+  assert(globalGap.summary.route.includes("factorized matrix-free largest-real Krylov gap"), "shared-mode gap route summary");
+
+  const stationaryAnalysis = api.generate({
+    architecture: "pi",
+    N: 2,
+    d: 2,
+    calculation: "steady_state",
+    hamiltonian: String.raw`\Omega J_x`,
+    jumps: [{ kind: "local", operator: String.raw`\sigma_-`, rate: "0.1" }],
+    parameters: String.raw`\Omega=0.2`,
+    analysis: { purity: true, entropy: true, oneBodyRDM: true, qfiAxis: "z" },
+  });
+  assertIncludes(stationaryAnalysis.code, "analysis_state = rho_ss", "ordinary analysis state");
+  assertIncludes(stationaryAnalysis.code, "system_purity = purity(analysis_state)", "stationary purity");
+  assertIncludes(stationaryAnalysis.code, "von_neumann_entropy(analysis_state; base=2)", "stationary entropy");
+  assertIncludes(stationaryAnalysis.code, "one_body_density_matrix = one_body_rdm(", "stationary one-body reduction");
+  assertIncludes(stationaryAnalysis.code, "qfi_value = qfi(", "stationary QFI");
+  assertIncludes(
+    stationaryAnalysis.code,
+    "analysis_state, qfi_plan; atol=STATE_VALIDATION_TOL)",
+    "stationary QFI validation tolerance",
+  );
+
+  const localStationaryAnalysis = api.generate({
+    architecture: "local-pseudomode",
+    N: 2,
+    d: 2,
+    calculation: "steady-state",
+    hamiltonian: String.raw`\Omega J_x`,
+    jumps: [],
+    pseudomode: {
+      nmax: 1,
+      frequency: "1",
+      damping: "0.3",
+      thermalOccupation: "0",
+      couplingOperator: String.raw`\sigma_z`,
+      couplingStrength: "0.1",
+      counterrotatingStrength: "0",
+    },
+    parameters: String.raw`\Omega=0.2`,
+    analysis: { purity: true, entropy: true, oneBodyRDM: true, qfiAxis: "x" },
+  });
+  assertIncludes(localStationaryAnalysis.code, "analysis_trace_plan = pseudomode_trace_plan(", "local-mode analysis reduction plan");
+  assertIncludes(localStationaryAnalysis.code, "analysis_state = trace_pseudomodes(", "local-mode physical-system analysis state");
+  assertIncludes(localStationaryAnalysis.code, "analysis_basis = analysis_trace_plan.output_basis", "local-mode reduced basis");
+
+  const globalStationaryAnalysis = api.generate({
+    architecture: "global-pseudomode",
+    N: 2,
+    d: 2,
+    calculation: "steady_observable",
+    hamiltonian: String.raw`\Omega J_x`,
+    jumps: [{ kind: "local", operator: String.raw`\sigma_-`, rate: "0.1" }],
+    observable: "J_z",
+    pseudomode: {
+      nmax: 1,
+      frequency: "1",
+      damping: "0.3",
+      thermalOccupation: "0",
+      couplingOperator: String.raw`\sigma_-`,
+      couplingStrength: "0.1",
+      counterrotatingStrength: "0",
+    },
+    parameters: String.raw`\Omega=0.2`,
+    analysis: { purity: true, entropy: true, oneBodyRDM: true, qfiAxis: "y" },
+  });
+  assertIncludes(globalStationaryAnalysis.code, "analysis_state = rho_system", "shared-mode reduced analysis state");
+  assertIncludes(globalStationaryAnalysis.code, "analysis_basis = system_basis", "shared-mode physical-system basis");
+  assertIncludes(globalStationaryAnalysis.code, "spin.jy; cache=analysis_geometry", "shared-mode selected QFI axis");
+
+  assert(driven.summary.calculation === "steady-observable", "legacy expectation target alias");
+  assert(trajectorySteady.summary.calculation === "steady-state", "legacy steady target alias");
+  const legacyCalculationAliases = [
+    ["transient", "dynamics-observable"],
+    ["liouvillian_spectrum", "liouvillian-spectrum"],
+    ["liouvillian_gap", "liouvillian-gap"],
+  ];
+  for (const [alias, canonical] of legacyCalculationAliases) {
+    const aliasConfig = {
+      N: 1,
+      d: 2,
+      calculation: alias,
+      hamiltonian: "0.1 J_x",
+      jumps: [{ kind: "local", operator: "j_-", rate: "0.2" }],
+    };
+    if (canonical === "dynamics-observable") {
+      aliasConfig.observable = "J_z";
+      aliasConfig.initialState = { level: 1 };
+      aliasConfig.dynamics = { startTime: 0, finalTime: 0.1, samples: 2, stepsPerInterval: 1 };
+    } else if (canonical === "liouvillian-spectrum") {
+      aliasConfig.spectrum = { target: "largest_magnitude", nev: 1, seed: 1 };
+    } else {
+      aliasConfig.gap = { nev: 2, krylovdim: 3 };
+    }
+    assert(api.generate(aliasConfig).summary.calculation === canonical, `${alias} calculation alias`);
+  }
 
   const pseudomodeCollision = api.generate({
     architecture: "global-pseudomode",
@@ -276,6 +747,191 @@ g=0.15`,
 
   assertRejects(
     () => api.generate({
+      N: 2,
+      d: 2,
+      calculation: "propagator",
+      hamiltonian: "J_z",
+      jumps: [],
+    }),
+    "calculation",
+    "unknown calculation",
+  );
+  assertRejects(
+    () => api.generate({
+      N: 2,
+      d: 2,
+      calculation: "spectrum",
+      steadyMethod: "trajectory",
+      hamiltonian: "J_z",
+      jumps: [{ kind: "local", operator: "j_-", rate: "0.1" }],
+    }),
+    "calculation method",
+    "spectral calculations reject trajectory sampling",
+  );
+  assertRejects(
+    () => api.generate({
+      architecture: "global-pseudomode",
+      N: 2,
+      d: 2,
+      calculation: "dynamics",
+      steadyMethod: "deterministic",
+      initialState: { level: 1 },
+      hamiltonian: "J_z",
+      jumps: [],
+      observable: "J_z",
+      pseudomode: {
+        nmax: 1,
+        frequency: "1",
+        damping: "0.1",
+        thermalOccupation: "0",
+        couplingOperator: "j_-",
+        couplingStrength: "0.1",
+      },
+    }),
+    "calculation method",
+    "shared-mode deterministic streaming is rejected explicitly",
+  );
+  assertRejects(
+    () => api.generate({
+      N: 2,
+      d: 2,
+      calculation: "dynamics",
+      initialState: { level: 1 },
+      hamiltonian: "J_z",
+      jumps: [{ kind: "local", operator: "j_-", rate: "0.1" }],
+      observable: "J_z",
+      dynamics: { startTime: 0, finalTime: 1, samples: 3, stepsPerInterval: 2 },
+      analysis: { purity: true },
+    }),
+    "state analysis",
+    "state analyses reject nonstationary calculations",
+  );
+  assertRejects(
+    () => api.generate({
+      N: 2,
+      d: 2,
+      calculation: "dynamics",
+      steadyMethod: "trajectory",
+      initialState: { level: 1 },
+      hamiltonian: "J_z",
+      jumps: [{ kind: "local", operator: "j_-", rate: "0.1" }],
+      observable: "J_+",
+      trajectory: {
+        trajectories: 2,
+        dt: 0.01,
+        maxJumpProbability: 0.02,
+        seed: 1,
+      },
+      dynamics: { startTime: 0, finalTime: 1, samples: 3, stepsPerInterval: 2 },
+    }),
+    "observable",
+    "trajectory streaming rejects a non-Hermitian observable",
+  );
+  assertRejects(
+    () => api.generate({
+      N: 2,
+      d: 2,
+      calculation: "dynamics",
+      initialState: { level: 1 },
+      hamiltonian: "J_z",
+      jumps: [{ kind: "local", operator: "j_-", rate: "0.1" }],
+      observable: "J_z",
+      dynamics: { startTime: 1, finalTime: 1, samples: 3, stepsPerInterval: 2 },
+    }),
+    "dynamics final time",
+    "dynamics interval must be ordered",
+  );
+  assertRejects(
+    () => api.generate({
+      N: 2,
+      d: 2,
+      calculation: "dynamics",
+      initialState: { level: 1 },
+      hamiltonian: "J_z",
+      jumps: [{ kind: "local", operator: "j_-", rate: "0.1" }],
+      observable: "J_z",
+      dynamics: { startTime: 0, finalTime: 1, samples: 1, stepsPerInterval: 2 },
+    }),
+    "dynamics samples",
+    "dynamics requires at least two output samples",
+  );
+  assertRejects(
+    () => api.generate({
+      N: 2,
+      d: 2,
+      calculation: "dynamics",
+      initialState: { level: 1 },
+      hamiltonian: "J_z",
+      jumps: [{ kind: "local", operator: "j_-", rate: "0.1" }],
+      observable: "J_z",
+      dynamics: { startTime: 0, finalTime: 1, samples: 3, stepsPerInterval: 0 },
+    }),
+    "steps per output interval",
+    "dynamics step count must be positive",
+  );
+  assertRejects(
+    () => api.generate({
+      N: 2,
+      d: 2,
+      calculation: "spectrum",
+      hamiltonian: "J_z",
+      jumps: [{ kind: "local", operator: "j_-", rate: "0.1" }],
+      spectrum: { target: "smallest-real", nev: 2, seed: 1 },
+    }),
+    "spectrum target",
+    "unknown selected-spectrum target",
+  );
+  assertRejects(
+    () => api.generate({
+      N: 2,
+      d: 2,
+      calculation: "spectrum",
+      hamiltonian: "J_z",
+      jumps: [{ kind: "local", operator: "j_-", rate: "0.1" }],
+      spectrum: { target: "largest-real", nev: 0, seed: 1 },
+    }),
+    "spectrum eigenvalues",
+    "spectrum eigenvalue count must be positive",
+  );
+  assertRejects(
+    () => api.generate({
+      N: 2,
+      d: 2,
+      calculation: "spectrum",
+      hamiltonian: "J_z",
+      jumps: [{ kind: "local", operator: "j_-", rate: "0.1" }],
+      spectrum: { target: "largest-real", nev: 2, seed: -1 },
+    }),
+    "spectrum seed",
+    "spectrum seed must be nonnegative",
+  );
+  assertRejects(
+    () => api.generate({
+      N: 2,
+      d: 2,
+      calculation: "gap",
+      hamiltonian: "J_z",
+      jumps: [{ kind: "local", operator: "j_-", rate: "0.1" }],
+      gap: { nev: 2, krylovdim: 2 },
+    }),
+    "gap Krylov dimension",
+    "gap Krylov dimension must exceed the Ritz count",
+  );
+  assertRejects(
+    () => api.generate({
+      N: 2,
+      d: 2,
+      calculation: "steady",
+      hamiltonian: "J_z",
+      jumps: [{ kind: "local", operator: "j_-", rate: "0.1" }],
+      resources: { memoryBudgetMiB: 0 },
+    }),
+    "memory budget",
+    "memory budget must be positive",
+  );
+
+  assertRejects(
+    () => api.generate({
       N: 4, d: 2, target: "steady", hamiltonian: "",
       jumps: [{ kind: "local", operator: "J_-", rate: "1" }],
     }),
@@ -356,6 +1012,142 @@ g=0.15`,
     }),
     "architecture",
     "unknown composite architecture",
+  );
+  assertRejects(
+    () => api.generate({
+      architecture: "global-pseudomode",
+      N: 2,
+      d: 2,
+      target: "steady",
+      steadyMethod: "trajectory",
+      hamiltonian: "",
+      jumps: [],
+      trajectory: {
+        trajectories: 8,
+        initialLevel: 1,
+        settlingTime: 2.0,
+        dt: 0.01,
+        samplesPerTrajectory: 2,
+        samplingInterval: 0.5,
+        maxJumpProbability: 0.02,
+        seed: 3,
+      },
+      pseudomode: {
+        nmax: 1,
+        frequency: "1",
+        damping: "0.1",
+        thermalOccupation: "0",
+        couplingOperator: "j_-",
+        couplingStrength: "0.1",
+        counterrotatingStrength: "0",
+      },
+    }),
+    "steady-state method",
+    "shared-pseudomode trajectory steady-state estimator is not silently approximated",
+  );
+  assertRejects(
+    () => api.generate({
+      architecture: "pi",
+      N: 2, d: 2, target: "steady", steadyMethod: "trajectory",
+      hamiltonian: "J_z",
+      jumps: [{ kind: "local", operator: "j_-", rate: "0.1" }],
+      trajectory: { trajectories: 8, initialLevel: 3 },
+    }),
+    "initial local level",
+    "trajectory initial level must belong to the system local basis",
+  );
+  assertRejects(
+    () => api.generate({
+      architecture: "pi",
+      N: 2, d: 2, target: "steady", steadyMethod: "trajectory",
+      hamiltonian: "J_z",
+      jumps: [{ kind: "local", operator: "j_-", rate: "0.1" }],
+      trajectory: {
+        trajectories: 8,
+        initialLevel: 1,
+        maxJumpProbability: 1,
+      },
+    }),
+    "maximum jump probability",
+    "trajectory jump-probability guard must lie below one",
+  );
+  assertRejects(
+    () => api.generate({
+      N: 2,
+      d: 2,
+      target: "steady",
+      steadyMethod: "path-integral",
+      hamiltonian: "J_z",
+      jumps: [{ kind: "local", operator: "j_-", rate: "0.1" }],
+    }),
+    "steady-state method",
+    "unknown steady-state method",
+  );
+  assertRejects(
+    () => api.generate({
+      N: 2,
+      d: 2,
+      target: "steady",
+      steadyMethod: "trajectory",
+      hamiltonian: "J_z",
+      jumps: [{ kind: "local", operator: "j_-", rate: "0.1" }],
+      trajectory: {
+        trajectories: 1,
+        initialLevel: 1,
+        settlingTime: 2,
+        dt: 0.01,
+        samplesPerTrajectory: 2,
+        samplingInterval: 0.5,
+        maxJumpProbability: 0.02,
+        seed: 1,
+      },
+    }),
+    "trajectories",
+    "trajectory estimator requires independent path statistics",
+  );
+  assertRejects(
+    () => api.generate({
+      N: 2,
+      d: 2,
+      target: "steady",
+      steadyMethod: "trajectory",
+      hamiltonian: "J_z",
+      jumps: [{ kind: "local", operator: "j_-", rate: "0.1" }],
+      trajectory: {
+        trajectories: 8,
+        initialLevel: 3,
+        settlingTime: 2,
+        dt: 0.01,
+        samplesPerTrajectory: 2,
+        samplingInterval: 0.5,
+        maxJumpProbability: 0.02,
+        seed: 1,
+      },
+    }),
+    "initial local level",
+    "trajectory initial level must match the local dimension",
+  );
+  assertRejects(
+    () => api.generate({
+      N: 2,
+      d: 2,
+      target: "steady",
+      steadyMethod: "trajectory",
+      hamiltonian: "J_z",
+      jumps: [{ kind: "local", operator: "j_-", rate: "0.1" }],
+      trajectory: {
+        trajectories: 8,
+        initialLevel: 1,
+        settlingTime: 2,
+        dt: 0.01,
+        samplesPerTrajectory: 2,
+        samplingInterval: 0.5,
+        maxJumpProbability: 1,
+        seed: 1,
+      },
+    }),
+    "maximum jump probability",
+    "trajectory jump-probability guard must be a probability",
   );
   assertRejects(
     () => api.generate({

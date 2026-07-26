@@ -47,10 +47,13 @@ starting with the step-by-step
 [model-to-solution tutorial](https://aenictusgithub.github.io/PermutationalInvariantDynamics.jl/dev/getting_started/).
 The browser-only
 [PI model code generator](https://aenictusgithub.github.io/PermutationalInvariantDynamics.jl/dev/model_code_generator/)
-turns a supported LaTeX subset into a commented stationary-state or
-stationary-observable Julia program without sending formulas to a server. It
-also generates the structured Markovian embedding for either one identical
-local pseudomode per system or one pseudomode shared by the ensemble.
+turns a supported LaTeX subset into a commented Julia program without sending
+formulas to a server. It generates stationary states and physical-system
+analyses, state-free observable dynamics, selected Liouvillian spectra, and
+certification-aware gap estimates. The same structured assistant covers an
+ordinary PI ensemble, one identical local pseudomode per system, or one
+pseudomode shared by the ensemble. Compatible calculations can use
+deterministic prepared solvers or memory-light quantum-trajectory statistics.
 Its sources are
 also available in [docs/src](docs/src). Then consult the
 [framework and physical conventions](docs/src/framework.md),

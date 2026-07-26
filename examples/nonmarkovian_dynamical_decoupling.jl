@@ -265,8 +265,16 @@ udd4_sequence = HierarchyPulseSequence(udd4_times, pulse)
 # the scalar sign filter y(t)=+/-1 used above; it is checked independently
 # through its toggling-frame group average below.
 tedd_interval = comparison_period / 24
-tedd_sequence = tetrahedral_pulse_sequence(basis, tedd_interval)
-tedd_check = zeroth_order_decoupling_check(tedd_sequence, Q)
+tedd_cycle = tetrahedral_pulse_sequence(basis, tedd_interval)
+tedd_check = zeroth_order_decoupling_check(tedd_cycle, Q)
+
+# Repeat complete closed cycles over the same final time as CPMG and UDD4.
+# Halving the edge interval and doubling the number of cycles provides a
+# finite-bath rapid-control refinement without changing the observation time.
+tedd_sequence = tetrahedral_pulse_sequence(
+    basis, tedd_interval; cycles=comparison_cycles)
+tedd_refined_sequence = tetrahedral_pulse_sequence(
+    basis, tedd_interval / 2; cycles=2comparison_cycles)
 
 # HEOM uses the conjugate-right completion of the complex pole. HOPS needs
 # only the physical left correlation. Both hierarchy preparations are shared
@@ -289,21 +297,21 @@ hops_workspace = HOPSBatchWorkspace(hops_plan; workers=1)
 # zero-generator round trip. The final pulse closes the cycle projectively,
 # so the density reconstructed from either hierarchy must return to `rho0`.
 # This is an event-handling check, separate from the finite-bath simulation.
-tedd_final_time = last(tedd_sequence.times)
+tedd_cycle_time = last(tedd_cycle.times)
 tedd_heom_plan = HEOMPlan(
     system, HEOMBath(Q, 0.0, 1.0); max_depth=0)
 tedd_heom_path = heom_time_evolution(
-    tedd_heom_plan, rho0, [0.0, tedd_final_time];
-    steps_per_interval=2, pulses=tedd_sequence)
+    tedd_heom_plan, rho0, [0.0, tedd_cycle_time];
+    steps_per_interval=2, pulses=tedd_cycle)
 tedd_heom_state = heom_reduced_state(last(tedd_heom_path))
 
 tedd_hops_plan = HOPSPlan(
     H0, HOPSBath(Q, 0.0, 1.0); max_depth=0)
 tedd_hops_path = hops_trajectory(
-    tedd_hops_plan, psi0, [0.0, tedd_final_time];
+    tedd_hops_plan, psi0, [0.0, tedd_cycle_time];
     dt=tedd_interval / 2,
     noise=(time, bath) -> 0.0 + 0.0im,
-    pulses=tedd_sequence)
+    pulses=tedd_cycle)
 tedd_hops_state = hops_density(tedd_hops_path, 2)
 tedd_heom_roundtrip_error =
     norm(tedd_heom_state.data - rho0.data, Inf)
@@ -374,21 +382,115 @@ function solve_protocol(label, pulse_times, sequence, seed)
        maximum_standard_error)
 end
 
+function saved_time_indices(saved_times, target_times)
+    indices = Vector{Int}(undef, length(target_times))
+    for (target_index, target) in pairs(target_times)
+        saved_index = argmin(abs.(saved_times .- target))
+        tolerance = 64eps(max(one(float(target)), abs(float(target))))
+        isapprox(saved_times[saved_index], target;
+                 atol=tolerance, rtol=64eps(Float64)) ||
+            throw(ArgumentError(
+                "the saved grid does not contain TEDD cycle boundary $target"))
+        indices[target_index] = saved_index
+    end
+    indices
+end
+
+"""
+Solve a repeated TEDD schedule against the actual finite bath.
+
+Only complete-cycle outputs are interpreted as fidelities with the initial
+`|+x>` state: inside a cycle the noncommuting ideal kicks deliberately rotate
+that laboratory-frame target.  `seed=nothing` omits the stochastic ensemble,
+which is used for the finer deterministic rapid-control check.
+"""
+function solve_tedd_protocol(label, sequence; seed=nothing)
+    length(sequence.times) % 24 == 0 ||
+        throw(ArgumentError("a complete TEDD schedule has 24 events per cycle"))
+    cycle_times = vcat(0.0, sequence.times[24:24:end])
+    cycle_indices = saved_time_indices(times, cycle_times)
+
+    heom_hierarchy = heom_time_evolution(
+        heom_plan, rho0, times;
+        steps_per_interval=6, pulses=sequence)
+    heom_states = heom_reduced_state.(heom_hierarchy)
+    heom_fidelity = fidelity_x.(heom_states)
+    heom_stroboscopic = heom_fidelity[cycle_indices]
+    heom_trace_error = maximum(
+        abs(trace(rho) - 1) for rho in heom_states)
+
+    hops_fidelity = Float64[]
+    hops_stroboscopic = Float64[]
+    hops_error_bound = Float64[]
+    hops_stroboscopic_error_bound = Float64[]
+    hops_heom_fidelity_error = NaN
+    hops_heom_state_errors = Float64[]
+    hops_heom_state_error = NaN
+    hops_trace_error = NaN
+    maximum_standard_error = NaN
+    if seed !== nothing
+        hops_result = hops_average(
+            hops_plan, psi0, times, trajectories;
+            dt, seed, threaded=false, workspace=hops_workspace,
+            pulses=sequence, return_info=true)
+        hops_fidelity = fidelity_x.(hops_result.states)
+        hops_stroboscopic = hops_fidelity[cycle_indices]
+        hops_error_bound = hops_result.standard_error
+        hops_stroboscopic_error_bound =
+            hops_result.standard_error[cycle_indices]
+        hops_heom_fidelity_error = maximum(
+            abs.(hops_stroboscopic .- heom_stroboscopic))
+        hops_heom_state_errors = [
+            norm(hops_result.states[index].data -
+                 heom_states[index].data)
+            for index in cycle_indices
+        ]
+        hops_heom_state_error = maximum(hops_heom_state_errors)
+        hops_trace_error = maximum(
+            abs(real(trace(rho)) - 1) for rho in hops_result.states)
+        maximum_standard_error =
+            maximum(hops_stroboscopic_error_bound)
+    end
+
+    message = "$label: PI--HEOM final stroboscopic fidelity=" *
+              "$(last(heom_stroboscopic))"
+    if seed !== nothing
+        message *= ", PI--HOPS/HEOM fidelity error=" *
+                   "$hops_heom_fidelity_error, state error=" *
+                   "$hops_heom_state_error, " *
+                   "HOPS max fidelity-error bound=$maximum_standard_error"
+    end
+    println(message)
+
+    (; label, sequence, cycle_times, cycle_indices,
+       heom_fidelity, heom_stroboscopic, heom_trace_error,
+       hops_fidelity, hops_stroboscopic, hops_error_bound,
+       hops_stroboscopic_error_bound, hops_heom_fidelity_error,
+       hops_heom_state_errors, hops_heom_state_error, hops_trace_error,
+       maximum_standard_error)
+end
+
 println("Non-Markovian dynamical decoupling with PI--HEOM and PI--HOPS")
 println("N=$N, omega_c=$omega_c, kappa=$kappa, g=$g")
 println("coefficient=$coefficient, pole=$pole, hierarchy depth=$depth")
 println("CPMG and UDD4 use $(length(cpmg_times)) pulses over $final_time")
-println("TEDD: $(length(tedd_sequence.times)) pulses over $tedd_final_time, " *
+println("TEDD cycle: $(length(tedd_cycle.times)) pulses over $tedd_cycle_time, " *
         "twirl residual=$(tedd_check.twirl_residual), " *
         "closure residual=$(tedd_check.closure_residual), " *
         "HEOM/HOPS round-trip errors=" *
         "$tedd_heom_roundtrip_error/$tedd_hops_roundtrip_error")
 
-@assert length(tedd_sequence.times) == 24
-@assert all(isapprox.(diff(tedd_sequence.times), tedd_interval;
-                     atol=8eps(tedd_final_time), rtol=8eps(Float64)))
-@assert isapprox(tedd_final_time, comparison_period;
+@assert length(tedd_cycle.times) == 24
+@assert all(isapprox.(diff(tedd_cycle.times), tedd_interval;
+                     atol=8eps(tedd_cycle_time), rtol=8eps(Float64)))
+@assert isapprox(tedd_cycle_time, comparison_period;
                  atol=8eps(comparison_period), rtol=8eps(Float64))
+@assert length(tedd_sequence.times) == 24comparison_cycles
+@assert length(tedd_refined_sequence.times) == 48comparison_cycles
+@assert isapprox(last(tedd_sequence.times), final_time;
+                 atol=16eps(final_time), rtol=16eps(Float64))
+@assert isapprox(last(tedd_refined_sequence.times), final_time;
+                 atol=16eps(final_time), rtol=16eps(Float64))
 @assert tedd_check.twirl_residual < 3e-12
 @assert tedd_check.closure_residual < 3e-12
 @assert tedd_check.phase_modulus_residual < 3e-12
@@ -399,6 +501,22 @@ cpmg = solve_protocol(
     "CPMG", cpmg_times, cpmg_sequence, 0x43504d47)
 udd4 = solve_protocol(
     "UDD4", udd4_times, udd4_sequence, 0x55444434)
+tedd = solve_tedd_protocol(
+    "TEDD, $comparison_cycles cycles", tedd_sequence;
+    seed=0x54454444)
+tedd_refined = solve_tedd_protocol(
+    "TEDD, $(2comparison_cycles) cycles", tedd_refined_sequence)
+
+uncontrolled_fidelity = [
+    full_line_fidelity(time, Float64[], coefficient, pole)
+    for time in times
+]
+tedd_coarse_step_hierarchy = heom_time_evolution(
+    heom_plan, rho0, times;
+    steps_per_interval=3, pulses=tedd_sequence)
+tedd_time_step_error = abs(
+    fidelity_x(heom_reduced_state(last(tedd_coarse_step_hierarchy))) -
+    last(tedd.heom_stroboscopic))
 
 # The deterministic bounds test hierarchy and RK4 convergence for this fixed
 # example. The stochastic bounds intentionally remain wider: a production
@@ -419,9 +537,31 @@ for result in (cpmg, udd4)
     @assert result.hops_error < 0.03
 end
 
+# The finite-bath TEDD statement is deliberately stroboscopic. At each closed
+# cycle the ideal control is only a global phase, so the laboratory-frame
+# fidelity again measures preservation of |+x>. Halving the edge interval at
+# fixed final time must reduce the residual infidelity by a visible amount
+# larger than the deterministic integration error. The HOPS comparison uses
+# its reported state-norm standard error as a conservative fidelity bound.
+coarse_infidelity = 1 - last(tedd.heom_stroboscopic)
+refined_infidelity = 1 - last(tedd_refined.heom_stroboscopic)
+@assert all(isfinite, tedd.heom_stroboscopic)
+@assert all(isfinite, tedd_refined.heom_stroboscopic)
+@assert all(isfinite, tedd.hops_stroboscopic)
+@assert tedd.heom_trace_error < 2e-9
+@assert tedd_refined.heom_trace_error < 2e-9
+@assert tedd.hops_trace_error < 0.05
+@assert last(tedd.heom_stroboscopic) >
+        last(uncontrolled_fidelity) + 0.2
+@assert refined_infidelity < coarse_infidelity / 2
+@assert tedd_time_step_error < 1e-7
+@assert all(tedd.hops_heom_state_errors .<=
+            4 .* tedd.hops_stroboscopic_error_bound .+ 5e-12)
+@assert tedd.hops_heom_fidelity_error < 0.03
+
 if makie_available()
     M = makie_module()
-    figure = M.Figure(size=(1160, 470), fontsize=17)
+    figure = M.Figure(size=(1160, 820), fontsize=17)
     scaled_times = Omega .* times
 
     for (column, result) in enumerate((cpmg, udd4))
@@ -455,5 +595,48 @@ if makie_available()
             label="$trajectories PI--HOPS paths")
         M.axislegend(axis; position=:lb, labelsize=12)
     end
+
+    tedd_axis = M.Axis(
+        figure[2, 1:2];
+        xlabel="Omega t", ylabel="stroboscopic fidelity",
+        title="Finite-bath ideal-kick TEDD at closed-cycle outputs")
+    M.vlines!(
+        tedd_axis, Omega .* tedd.cycle_times[2:end];
+        color=(:gray45, 0.20), linewidth=1)
+    M.lines!(
+        tedd_axis, scaled_times, uncontrolled_fidelity;
+        color=:black, linewidth=2.5, linestyle=:dash,
+        label="uncontrolled full-line analytic")
+    M.lines!(
+        tedd_axis, Omega .* tedd.cycle_times,
+        tedd.heom_stroboscopic;
+        color=:darkorange2, linewidth=2.5,
+        label="$(comparison_cycles)-cycle TEDD, PI--HEOM")
+    M.scatter!(
+        tedd_axis, Omega .* tedd.cycle_times,
+        tedd.heom_stroboscopic;
+        color=:darkorange2, markersize=9)
+    M.lines!(
+        tedd_axis, Omega .* tedd_refined.cycle_times,
+        tedd_refined.heom_stroboscopic;
+        color=:seagreen4, linewidth=2.2,
+        label="$(2comparison_cycles)-cycle TEDD, PI--HEOM")
+    M.scatter!(
+        tedd_axis, Omega .* tedd_refined.cycle_times,
+        tedd_refined.heom_stroboscopic;
+        color=:seagreen4, marker=:diamond, markersize=9)
+    M.errorbars!(
+        tedd_axis, Omega .* tedd.cycle_times,
+        tedd.hops_stroboscopic,
+        tedd.hops_stroboscopic_error_bound;
+        color=:dodgerblue3, whiskerwidth=8)
+    M.scatter!(
+        tedd_axis, Omega .* tedd.cycle_times,
+        tedd.hops_stroboscopic;
+        color=:dodgerblue3, markersize=8,
+        label="$(comparison_cycles)-cycle TEDD, " *
+              "$trajectories PI--HOPS paths")
+    M.ylims!(tedd_axis, 0.45, 1.02)
+    M.axislegend(tedd_axis; position=:rb, labelsize=12)
     save_example_figure(figure, "nonmarkovian_dynamical_decoupling")
 end

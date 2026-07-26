@@ -3,7 +3,9 @@
 This example compares ideal dynamical-decoupling sequences for a qubit
 coupled to a structured dephasing bath. It uses both stochastic PI--HOPS and
 deterministic PI--HEOM, and checks them against the exact filter-function
-solution for the same one-exponential bath correlation.
+solution for the same one-exponential bath correlation. CPMG and UDD4 admit
+that scalar filter reference. TEDD is tested separately through its exact
+group identities and through stroboscopic finite-bath HEOM/HOPS dynamics.
 
 The model and comparison are based on Colin Read,
 *Studying pure dephasing and dynamical decoupling: comparison of the HOPS
@@ -211,6 +213,54 @@ comparison requires its own matrix-valued toggling-frame calculation or a
 converged hierarchy calculation; the scalar CPMG/UDD reference must not be
 reused for it.
 
+### Nontrivial finite-bath check
+
+The example therefore performs an additional calculation with the actual
+nonzero Lorentzian bath. Four complete TEDD cycles span the same
+`final_time` used by the CPMG and UDD4 panels:
+
+```julia
+tedd = tetrahedral_pulse_sequence(
+    basis, comparison_period / 24; cycles=4)
+tedd_heom = heom_time_evolution(
+    heom_plan, rho0, times;
+    steps_per_interval=6, pulses=tedd)
+tedd_hops = hops_average(
+    hops_plan, psi0, times, trajectories;
+    dt, seed=0x54454444, pulses=tedd, return_info=true)
+```
+
+TEDD's noncommuting kicks rotate the laboratory-frame $|+x\rangle$ target
+inside each cycle. The executable therefore interprets fidelity only at the
+closed-cycle times. At those outputs the cumulative ideal control is a
+global phase, so the ordinary $|+x\rangle$ fidelity again measures state
+preservation. Intermediate raw fidelities are neither plotted nor used in an
+assertion.
+
+A second deterministic schedule uses eight cycles over the same final time,
+halving every free edge interval. The executable verifies that:
+
+1. the finite-bath HEOM state remains normalized;
+2. four-cycle TEDD preserves the final state substantially better than the
+   valid unpulsed full-line analytical baseline;
+3. halving the edge interval reduces the final HEOM infidelity by more than a
+   factor of two;
+4. a coarser RK4 calculation changes the final result by less than the stated
+   deterministic tolerance;
+5. the complete finite-bath HOPS state estimates agree with HEOM at the
+   stroboscopic outputs within a conservative multiple of the reported
+   Hilbert--Schmidt state-norm Monte Carlo error. The same state error gives
+   the plotted fidelity-error bound by Cauchy--Schwarz.
+
+This is an ideal-kick realization of the published TEDD group word. It tests
+rapid-control suppression for this particular one-pole model; it does not
+model the finite-width, bounded-strength pulses for which Eulerian
+constructions are especially useful. TEDD also uses more pulses here than
+CPMG or UDD4, so the bottom panel is a consistency and refinement check, not a
+pulse-rate-matched performance ranking. For this pure-dephasing problem CPMG
+is tailored to the coupling, whereas TEDD is deliberately a more universal
+group construction.
+
 ## PI--HEOM and PI--HOPS setup
 
 The central package calls have the following form:
@@ -294,8 +344,12 @@ model it actually solves:
    coupling;
 7. the TEDD schedule is exercised through both pulse-aware hierarchy drivers
    in a zero-generator round trip;
-8. the CPMG--UDD4 comparison is presented with the negative-frequency caveat
-   above.
+8. repeated TEDD cycles are evolved with the nonzero finite bath using both
+   PI--HEOM and PI--HOPS and compared only at closed-cycle outputs;
+9. halving the TEDD edge interval at fixed final time is checked to reduce the
+   deterministic final infidelity;
+10. the CPMG--UDD4 comparison is presented with the negative-frequency caveat
+    above.
 
 The last comparison can involve differences much smaller than either
 sequence's absolute fidelity loss. It should not be used as a robust ranking
@@ -362,11 +416,14 @@ script.
 
 ![Expected non-Markovian dynamical-decoupling comparison](../docs/src/assets/example_figures/nonmarkovian_dynamical_decoupling.png)
 
-The two panels compare ideal CPMG and UDD4 dynamics using the physical
+The top panels compare ideal CPMG and UDD4 dynamics using the physical
 positive-frequency analytical curve, exact full-line filter reference,
 PI--HEOM, and the finite PI--HOPS ensemble. Pulse locations are marked
-explicitly, and time is scaled by $\Omega$. The snapshot is illustrative
-rather than a convergence certificate or a pixel reproduction of Figs. 8--9
-in the supplied report. TEDD is validated algebraically and through the
-hierarchy event drivers in the executable; it is not drawn on these two
-scalar-filter panels.
+explicitly, and time is scaled by $\Omega$. The bottom panel shows the valid
+uncontrolled full-line baseline and closed-cycle TEDD outputs for four-cycle
+HEOM/HOPS and the eight-cycle HEOM refinement. Individual TEDD kick times are
+not drawn because only complete-cycle outputs carry the displayed
+laboratory-frame fidelity interpretation.
+
+The snapshot is illustrative rather than a convergence certificate or a
+pixel reproduction of Figs. 8--9 in the supplied report.

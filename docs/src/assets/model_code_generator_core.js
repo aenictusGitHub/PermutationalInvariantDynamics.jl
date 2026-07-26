@@ -8,7 +8,7 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
   "use strict";
 
-  const VERSION = "1.1.0";
+  const VERSION = "1.3.0";
   const MAX_FORMULA_LENGTH = 2000;
   const JULIA_RESERVED = new Set([
     "baremodule", "begin", "break", "catch", "const", "continue", "do",
@@ -26,7 +26,23 @@
     "system_model", "H_system", "site", "embedding", "mode", "coupling",
     "supersite_terms", "rho_system", "rho_mode", "mode_operators",
     "mode_top_plan", "mode_top_population", "observable_one_body_geometry",
-    "top_projector", "top_population", "nmax",
+    "top_projector", "top_population", "nmax", "rho0", "system_initial",
+    "trajectory_plan", "trajectory_workers", "trajectory_workspace",
+    "TRAJECTORIES", "INITIAL_LEVEL", "SETTLING_TIME", "TRAJECTORY_DT",
+    "SAMPLES_PER_TRAJECTORY", "SAMPLING_INTERVAL",
+    "MAX_JUMP_PROBABILITY", "TRAJECTORY_SEED",
+    "times", "dynamics", "dynamics_statistics", "observable_values",
+    "observable_standard_error", "DYNAMICS_START_TIME",
+    "DYNAMICS_FINAL_TIME", "DYNAMICS_SAMPLES", "STEPS_PER_INTERVAL",
+    "spectrum", "spectrum_values", "SPECTRUM_NEV", "SPECTRUM_SEED",
+    "gap_source", "gap_result", "GAP_NEV", "GAP_KRYLOVDIM",
+    "analysis_state", "analysis_basis", "analysis_geometry",
+    "analysis_trace_plan", "analysis_trace_workspace",
+    "analysis_rdm_workspace", "one_body_density_matrix",
+    "system_purity", "system_entropy", "qfi_plan", "qfi_value",
+    "system_observable", "streaming_observable",
+    "composite_trajectory_plan", "evolution_workspace", "current",
+    "Random", "LinearAlgebra", "index", "time", "value",
   ]);
   const GREEK = new Set([
     "alpha", "beta", "gamma", "Gamma", "delta", "Delta", "epsilon",
@@ -702,13 +718,374 @@
         "Choose an ordinary PI ensemble, identical local pseudomodes, or one shared global pseudomode.",
       );
     }
-    const target = config.target === "steady" ? "steady" : "expectation";
+    const calculationAliases = new Map([
+      ["steady", "steady-state"],
+      ["steady-state", "steady-state"],
+      ["steady_state", "steady-state"],
+      ["expectation", "steady-observable"],
+      ["steady-observable", "steady-observable"],
+      ["steady_observable", "steady-observable"],
+      ["dynamics", "dynamics-observable"],
+      ["transient", "dynamics-observable"],
+      ["transient-observable", "dynamics-observable"],
+      ["dynamics-observable", "dynamics-observable"],
+      ["dynamics_observable", "dynamics-observable"],
+      ["spectrum", "liouvillian-spectrum"],
+      ["liouvillian-spectrum", "liouvillian-spectrum"],
+      ["liouvillian_spectrum", "liouvillian-spectrum"],
+      ["gap", "liouvillian-gap"],
+      ["liouvillian-gap", "liouvillian-gap"],
+      ["liouvillian_gap", "liouvillian-gap"],
+    ]);
+    const requestedCalculation = config.calculation === undefined
+      ? (config.target === undefined ? "expectation" : String(config.target))
+      : String(config.calculation);
+    const calculation = calculationAliases.get(requestedCalculation);
+    if (!calculation) {
+      fail(
+        "calculation",
+        "Choose a stationary state, stationary observable, observable dynamics, selected Liouvillian spectrum, or Liouvillian gap calculation.",
+      );
+    }
+    const isStationary =
+      calculation === "steady-state" || calculation === "steady-observable";
+    const isDynamics = calculation === "dynamics-observable";
+    const isSpectral =
+      calculation === "liouvillian-spectrum" ||
+      calculation === "liouvillian-gap";
+    const target = calculation === "steady-state" ? "steady" :
+      calculation === "steady-observable" ? "expectation" : calculation;
+    const methodAliases = new Map([
+      ["deterministic", "deterministic"],
+      ["trajectory", "trajectory"],
+      ["quantum-trajectories", "trajectory"],
+      ["quantum_trajectories", "trajectory"],
+    ]);
+    const requestedSteadyMethod = config.steadyMethod === undefined
+      ? "deterministic"
+      : String(config.steadyMethod);
+    const steadyMethod = methodAliases.get(requestedSteadyMethod);
+    if (!steadyMethod) {
+      fail(
+        "steady-state method",
+        "Choose the deterministic stationary solver or the quantum-trajectory estimator.",
+      );
+    }
+    if (isSpectral && steadyMethod !== "deterministic") {
+      fail(
+        "calculation method",
+        "Liouvillian spectrum and gap calculations use deterministic prepared operators, not quantum trajectories.",
+      );
+    }
+    if (
+      isStationary &&
+      steadyMethod === "trajectory" &&
+      architecture === "global-pseudomode"
+    ) {
+      fail(
+        "steady-state method",
+        "The streaming trajectory steady-state estimator supports ordinary PI models and identical local-pseudomode supersites, not one shared global pseudomode.",
+      );
+    }
+    if (
+      isDynamics &&
+      steadyMethod === "deterministic" &&
+      architecture === "global-pseudomode"
+    ) {
+      fail(
+        "calculation method",
+        "Shared-mode deterministic dynamics currently lacks a memory-guarded state-free observable streamer. Select quantum trajectories, or use the documented advanced composite time-evolution API explicitly.",
+      );
+    }
+
+    function numericSetting(input, key, fallback, field, predicate, requirement) {
+      const raw = input[key];
+      const value = Number(
+        raw === undefined || String(raw).trim() === "" ? fallback : raw,
+      );
+      if (!Number.isFinite(value) || !predicate(value)) {
+        fail(field, requirement);
+      }
+      return value;
+    }
+
+    const trajectoryInput =
+      config.trajectory && typeof config.trajectory === "object"
+        ? config.trajectory
+        : {};
+    const initialInput =
+      config.initialState && typeof config.initialState === "object"
+        ? config.initialState
+        : {};
+    const initialKind = initialInput.kind === undefined
+      ? "computational-product"
+      : String(initialInput.kind);
+    if (
+      (isDynamics || steadyMethod === "trajectory") &&
+      initialKind !== "computational-product"
+    ) {
+      fail(
+        "initial state",
+        "The assistant currently emits an explicit computational product state. Edit the generated typed PIState manually for a different preparation.",
+      );
+    }
+    const initialLevelRaw = initialInput.level === undefined
+      ? trajectoryInput.initialLevel
+      : initialInput.level;
+    const initialState = (isDynamics || steadyMethod === "trajectory")
+      ? {
+        kind: "computational-product",
+        level: numericSetting(
+          { level: initialLevelRaw },
+          "level", 1, "initial local level",
+          (value) =>
+            Number.isSafeInteger(value) &&
+            value >= 1 &&
+            value <= localDimension,
+          `The initial local level must be a one-based index in 1:${localDimension}.`,
+        ),
+      }
+      : null;
+
+    let trajectory = null;
+    if (steadyMethod === "trajectory") {
+      if (
+        trajectoryInput.algorithm !== undefined &&
+        String(trajectoryInput.algorithm) !== "fixed"
+      ) {
+        fail(
+          "trajectory algorithm",
+          "Generated trajectory calculations use the fixed, preallocated backend. Adaptive/event controls are not available for every supported architecture.",
+        );
+      }
+      const trajectories = numericSetting(
+        trajectoryInput, "trajectories", 512, "trajectories",
+        (value) => Number.isSafeInteger(value) && value >= 2,
+        "The number of trajectories must be a safe integer of at least two.",
+      );
+      const dt = numericSetting(
+        trajectoryInput, "dt", 0.002, "trajectory dt",
+        (value) => value > 0,
+        "The trajectory time step must be finite and positive.",
+      );
+      const maxJumpProbability = numericSetting(
+        trajectoryInput, "maxJumpProbability", 0.02,
+        "maximum jump probability",
+        (value) => value > 0 && value < 1,
+        "The maximum jump probability must lie strictly between zero and one.",
+      );
+      const seed = numericSetting(
+        trajectoryInput, "seed", 2026, "trajectory seed",
+        (value) => Number.isSafeInteger(value) && value >= 0,
+        "The trajectory seed must be a safe nonnegative integer.",
+      );
+      trajectory = {
+        trajectories,
+        dt,
+        maxJumpProbability,
+        seed,
+      };
+      if (isStationary) {
+        trajectory.settlingTime = numericSetting(
+          trajectoryInput, "settlingTime", 50, "settling time",
+          (value) => value > 0,
+          "The settling time must be finite and positive.",
+        );
+        trajectory.samplesPerTrajectory = numericSetting(
+          trajectoryInput, "samplesPerTrajectory", 5,
+          "samples per trajectory",
+          (value) => Number.isSafeInteger(value) && value >= 1,
+          "Samples per trajectory must be a safe positive integer.",
+        );
+        trajectory.samplingInterval = numericSetting(
+          trajectoryInput, "samplingInterval", 2, "sampling interval",
+          (value) => value > 0,
+          "The sampling interval must be finite and positive.",
+        );
+      }
+    }
+
+    let dynamics = null;
+    if (isDynamics) {
+      const input = config.dynamics && typeof config.dynamics === "object"
+        ? config.dynamics
+        : {};
+      if (input.saveStates === true) {
+        fail(
+          "dynamics output",
+          "The assistant emits state-free observable dynamics to keep output memory bounded. Use the documented advanced API when a full state history is intentional.",
+        );
+      }
+      const startTime = numericSetting(
+        input, "startTime", 0, "dynamics start time",
+        () => true,
+        "The dynamics start time must be finite.",
+      );
+      const finalTime = numericSetting(
+        input, "finalTime", 10, "dynamics final time",
+        (value) => value > startTime,
+        "The dynamics final time must be finite and larger than the start time.",
+      );
+      const samples = numericSetting(
+        input, "samples", 101, "dynamics samples",
+        (value) => Number.isSafeInteger(value) && value >= 2,
+        "The number of output samples must be a safe integer of at least two.",
+      );
+      const stepsPerInterval = numericSetting(
+        input, "stepsPerInterval", 16, "steps per output interval",
+        (value) => Number.isSafeInteger(value) && value >= 1,
+        "Steps per output interval must be a safe positive integer.",
+      );
+      dynamics = { startTime, finalTime, samples, stepsPerInterval };
+    }
+
+    let spectrum = null;
+    if (calculation === "liouvillian-spectrum") {
+      const input = config.spectrum && typeof config.spectrum === "object"
+        ? config.spectrum
+        : {};
+      if (input.vectors === true) {
+        fail(
+          "spectrum vectors",
+          "The assistant omits eigenvectors to keep selected-spectrum output bounded. Request vectors explicitly through the advanced spectral API.",
+        );
+      }
+      const targetAliases = new Map([
+        ["largest-real", "largest_real"],
+        ["largest_real", "largest_real"],
+        ["near-zero", "near_zero"],
+        ["near_zero", "near_zero"],
+        ["largest-magnitude", "largest_magnitude"],
+        ["largest_magnitude", "largest_magnitude"],
+      ]);
+      const requestedTarget = input.target === undefined
+        ? "largest-real"
+        : String(input.target);
+      const spectrumTarget = targetAliases.get(requestedTarget);
+      if (!spectrumTarget) {
+        fail(
+          "spectrum target",
+          "Choose largest real part, near zero, or largest magnitude.",
+        );
+      }
+      spectrum = {
+        target: spectrumTarget,
+        nev: numericSetting(
+          input, "nev", 6, "spectrum eigenvalues",
+          (value) => Number.isSafeInteger(value) && value >= 1,
+          "The requested eigenvalue count must be a safe positive integer.",
+        ),
+        seed: numericSetting(
+          input, "seed", 2026, "spectrum seed",
+          (value) => Number.isSafeInteger(value) && value >= 0,
+          "The spectrum seed must be a safe nonnegative integer.",
+        ),
+      };
+    }
+
+    let gap = null;
+    if (calculation === "liouvillian-gap") {
+      const input = config.gap && typeof config.gap === "object"
+        ? config.gap
+        : {};
+      gap = {
+        nev: numericSetting(
+          input, "nev", 8, "gap eigenvalues",
+          (value) => Number.isSafeInteger(value) && value >= 2,
+          "The gap calculation needs a safe integer of at least two Ritz values.",
+        ),
+        krylovdim: numericSetting(
+          input, "krylovdim", 32, "gap Krylov dimension",
+          (value) => Number.isSafeInteger(value) && value >= 3,
+          "The gap Krylov dimension must be a safe integer of at least three.",
+        ),
+      };
+      if (gap.krylovdim <= gap.nev) {
+        fail(
+          "gap Krylov dimension",
+          "The gap Krylov dimension must be larger than the requested Ritz count.",
+        );
+      }
+    }
+
+    const resourceInput =
+      config.resources && typeof config.resources === "object"
+        ? config.resources
+        : {};
+    const memoryBudgetMiB = numericSetting(
+      resourceInput, "memoryBudgetMiB", 512, "memory budget",
+      (value) => Number.isSafeInteger(value) && value >= 1,
+      "The memory budget must be a safe positive integer number of MiB.",
+    );
+
+    const analysisInput =
+      config.analysis && typeof config.analysis === "object"
+        ? config.analysis
+        : {};
+    const qfiAxes = new Set(["none", "x", "y", "z"]);
+    const qfiAxis = analysisInput.qfiAxis === undefined
+      ? "none"
+      : String(analysisInput.qfiAxis);
+    if (!qfiAxes.has(qfiAxis)) {
+      fail("QFI axis", "Choose none, x, y, or z for the collective QFI generator.");
+    }
+    const analysis = {
+      purity: analysisInput.purity === true,
+      entropy: analysisInput.entropy === true,
+      oneBodyRDM: analysisInput.oneBodyRDM === true,
+      qfiAxis,
+    };
+    if (
+      !isStationary &&
+      (analysis.purity ||
+       analysis.entropy ||
+       analysis.oneBodyRDM ||
+       analysis.qfiAxis !== "none")
+    ) {
+      fail(
+        "state analysis",
+        "Purity, entropy, one-body density matrices, and QFI require a stationary density-operator calculation.",
+      );
+    }
+
     const parameters = new Set();
     const hamiltonianComponents = new Set();
     const observableComponents = new Set();
-    const warnings = [
-      "The generated code checks convergence and state validity, but it does not certify uniqueness of the stationary state.",
-    ];
+    const warnings = [];
+    if (isStationary && steadyMethod === "trajectory") {
+      warnings.push(
+        "A quantum-trajectory stationary state is a statistical estimate, not a convergence or uniqueness certificate.",
+        "Converge the settling time, time step, sampling window, and independent path count separately.",
+        "Samples from one path can be correlated; uncertainty is therefore estimated across independent path means.",
+        "The generated computational product initial state can select a symmetry sector or stationary component. Repeat from other PI initial states when strong symmetries or multiple stationary states are possible.",
+      );
+      if (
+        analysis.purity ||
+        analysis.entropy ||
+        analysis.qfiAxis !== "none"
+      ) {
+        warnings.push(
+          "Purity, entropy, and QFI are nonlinear plug-in functionals of the trajectory-averaged state. Converge them against path count or independent ensembles; the reported state standard error is not their uncertainty bar.",
+        );
+      }
+    } else if (isDynamics && steadyMethod === "trajectory") {
+      warnings.push(
+        "Trajectory curves contain both integration and Monte Carlo error. Converge the time step and independent path count separately.",
+        "The generated route streams observable means and confidence intervals without retaining state histories.",
+      );
+    } else if (isStationary) {
+      warnings.push(
+        "The generated code checks convergence and state validity, but it does not certify uniqueness of the stationary state.",
+      );
+    } else if (calculation === "liouvillian-spectrum") {
+      warnings.push(
+        "A selected spectrum is partial unless the solver metadata proves completeness. Do not infer a certified global Liouvillian gap from these values alone.",
+      );
+    } else if (calculation === "liouvillian-gap") {
+      warnings.push(
+        "The iterative gap route reports certification flags. Treat the numerical gap as certified only when gap_certified is true.",
+      );
+    }
 
     let pseudomode = null;
     if (architecture !== "pi") {
@@ -862,14 +1239,16 @@
     if (architecture === "pi" && !hamiltonian && !jumps.length) {
       fail("model", "Add a Hamiltonian or at least one dissipative channel.");
     }
-    if (!jumps.length && architecture === "pi") {
+    if (isStationary && !jumps.length && architecture === "pi") {
       warnings.push("A Hamiltonian-only generator normally has many stationary states; add dissipation or analyse the stationary subspace.");
     } else if (
+      isStationary &&
       architecture === "global-pseudomode" &&
       !jumps.some((jump) => jump.kind === "local")
     ) {
       warnings.push("No independent local system channel was selected. Shared-mode damping and collective coupling preserve system Schur-sector populations, so the stationary state is generally nonunique across sectors.");
     } else if (
+      isStationary &&
       architecture === "pi" &&
       jumps.length > 0 &&
       jumps.every((jump) => jump.kind === "collective")
@@ -878,10 +1257,14 @@
     }
 
     let observable = null;
+    let observableInfo = null;
     let observableMode = null;
-    if (target === "expectation") {
+    if (
+      calculation === "steady-observable" ||
+      calculation === "dynamics-observable"
+    ) {
       observable = parseFormula(String(config.observable || ""), "observable");
-      const observableInfo = analyze(observable.ast, "observable");
+      observableInfo = analyze(observable.ast, "observable");
       if (observableInfo.kind !== "operator") fail("observable", "The observable must contain a supported spin operator.");
       const allCollective = [...observableInfo.families].every(isCollectiveFamily);
       const allLocal = [...observableInfo.families].every(isLocalFamily);
@@ -902,7 +1285,23 @@
       }
       collectParameters(observable.ast, parameters);
       if (observableInfo.components.has("plus") || observableInfo.components.has("minus")) {
+        if (isDynamics && steadyMethod === "trajectory") {
+          fail(
+            "observable",
+            "Trajectory streaming requires a Hermitian observable. Use a real linear combination of x, y, and z components rather than raising/lowering symbols.",
+          );
+        }
         warnings.push("The selected observable may be non-Hermitian, so its expectation value can be complex.");
+      }
+      if (
+        isDynamics &&
+        steadyMethod === "trajectory" &&
+        !observableInfo.linear
+      ) {
+        fail(
+          "observable",
+          "Trajectory streaming currently accepts only structurally Hermitian linear x/y/z observables. Use deterministic dynamics for a general collective polynomial.",
+        );
       }
     }
 
@@ -976,17 +1375,66 @@
       validateScalarSubexpressions(
         observable.ast, values.values, particleCount, "observable");
     }
+    if (steadyMethod === "trajectory") {
+      if (architecture === "pi" && !jumps.length) {
+        warnings.push(
+          isStationary
+            ? "No stochastic jump channel was selected. Hamiltonian-only trajectories do not provide dissipative relaxation to a stationary state."
+            : "No stochastic jump channel was selected. Every path follows the same Hamiltonian dynamics, so a trajectory ensemble adds no information.",
+        );
+      } else if (architecture === "local-pseudomode" && !jumps.length) {
+        const damping = evaluateScalar(
+          pseudomode.damping.ast, values.values, particleCount,
+        );
+        if (damping === 0) {
+          warnings.push(
+            isStationary
+              ? "The local pseudomodes have zero damping and no system jump was selected, so trajectories do not provide dissipative relaxation to a stationary state."
+              : "The local pseudomodes have zero damping and no system jump was selected, so every trajectory follows the same deterministic dynamics.",
+          );
+        }
+      } else if (isDynamics && architecture === "global-pseudomode") {
+        warnings.push(
+          "Shared-mode trajectories monitor pseudomode damping. Any bare-system jump channels remain in the unconditional background and are not individually unravelled.",
+        );
+      }
+    }
     if (particleCount > 1000) {
-      warnings.push("Large N was requested. Inspect recommend_solver(model; task=:steady_state) before running.");
+      if (steadyMethod === "trajectory") {
+        warnings.push(
+          "Large N was requested. Inspect the PI coordinate count and benchmark one trajectory before launching the ensemble.",
+        );
+      } else if (isStationary) {
+        warnings.push(
+          "Large N was requested. Inspect recommend_solver(model; task=:steady_state) before running.",
+        );
+      } else {
+        warnings.push(
+          "Large N was requested. Inspect the generated memory preflight and benchmark one prepared operator action first.",
+        );
+      }
     }
     return {
       particleCount,
       localDimension,
       architecture,
+      calculation,
       target,
+      isStationary,
+      isDynamics,
+      isSpectral,
+      steadyMethod,
+      initialState,
+      trajectory,
+      dynamics,
+      spectrum,
+      gap,
+      memoryBudgetMiB,
+      analysis,
       hamiltonian,
       jumps,
       observable,
+      observableInfo,
       observableMode,
       parameters,
       parameterValues: values,
@@ -1030,6 +1478,11 @@
     const isPseudomode = parsed.architecture !== "pi";
     const isLocalPseudomode = parsed.architecture === "local-pseudomode";
     const isGlobalPseudomode = parsed.architecture === "global-pseudomode";
+    const isStationary = parsed.isStationary;
+    const isDynamics = parsed.isDynamics;
+    const isSpectrum = parsed.calculation === "liouvillian-spectrum";
+    const isGap = parsed.calculation === "liouvillian-gap";
+    const isTrajectory = parsed.steadyMethod === "trajectory";
     const hamiltonianEntries = [];
     const linearHamiltonian = [];
     const nonlinearHamiltonianEntries = [];
@@ -1053,14 +1506,66 @@
       lines.push("# The coupling is collective and no Kac scaling is inserted automatically.");
     }
     if (isGlobalPseudomode) lines.push("using LinearAlgebra");
+    if (isSpectrum) lines.push("using Random");
     lines.push("using PermutationalInvariantDynamics");
     lines.push("");
-    if (isPseudomode) {
-      lines.push("# One budget guards model preparation, reductions, and the stationary solve.");
-      lines.push("const MEMORY_BUDGET = 512 * 1024^2");
+    lines.push("# One explicit budget guards preparation, solver scratch, and requested output.");
+    lines.push(
+      `const MEMORY_BUDGET = ${parsed.memoryBudgetMiB} * 1024^2`,
+    );
+    if (isStationary && !isTrajectory) {
       lines.push("const STEADY_ATOL = 1e-11");
       lines.push("const STEADY_RTOL = 1e-9");
+    }
+    if (isStationary) {
       lines.push("const STATE_VALIDATION_TOL = 1e-8");
+    }
+    if (parsed.initialState) {
+      lines.push(`const INITIAL_LEVEL = ${parsed.initialState.level}`);
+    }
+    if (isTrajectory) {
+      const trajectory = parsed.trajectory;
+      lines.push("");
+      lines.push("# Converge all trajectory controls before using the estimate quantitatively.");
+      lines.push(`const TRAJECTORIES = ${trajectory.trajectories}`);
+      lines.push(`const TRAJECTORY_DT = ${floatLiteral(trajectory.dt)}`);
+      lines.push(
+        `const MAX_JUMP_PROBABILITY = ${floatLiteral(trajectory.maxJumpProbability)}`,
+      );
+      lines.push(`const TRAJECTORY_SEED = ${trajectory.seed}`);
+      if (isStationary) {
+        lines.push(`const SETTLING_TIME = ${floatLiteral(trajectory.settlingTime)}`);
+        lines.push(`const SAMPLES_PER_TRAJECTORY = ${trajectory.samplesPerTrajectory}`);
+        lines.push(`const SAMPLING_INTERVAL = ${floatLiteral(trajectory.samplingInterval)}`);
+      }
+    }
+    if (isDynamics) {
+      lines.push("");
+      lines.push("# Output is streamed at these physical times; no state history is retained.");
+      lines.push(
+        `const DYNAMICS_START_TIME = ${floatLiteral(parsed.dynamics.startTime)}`,
+      );
+      lines.push(
+        `const DYNAMICS_FINAL_TIME = ${floatLiteral(parsed.dynamics.finalTime)}`,
+      );
+      lines.push(`const DYNAMICS_SAMPLES = ${parsed.dynamics.samples}`);
+      if (!isTrajectory) {
+        lines.push(
+          `const STEPS_PER_INTERVAL = ${parsed.dynamics.stepsPerInterval}`,
+        );
+      }
+    }
+    if (isSpectrum) {
+      lines.push("");
+      lines.push(`const SPECTRUM_NEV = ${parsed.spectrum.nev}`);
+      lines.push(`const SPECTRUM_SEED = ${parsed.spectrum.seed}`);
+    }
+    if (isGap) {
+      lines.push("");
+      lines.push(`const GAP_NEV = ${parsed.gap.nev}`);
+      lines.push(`const GAP_KRYLOVDIM = ${parsed.gap.krylovdim}`);
+    }
+    if (isPseudomode || isTrajectory || isDynamics || isSpectrum || isGap) {
       lines.push("");
     }
     lines.push(`N = ${parsed.particleCount}`);
@@ -1122,6 +1627,125 @@
       });
     }
 
+    function emitTrajectorySolve(initialStateLines) {
+      lines.push("");
+      for (const line of initialStateLines) lines.push(line);
+      lines.push("");
+      lines.push("# Preserve term-resolved physical jump channels for trajectory sampling.");
+      lines.push("trajectory_plan = TrajectoryPlan(model)");
+      lines.push("# Fixed-capacity worker scratch is reused across all independent paths.");
+      lines.push(
+        "trajectory_workers = min(TRAJECTORIES, Threads.nthreads())",
+      );
+      lines.push("trajectory_workspace = TrajectoryBatchWorkspace(");
+      lines.push("    trajectory_plan, rho0;");
+      lines.push("    workers=trajectory_workers, mode=:fixed,");
+      lines.push(")");
+      lines.push("steady = trajectory_steady_state(");
+      lines.push("    trajectory_plan, rho0;");
+      lines.push("    trajectories=TRAJECTORIES,");
+      lines.push("    settling_time=SETTLING_TIME,");
+      lines.push("    dt=TRAJECTORY_DT,");
+      lines.push("    samples_per_trajectory=SAMPLES_PER_TRAJECTORY,");
+      lines.push("    sampling_interval=SAMPLING_INTERVAL,");
+      lines.push("    max_jump_probability=MAX_JUMP_PROBABILITY,");
+      lines.push("    algorithm=:fixed,");
+      lines.push("    seed=TRAJECTORY_SEED,");
+      lines.push("    threaded=trajectory_workers > 1,");
+      lines.push("    workspace=trajectory_workspace,");
+      lines.push("    return_info=true,");
+      lines.push(")");
+    }
+
+    function emitInitialState() {
+      lines.push("");
+      if (!isPseudomode) {
+        lines.push("# Explicit PI product initial state in one selected local level.");
+        lines.push("rho0 = computational_product_state(basis, INITIAL_LEVEL)");
+      } else {
+        lines.push("# Start every physical system in one selected level.");
+        lines.push("system_initial = zeros(ComplexF64, d)");
+        lines.push("system_initial[INITIAL_LEVEL] = 1");
+        if (isLocalPseudomode) {
+          lines.push("# Every local pseudomode starts in vacuum.");
+          lines.push("rho0 = pseudomode_product_state(");
+          lines.push("    site, system_initial; memory_budget=MEMORY_BUDGET)");
+        } else {
+          lines.push("# The shared pseudomode starts in vacuum.");
+          lines.push("rho0 = pseudomode_product_state(");
+          lines.push("    embedding, system_initial; memory_budget=MEMORY_BUDGET)");
+        }
+      }
+    }
+
+    function emitObservableOperator() {
+      lines.push("");
+      lines.push("# Construct the sampled observable only in compressed PI coordinates.");
+      const observableBasis = isGlobalPseudomode ? "system_basis" : "basis";
+      const canReuseGeometry = parsed.hamiltonianComponents.size > 0;
+      const observableGeometry = canReuseGeometry
+        ? "one_body_geometry"
+        : "observable_one_body_geometry";
+      if (!canReuseGeometry) {
+        lines.push(
+          `observable_one_body_geometry = OneBodyGeometry(${observableBasis})`,
+        );
+      }
+      for (const component of parsed.observableComponents) {
+        const [hamiltonianName, symbol] = componentDefinition(component);
+        const observableName = observableComponentName(component);
+        if (parsed.hamiltonianComponents.has(component)) {
+          lines.push(`${observableName} = ${hamiltonianName}`);
+        } else if (isLocalPseudomode) {
+          lines.push(`${observableName} = collective_operator(`);
+          lines.push("    basis,");
+          lines.push(
+            `    lift_system_operator(site, ${componentLocalExpression(component)}; ` +
+            "memory_budget=MEMORY_BUDGET);",
+          );
+          lines.push(`    cache=${observableGeometry},`);
+          lines.push(")");
+        } else {
+          lines.push(
+            `${observableName} = ` +
+            `collective_spin(${observableBasis}, ${symbol}; cache=${observableGeometry})`,
+          );
+        }
+      }
+      if (
+        parsed.observableMode === "collective-plan" ||
+        parsed.observableMode === "single-site-plan"
+      ) {
+        let localObservable = emit(parsed.observable.ast, "local");
+        if (parsed.observableMode === "single-site-plan") {
+          localObservable = `((${localObservable}) / N)`;
+        }
+        const preparedLocalObservable = isLocalPseudomode
+          ? `lift_system_operator(site, ${localObservable}; ` +
+            "memory_budget=MEMORY_BUDGET)"
+          : localObservable;
+        lines.push("observable = collective_operator(");
+        lines.push(`    ${observableBasis}, ${preparedLocalObservable};`);
+        lines.push(`    cache=${observableGeometry},`);
+        lines.push(")");
+      } else {
+        lines.push(`observable = ${emit(parsed.observable.ast, "observable-collective")}`);
+      }
+      if (isGlobalPseudomode) {
+        lines.push("system_observable = observable");
+        lines.push("observable = composite_tensor_operator(");
+        lines.push("    embedding.basis, system_observable,");
+        lines.push("    embedding.mode_operators.identity,");
+        lines.push(")");
+      }
+      lines.push("# Streaming contractions use dot(op, rho) = tr(op' * rho).");
+      lines.push(
+        isTrajectory
+          ? "streaming_observable = observable  # trajectory observables are Hermitian"
+          : "streaming_observable = adjoint(observable)",
+      );
+    }
+
     if (!isPseudomode) {
       lines.push("");
       lines.push("# A tuple keeps the compiled kernel types concrete.");
@@ -1129,11 +1753,25 @@
       for (const termLine of termLines) lines.push(`    ${termLine}`);
       lines.push(")");
       lines.push("model = PIModel(basis, terms)");
-      lines.push("");
-      lines.push("# :auto selects the sparse/direct or matrix-free route from the compiled problem.");
-      lines.push("# For a large run, inspect recommend_solver(model; task=:steady_state) first.");
-      lines.push("prepared = compile(model; backend=:auto)");
-      lines.push("steady = stationary_state(prepared; return_info=true)");
+      if (isStationary) {
+        if (isTrajectory) {
+          emitTrajectorySolve([
+            "# Use an explicit pure PI product state; change it to test initial-state dependence.",
+            "rho0 = computational_product_state(basis, INITIAL_LEVEL)",
+          ]);
+        } else {
+          lines.push("");
+          lines.push("# :auto selects the sparse/direct or matrix-free route from the compiled problem.");
+          lines.push("# For a large run, inspect recommend_solver(model; task=:steady_state) first.");
+          lines.push("prepared = compile(");
+          lines.push("    model; backend=:auto, memory_budget=MEMORY_BUDGET)");
+          lines.push("steady = stationary_state(");
+          lines.push("    prepared;");
+          lines.push("    atol=STEADY_ATOL, rtol=STEADY_RTOL,");
+          lines.push("    return_info=true, memory_budget=MEMORY_BUDGET,");
+          lines.push(")");
+        }
+      }
     } else {
       const pseudomode = parsed.pseudomode;
       lines.push("");
@@ -1199,15 +1837,27 @@
         lines.push("    memory_budget=MEMORY_BUDGET,");
         lines.push(")");
         lines.push("model = embedding.model");
-        lines.push("");
-        lines.push("# :auto remains memory guarded and selects the cheapest exact prepared route.");
-        lines.push("prepared = compile(");
-        lines.push("    model; backend=:auto, memory_budget=MEMORY_BUDGET)");
-        lines.push("steady = stationary_state(");
-        lines.push("    prepared;");
-        lines.push("    atol=STEADY_ATOL, rtol=STEADY_RTOL,");
-        lines.push("    return_info=true, memory_budget=MEMORY_BUDGET,");
-        lines.push(")");
+        if (isStationary) {
+          if (isTrajectory) {
+            emitTrajectorySolve([
+              "# Start every system in one selected level and every local mode in vacuum.",
+              "system_initial = zeros(ComplexF64, d)",
+              "system_initial[INITIAL_LEVEL] = 1",
+              "rho0 = pseudomode_product_state(",
+              "    site, system_initial; memory_budget=MEMORY_BUDGET)",
+            ]);
+          } else {
+            lines.push("");
+            lines.push("# :auto remains memory guarded and selects the cheapest exact prepared route.");
+            lines.push("prepared = compile(");
+            lines.push("    model; backend=:auto, memory_budget=MEMORY_BUDGET)");
+            lines.push("steady = stationary_state(");
+            lines.push("    prepared;");
+            lines.push("    atol=STEADY_ATOL, rtol=STEADY_RTOL,");
+            lines.push("    return_info=true, memory_budget=MEMORY_BUDGET,");
+            lines.push(")");
+          }
+        }
       } else {
         lines.push("");
         lines.push("# Build the ordinary PI system first, then attach one shared mode.");
@@ -1220,22 +1870,142 @@
         lines.push("    couplings=(coupling,),");
         lines.push("    memory_budget=MEMORY_BUDGET,");
         lines.push(")");
-        lines.push("");
-        lines.push("# The shared-mode model is already factorized; its automatic route is matrix-free GMRES.");
-        lines.push("# Do not compile or materialize its global Kronecker superoperator.");
-        lines.push("steady = stationary_state(");
-        lines.push("    embedding;");
-        lines.push("    algorithm=GMRESAlgorithm(krylovdim=40, maxiter=1000),");
-        lines.push("    atol=STEADY_ATOL, rtol=STEADY_RTOL,");
-        lines.push("    return_info=true,");
-        lines.push("    memory_budget=MEMORY_BUDGET,");
-        lines.push(")");
+        if (isStationary) {
+          lines.push("");
+          lines.push("# The shared-mode model is already factorized; its automatic route is matrix-free GMRES.");
+          lines.push("# Do not compile or materialize its global Kronecker superoperator.");
+          lines.push("steady = stationary_state(");
+          lines.push("    embedding;");
+          lines.push("    algorithm=GMRESAlgorithm(krylovdim=40, maxiter=1000),");
+          lines.push("    atol=STEADY_ATOL, rtol=STEADY_RTOL,");
+          lines.push("    return_info=true,");
+          lines.push("    memory_budget=MEMORY_BUDGET,");
+          lines.push(")");
+        }
       }
     }
 
-    lines.push("steady.info.converged || error(\"stationary solver did not converge\")");
-    lines.push("rho_ss = steady.state");
-    if (isGlobalPseudomode) {
+    if (isDynamics) {
+      emitInitialState();
+      emitObservableOperator();
+      lines.push("");
+      lines.push("times = collect(range(");
+      lines.push("    DYNAMICS_START_TIME, DYNAMICS_FINAL_TIME;");
+      lines.push("    length=DYNAMICS_SAMPLES,");
+      lines.push("))");
+      if (isTrajectory) {
+        lines.push("");
+        if (isGlobalPseudomode) {
+          lines.push("# Only shared-mode damping is monitored; system jumps stay in the background.");
+          lines.push("composite_trajectory_plan = CompositeTrajectoryPlan(");
+          lines.push("    embedding.background, embedding.damping_channels...,");
+          lines.push(")");
+          lines.push("trajectory_workers = min(TRAJECTORIES, Threads.nthreads())");
+          lines.push("trajectory_workspace = CompositeTrajectoryBatchWorkspace(");
+          lines.push("    composite_trajectory_plan, rho0;");
+          lines.push("    workers=trajectory_workers,");
+          lines.push(")");
+          lines.push("dynamics = quantum_trajectories(");
+          lines.push("    composite_trajectory_plan, rho0, times, TRAJECTORIES;");
+        } else {
+          lines.push("# Preserve term-resolved physical jump channels for trajectory sampling.");
+          lines.push("trajectory_plan = TrajectoryPlan(model)");
+          lines.push("trajectory_workers = min(TRAJECTORIES, Threads.nthreads())");
+          lines.push("trajectory_workspace = TrajectoryBatchWorkspace(");
+          lines.push("    trajectory_plan, rho0;");
+          lines.push("    workers=trajectory_workers, mode=:fixed,");
+          lines.push(")");
+          lines.push("dynamics = quantum_trajectories(");
+          lines.push("    trajectory_plan, rho0, times, TRAJECTORIES;");
+        }
+        lines.push("    dt=TRAJECTORY_DT,");
+        lines.push("    max_jump_probability=MAX_JUMP_PROBABILITY,");
+        lines.push("    algorithm=:fixed,");
+        lines.push("    seed=TRAJECTORY_SEED,");
+        lines.push("    threaded=trajectory_workers > 1,");
+        lines.push("    workspace=trajectory_workspace,");
+        lines.push("    observables=(observable=streaming_observable,),");
+        lines.push("    save_states=false, jump_statistics=false,");
+        lines.push("    confidence=0.95, memory_budget=MEMORY_BUDGET,");
+        lines.push(")");
+        lines.push("dynamics_statistics =");
+        lines.push("    dynamics.observables.observables[:observable]");
+        lines.push("observable_values = dynamics_statistics.mean");
+        lines.push("observable_standard_error = dynamics_statistics.standard_error");
+        lines.push("");
+        lines.push("for index in eachindex(times)");
+        lines.push("    println(times[index], \"  \", observable_values[index], \"  \",");
+        lines.push("        observable_standard_error[index], \"  \",");
+        lines.push("        dynamics_statistics.lower[index], \"  \",");
+        lines.push("        dynamics_statistics.upper[index])");
+        lines.push("end");
+        lines.push("# Columns: time, Monte Carlo mean, standard error, lower CI, upper CI.");
+      } else {
+        lines.push("");
+        lines.push("# Matrix-free RK4 streams the observable and retains no sampled states.");
+        lines.push("prepared = compile(");
+        lines.push("    model; backend=:matrixfree, memory_budget=MEMORY_BUDGET)");
+        lines.push("dynamics = solve_dynamics(");
+        lines.push("    prepared, rho0, (DYNAMICS_START_TIME, DYNAMICS_FINAL_TIME);");
+        lines.push("    saveat=times, steps_per_interval=STEPS_PER_INTERVAL,");
+        lines.push("    observables=(observable=streaming_observable,),");
+        lines.push("    save_states=false, memory_budget=MEMORY_BUDGET,");
+        lines.push(")");
+        lines.push("observable_values = dynamics.observables[:observable]");
+        lines.push("");
+        lines.push("for (time, value) in zip(dynamics.times, observable_values)");
+        lines.push("    println(time, \"  \", value)");
+        lines.push("end");
+        lines.push("# Columns: time, expectation value.");
+      }
+    } else if (isSpectrum) {
+      const spectralSource = isGlobalPseudomode ? "embedding" : "model";
+      lines.push("");
+      lines.push("# The automatic route is dense only when the complete problem fits the budget;");
+      lines.push("# otherwise it uses a selected matrix-free Krylov spectrum.");
+      lines.push("spectrum = liouvillian_spectrum(");
+      lines.push(`    ${spectralSource};`);
+      lines.push(`    target=:${parsed.spectrum.target}, nev=SPECTRUM_NEV,`);
+      lines.push("    algorithm=:auto, vectors=false, return_info=true,");
+      lines.push("    rng=Random.MersenneTwister(SPECTRUM_SEED),");
+      lines.push("    memory_budget=MEMORY_BUDGET,");
+      lines.push(")");
+      lines.push("spectrum_values = spectrum.values");
+      lines.push("println(\"selected spectral algorithm = \", spectrum.info.selected_algorithm)");
+      lines.push("println(\"selected Liouvillian eigenvalues:\")");
+      lines.push("foreach(println, spectrum_values)");
+      lines.push("# A partial selected spectrum is not, by itself, a certified global gap.");
+    } else if (isGap) {
+      lines.push("");
+      if (isGlobalPseudomode) {
+        lines.push("# Keep the shared-mode generator factorized and matrix free.");
+        lines.push("gap_source = global_pseudomode_matrixfree(");
+        lines.push("    embedding; memory_budget=MEMORY_BUDGET)");
+      } else {
+        lines.push("gap_source = model");
+      }
+      lines.push("# The largest-real Krylov route returns explicit certification metadata.");
+      lines.push("gap_result = pi_liouvillian_gap(");
+      lines.push("    gap_source; method=:krylov,");
+      lines.push("    nev=GAP_NEV, krylovdim=GAP_KRYLOVDIM,");
+      lines.push("    return_info=true, memory_budget=MEMORY_BUDGET,");
+      lines.push(")");
+      lines.push("println(\"Liouvillian gap = \", gap_result.gap)");
+      lines.push("println(\"gap certified = \", gap_result.gap_certified)");
+      lines.push("println(\"stationary multiplicity = \",");
+      lines.push("    gap_result.stationary_multiplicity)");
+      lines.push("println(\"stationary multiplicity certified = \",");
+      lines.push("    gap_result.stationary_multiplicity_certified)");
+      lines.push("println(\"stable = \", gap_result.stable)");
+      lines.push("# Never report the value as certified unless gap_certified is true.");
+    }
+
+    if (isStationary) {
+      if (!isTrajectory) {
+        lines.push("steady.info.converged || error(\"stationary solver did not converge\")");
+      }
+      lines.push("rho_ss = steady.state");
+      if (isGlobalPseudomode) {
       lines.push("# Packed model-owned reductions avoid any full-system reconstruction.");
       lines.push("LinearAlgebra.ishermitian(");
       lines.push("    rho_ss; atol=STATE_VALIDATION_TOL, rtol=STATE_VALIDATION_TOL) ||");
@@ -1245,14 +2015,14 @@
       lines.push("validate_state(");
       lines.push("    rho_system; atol=STATE_VALIDATION_TOL, rtol=STATE_VALIDATION_TOL)");
       lines.push("mode_top_population = real(rho_mode[end, end])");
-    } else {
-      if (isLocalPseudomode) {
+      } else {
+        if (isLocalPseudomode || isTrajectory) {
         lines.push("validate_state(");
         lines.push("    rho_ss; atol=STATE_VALIDATION_TOL, rtol=STATE_VALIDATION_TOL)");
-      } else {
+        } else {
         lines.push("validate_state(rho_ss)  # checks trace, Hermiticity, and positivity");
-      }
-      if (isLocalPseudomode) {
+        }
+        if (isLocalPseudomode) {
         if (!parsed.hamiltonianComponents.size) {
           lines.push("# Prepare analysis geometry only after the stationary solve.");
           lines.push("one_body_geometry = OneBodyGeometry(basis)");
@@ -1262,23 +2032,33 @@
         lines.push("    basis, mode_operators.top_projector; cache=one_body_geometry)");
         lines.push("mode_top_population =");
         lines.push("    real(collective_expectation(rho_ss, mode_top_plan)) / N");
+        }
       }
-    }
-    lines.push("");
-    if (isGlobalPseudomode) {
+      lines.push("");
+      if (isGlobalPseudomode) {
       lines.push("println(\"PI system coordinates = \", pi_dimension(system_basis))");
       lines.push("println(\"composite coordinates = \", length(embedding.basis))");
       lines.push("println(\"composite trace = \", trace(rho_ss))");
-    } else {
+      } else {
       lines.push("println(\"PI coordinates = \", pi_dimension(basis))");
-    }
-    lines.push("println(\"stationary residual = \", steady.info.residual)");
-    lines.push("println(\"stationary trace error = \", steady.info.trace_error)");
-    if (isPseudomode) {
+      }
+      if (isTrajectory) {
+      lines.push("println(\"independent trajectories = \", steady.trajectory_count)");
+      lines.push("println(\"samples per trajectory = \", steady.samples_per_trajectory)");
+      lines.push("println(\"Hilbert--Schmidt sample spread = \", steady.sample_spread)");
+      lines.push("println(\"Hilbert--Schmidt standard error = \", steady.standard_error)");
+      lines.push("println(\"stationary residual = \", steady.residual)");
+      lines.push("println(\"stationary relative residual = \", steady.relative_residual)");
+      lines.push("println(\"stationary trace error = \", steady.trace_error)");
+      } else {
+      lines.push("println(\"stationary residual = \", steady.info.residual)");
+      lines.push("println(\"stationary trace error = \", steady.info.trace_error)");
+      }
+      if (isPseudomode) {
       lines.push("println(\"pseudomode top-level population = \", mode_top_population)");
-    }
+      }
 
-    if (parsed.target === "expectation") {
+      if (parsed.target === "expectation") {
       lines.push("");
       const observableBasis = isGlobalPseudomode ? "system_basis" : "basis";
       const observableState = isGlobalPseudomode ? "rho_system" : "rho_ss";
@@ -1347,9 +2127,80 @@
         lines.push(`observable_value = expectation(${observableState}, adjoint(observable))`);
       }
       lines.push("println(\"steady-state observable = \", observable_value)");
+      }
+
+      const stateAnalysisRequested =
+        parsed.analysis.purity ||
+        parsed.analysis.entropy ||
+        parsed.analysis.oneBodyRDM ||
+        parsed.analysis.qfiAxis !== "none";
+      if (stateAnalysisRequested) {
+        lines.push("");
+        lines.push("# Optional analyses refer to the physical systems, not retained pseudomodes.");
+        if (isLocalPseudomode) {
+          lines.push("analysis_trace_plan = pseudomode_trace_plan(");
+          lines.push("    site; memory_budget=MEMORY_BUDGET)");
+          lines.push("analysis_trace_workspace =");
+          lines.push("    LocalFactorTraceWorkspace(analysis_trace_plan)");
+          lines.push("analysis_state = trace_pseudomodes(");
+          lines.push("    rho_ss, site;");
+          lines.push("    plan=analysis_trace_plan,");
+          lines.push("    workspace=analysis_trace_workspace,");
+          lines.push("    memory_budget=MEMORY_BUDGET, check=false,");
+          lines.push(")");
+          lines.push("analysis_basis = analysis_trace_plan.output_basis");
+        } else if (isGlobalPseudomode) {
+          lines.push("analysis_state = rho_system");
+          lines.push("analysis_basis = system_basis");
+        } else {
+          lines.push("analysis_state = rho_ss");
+          lines.push("analysis_basis = basis");
+        }
+        if (parsed.analysis.purity) {
+          lines.push("system_purity = purity(analysis_state)");
+          lines.push("println(\"physical-system purity = \", system_purity)");
+        }
+        if (parsed.analysis.entropy) {
+          lines.push("system_entropy = von_neumann_entropy(analysis_state; base=2)");
+          lines.push("println(\"physical-system entropy (bits) = \", system_entropy)");
+        }
+        if (
+          parsed.analysis.oneBodyRDM ||
+          parsed.analysis.qfiAxis !== "none"
+        ) {
+          lines.push("analysis_geometry = OneBodyGeometry(analysis_basis)");
+        }
+        if (parsed.analysis.oneBodyRDM) {
+          lines.push("analysis_rdm_workspace = OneBodyRDMWorkspace(");
+          lines.push("    analysis_geometry, analysis_state;");
+          lines.push("    memory_budget=MEMORY_BUDGET,");
+          lines.push(")");
+          lines.push("one_body_density_matrix = one_body_rdm(");
+          lines.push("    analysis_state;");
+          lines.push("    workspace=analysis_rdm_workspace, check=false,");
+          lines.push(")");
+          lines.push("println(\"one-body density matrix =\")");
+          lines.push("show(stdout, \"text/plain\", one_body_density_matrix)");
+          lines.push("println()");
+        }
+        if (parsed.analysis.qfiAxis !== "none") {
+          const qfiLocal = componentLocalExpression(parsed.analysis.qfiAxis);
+          lines.push("qfi_plan = CollectiveObservablePlan(");
+          lines.push(`    analysis_basis, ${qfiLocal}; cache=analysis_geometry)`);
+          lines.push("qfi_value = qfi(");
+          lines.push("    analysis_state, qfi_plan; atol=STATE_VALIDATION_TOL)");
+          lines.push(
+            `println("collective-${parsed.analysis.qfiAxis} QFI = ", qfi_value)`,
+          );
+        }
+      }
+      lines.push("");
+      lines.push(
+        isTrajectory
+          ? "# Residual and Monte Carlo error are diagnostics, not convergence or uniqueness certificates."
+          : "# Convergence does not by itself prove that the stationary state is unique.",
+      );
     }
-    lines.push("");
-    lines.push("# Convergence does not by itself prove that the stationary state is unique.");
 
     const nonlinearHamiltonian =
       nonlinearHamiltonianEntries.length > 0;
@@ -1362,14 +2213,51 @@
       "local-pseudomode": "identical local pseudomodes",
       "global-pseudomode": "one shared global pseudomode",
     };
-    let route = nonlinearHamiltonian
-      ? "automatic backend with compressed collective PI operators"
-      : "automatic backend with prepared one-body kernels";
-    if (isLocalPseudomode) {
-      route = "PI supersite with a memory-guarded automatic backend";
+    let route;
+    if (isDynamics && isTrajectory && isGlobalPseudomode) {
+      route = "factorized composite trajectories with online observable statistics";
+    } else if (isDynamics && isTrajectory) {
+      route = isLocalPseudomode
+        ? "PI-supersite trajectories with online observable statistics"
+        : "term-resolved PI trajectories with online observable statistics";
+    } else if (isDynamics) {
+      route = isLocalPseudomode
+        ? "matrix-free PI-supersite dynamics with state-free observable output"
+        : "matrix-free PI dynamics with state-free observable output";
+    } else if (isSpectrum) {
+      route = isGlobalPseudomode
+        ? "factorized automatic matrix-free selected spectrum"
+        : "memory-guarded automatic dense or matrix-free selected spectrum";
+    } else if (isGap) {
+      route = isGlobalPseudomode
+        ? "factorized matrix-free largest-real Krylov gap"
+        : "matrix-free largest-real Krylov gap with certification metadata";
+    } else if (isLocalPseudomode) {
+      route = isTrajectory
+        ? "PI-supersite quantum trajectories with streaming path reduction"
+        : "PI supersite with a memory-guarded automatic backend";
     } else if (isGlobalPseudomode) {
       route = "factorized composite model with matrix-free GMRES";
+    } else if (isTrajectory) {
+      route = "term-resolved PI quantum trajectories with streaming path reduction";
+    } else {
+      route = nonlinearHamiltonian
+        ? "automatic backend with compressed collective PI operators"
+        : "automatic backend with prepared one-body kernels";
     }
+    const methodLabels = {
+      "steady-state": isTrajectory
+        ? "quantum-trajectory steady-state estimate"
+        : "deterministic stationary-state solve",
+      "steady-observable": isTrajectory
+        ? "quantum-trajectory steady-state estimate"
+        : "deterministic stationary-state solve",
+      "dynamics-observable": isTrajectory
+        ? "quantum-trajectory observable dynamics"
+        : "deterministic observable dynamics",
+      "liouvillian-spectrum": "selected Liouvillian spectrum",
+      "liouvillian-gap": "certification-aware Liouvillian gap",
+    };
     return {
       code: `${lines.join("\n")}\n`,
       warnings: parsed.warnings,
@@ -1377,6 +2265,8 @@
         terms: userTermCount,
         jumps: parsed.jumps.length,
         target: parsed.target,
+        calculation: parsed.calculation,
+        method: methodLabels[parsed.calculation],
         architecture: parsed.architecture,
         topology: architectureLabels[parsed.architecture],
         cutoff: parsed.pseudomode ? parsed.pseudomode.nmax : null,

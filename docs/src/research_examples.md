@@ -20,7 +20,7 @@ script. Then choose the closest workflow below.
 | Couple the ensemble to one shared cavity | [`global_pseudomode_cavity.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/global_pseudomode_cavity.jl) | Collective Tavis--Cummings dynamics, factor reductions, and a mode-cutoff diagnostic |
 | Add a finite-memory bath | [`pi_heom.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/pi_heom.jl) | Exactly scaled ADOs, depth convergence, fixed-capacity matrix-RHS actions, SciML construction, and a block-preconditioned steady solve |
 | Unravel one shared structured bath | [`pi_hops.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/pi_hops.jl) | Direct-sum Schur pure-state hierarchy, stationary colored noise, and an HEOM/analytic comparison |
-| Apply ideal pulses without losing bath memory | [`nonmarkovian_dynamical_decoupling.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/nonmarkovian_dynamical_decoupling.jl) | CPMG and UDD4 sequences acting on every HEOM ADO and HOPS auxiliary, with a full-line Lorentzian filter reference |
+| Apply ideal pulses without losing bath memory | [`nonmarkovian_dynamical_decoupling.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/nonmarkovian_dynamical_decoupling.jl) | CPMG/UDD4 filter validation and finite-bath stroboscopic TEDD refinement through every HEOM ADO and HOPS auxiliary |
 | Use a non-Hermitian HOPS coupling | [`pi_hops_collective_emission.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/pi_hops_collective_emission.jl) | Exact one-excitation collective emission, hard-depth comparison, prescribed noise, and conditioned hierarchy application |
 | Start HOPS from a mixed state | [`pi_hops_mixed_multibath.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/pi_hops_mixed_multibath.jl) | Multiple shared baths, Schur spectral sampling, reusable batch workspaces, Monte Carlo errors, and pruning metadata |
 | Embed one truncated pseudomode per spin | [`all_to_all_xx_spin_local_pseudomodes.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/all_to_all_xx_spin_local_pseudomodes.jl) | Uniform-all-pair PI supersites, trajectory estimates, spin-only negativity, a strong-parity-reduced x-GHZ steady solve, and cutoff checks |
@@ -222,6 +222,16 @@ colored noise is restarted at a pulse. The script follows Colin Read's
 September 2023 report *Studying pure dephasing and dynamical decoupling:
 comparison of the HOPS method with exact analytical solutions* and targets
 its Figs. 8--9 qualitatively.
+
+The same executable also constructs the 24-edge tetrahedral Eulerian
+dynamical-decoupling word of Read, Serrano-Ensástiga, and Martin,
+*Platonic dynamical decoupling sequences for interacting spin systems*,
+*Quantum* **9**, 1661 (2025). It verifies projective closure and the
+zeroth-order group average of $Q=\sigma_z$, then evolves repeated TEDD cycles
+against the nonzero bath with both hierarchy backends. Only closed-cycle
+fidelities are interpreted. An eight-cycle HEOM calculation halves the edge
+interval at fixed final time and checks the rapid-control refinement without
+reusing the scalar CPMG/UDD filter formula.
 
 The comparison deliberately uses the exact one-pole correlation
 $C(t)=c\exp[-(\kappa-i\omega_c)t]$. For the report's Lorentzian, that

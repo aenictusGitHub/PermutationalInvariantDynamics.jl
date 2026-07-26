@@ -71,11 +71,12 @@ The runnable companion is
 
 To start from formulas instead, the browser-only
 [PI model code generator](model_code_generator.md) translates a documented
-LaTeX subset into a commented, memory-guarded stationary-state program. It
-keeps formulas in the browser and refuses ambiguous local-versus-collective
-jump semantics. Its architecture selector also covers identical local
-pseudomodes and one shared global pseudomode without exposing free-form tensor
-code.
+LaTeX subset into commented, memory-guarded stationary, dynamics, spectrum,
+or gap programs. It keeps formulas in the browser and refuses ambiguous
+local-versus-collective jump semantics. Its architecture selector also covers
+identical local pseudomodes and one shared global pseudomode without exposing
+free-form tensor code. Compatible state and dynamics calculations can use
+deterministic prepared solvers or streaming quantum-trajectory statistics.
 
 ## Five-minute preview
 
@@ -121,9 +122,10 @@ and convergence metadata. Adaptive or stiff integration is available through
 - [Getting started](getting_started.md) is the task-oriented model-to-solution
   tutorial and troubleshooting guide.
 - [PI model code generator](model_code_generator.md) creates a minimal
-  stationary-state or stationary-observable script from supported LaTeX
-  ingredients, including the two supported finite-cutoff pseudomode
-  embeddings.
+  stationary, observable-dynamics, selected-spectrum, or gap script from
+  supported LaTeX ingredients. It includes the two finite-cutoff pseudomode
+  embeddings, compatible trajectory routes, and optional physical-system
+  purity, entropy, one-body-RDM, and collective-QFI analysis.
 - [Framework introduction](framework.md) derives the PI Schur-block
   representation, scaling, model terms, and validity conditions.
 - [Architecture and efficient workflows](architecture.md) explains sparse and

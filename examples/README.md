@@ -92,7 +92,7 @@ snapshot.
 | `parameter_scan.jl` | [Prepared parameter scans](parameter_scan.md) | Compiled scalar-rate families, recycled GMRES continuation, restart, streaming diagnostics, and batched sensitivities |
 | `pi_heom.jl` | [PI--HEOM](pi_heom.md) | Exactly scaled hierarchy, analytic dephasing, depth comparisons, fixed-capacity matrix-RHS actions, SciML construction, and block-preconditioned GMRES |
 | `pi_hops.jl` | [PI--HOPS collective dephasing](pi_hops.md) | Direct-sum Schur pure-state hierarchy, stationary colored-noise ensemble, analytic coherence, and deterministic PI--HEOM comparison |
-| `nonmarkovian_dynamical_decoupling.jl` | [Non-Markovian dynamical decoupling](nonmarkovian_dynamical_decoupling.md) | Ideal CPMG and UDD4 pulses applied to every HOPS auxiliary and HEOM ADO, compared with full-line and positive-frequency Lorentzian filter curves |
+| `nonmarkovian_dynamical_decoupling.jl` | [Non-Markovian dynamical decoupling](nonmarkovian_dynamical_decoupling.md) | CPMG/UDD4 filter validation plus algebraic and finite-bath stroboscopic TEDD checks with PI--HEOM and PI--HOPS |
 | `pi_hops_collective_emission.jl` | [PI--HOPS collective emission](pi_hops_collective_emission.md) | Non-Hermitian shared-bath coupling, exact one-excitation hierarchy closure, prescribed-noise paths, and conditioned `hops_rhs!` |
 | `pi_hops_mixed_multibath.jl` | [Mixed-state, multi-bath PI--HOPS](pi_hops_mixed_multibath.md) | Schur spectral initialization, reusable batch workspaces, Monte Carlo diagnostics, hierarchy metadata, and importance pruning |
 | `interacting_boundary_time_crystal.jl` | [Interacting boundary time crystal](interacting_boundary_time_crystal.md) | Nonlinear collective-spin slow modes |

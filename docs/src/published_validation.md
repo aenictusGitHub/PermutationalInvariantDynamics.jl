@@ -75,6 +75,18 @@ extension remains exact in PI coordinates for one common bath coupled through
 $Q=2J_z$ and one collective pulse $U_x^{\otimes N}$. It is not a validation
 of independent local non-Markovian environments.
 
+The example additionally validates the 24-edge TEDD word from Read,
+Serrano-Ensástiga, and Martin, *Platonic dynamical decoupling sequences for
+interacting spin systems*, *Quantum* **9**, 1661 (2025),
+[DOI: 10.22331/q-2025-03-12-1661](https://doi.org/10.22331/q-2025-03-12-1661).
+It checks exact timing, the uniform tetrahedral group average, and projective
+closure before running repeated cycles against the nonzero one-pole bath.
+Four-cycle PI--HEOM and PI--HOPS results are compared at closed-cycle outputs,
+and an eight-cycle HEOM refinement checks that halving the ideal-kick edge
+interval reduces the final infidelity. This finite-bath calculation is not a
+scalar-filter or finite-width-pulse reproduction of the Platonic-sequence
+paper.
+
 ## Quantum-trajectory literature benchmarks
 
 `examples/quantum_trajectories.jl` turns independent spontaneous emission into

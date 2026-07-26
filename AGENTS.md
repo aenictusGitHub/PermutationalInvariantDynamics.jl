@@ -212,7 +212,20 @@ memory-guarded automatic solver route, and test both parser rejection and
 generated Julia syntax in `test/test_model_code_generator.jl`. Its structured
 architecture selector covers an ordinary PI ensemble, identical local
 pseudomodes through `PISupersite`, and one shared pseudomode through
-`GlobalPseudomodeModel`. Arbitrary composite tensor LaTeX remains unsupported
+`GlobalPseudomodeModel`. Its typed calculation selector covers stationary
+states/observables, state-free observable dynamics, selected Liouvillian
+spectra, and certification-aware gaps. Ordinary PI and identical-local-
+pseudomode stationary models may instead emit a term-resolved
+`TrajectoryPlan`, an explicit product initial state, one fixed-capacity
+`TrajectoryBatchWorkspace`, and `trajectory_steady_state`; the shared-global-
+mode stationary combination remains unsupported. Observable dynamics may use
+state-free PI/supersite trajectory statistics or a factorized
+`CompositeTrajectoryPlan` for a shared mode. Shared-mode system jumps remain
+unmonitored in that composite background and this must be stated explicitly.
+Post-stationary purity, entropy, one-body RDM, and QFI always refer to the
+physical systems: trace local or shared pseudomodes first. Selected spectral
+values are not a certified global gap, and generated gap code must expose its
+certification flags. Arbitrary composite tensor LaTeX remains unsupported
 until it has a typed factor-and-cross-term schema; never approximate it with
 free-form `kron` parsing.
 
