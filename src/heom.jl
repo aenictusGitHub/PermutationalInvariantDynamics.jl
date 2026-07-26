@@ -155,6 +155,13 @@ function _physical_heom_term_count(value)
     Int(value)
 end
 
+# SPDX-SnippetBegin
+# SPDX-SnippetCopyrightText: 2011-2026 QuTiP developers and contributors
+# SPDX-License-Identifier: BSD-3-Clause
+# Adapted from QuTiP's qutip/core/environment.py Padé routines at revision
+# e5dbb0195fdbf37fb39d4e52e27c80594f8eb655. Translated and modified for this
+# package's precision, validation, indexing, and memory contracts. The complete
+# upstream notice and exact source link are in THIRD_PARTY_NOTICES.md.
 function _drude_pade_parameters(terms::Int,::Type{R},memory_budget) where R
     R in (Float32,Float64)||throw(ArgumentError(
         "Drude--Lorentz Padé decomposition currently requires Float32 or Float64 physical parameters; use decomposition=:matsubara for generic precision"))
@@ -204,6 +211,7 @@ function _drude_pade_parameters(terms::Int,::Type{R},memory_budget) where R
     end
     kappa,epsilon
 end
+# SPDX-SnippetEnd
 
 function _heom_real_residue(value,scale,::Type{R},description) where R
     tolerance=R(64)*eps(R)*max(one(R),R(abs(scale)),R(abs(value)))

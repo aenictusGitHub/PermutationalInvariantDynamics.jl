@@ -13,6 +13,9 @@ where the corresponding package API is available.
 The assistant deliberately does **not** send formulas to a server or a
 language model. Translation is deterministic and restricted: unsupported or
 ambiguous notation produces an error instead of guessed physics.
+Besides a single Julia file, it can download a dependency-free experiment
+bundle containing the program, a normalized JSON manifest, and a plain-text
+run guide.
 
 ```@raw html
 <div id="pid-code-generator">
@@ -94,6 +97,24 @@ ambiguous notation produces an error instead of guessed physics.
           </option>
           <option value="liouvillian-gap">Liouvillian gap</option>
         </select>
+      </label>
+
+      <label class="pid-field">
+        <span class="pid-label">Generated workflow</span>
+        <select id="pid-workflow">
+          <option value="direct-api">
+            Direct high-level package API
+          </option>
+          <option value="verified-experiment">
+            Typed PIExperiment with planning and verification
+          </option>
+        </select>
+        <span class="pid-hint">
+          The typed experiment route records an explainable resource plan,
+          verification report, and reproducibility digest. It currently covers
+          deterministic stationary states and dynamics for ordinary PI and
+          identical-local-pseudomode models.
+        </span>
       </label>
 
       <label id="pid-method-section" class="pid-field">
@@ -456,6 +477,10 @@ ambiguous notation produces an error instead of guessed physics.
                   class="pid-button pid-button-quiet">Copy</button>
           <button id="pid-download-code" type="button"
                   class="pid-button pid-button-quiet">Download .jl</button>
+          <button id="pid-download-bundle" type="button"
+                  class="pid-button pid-button-quiet">
+            Download experiment bundle
+          </button>
         </div>
       </div>
       <div id="pid-generator-summary" class="pid-summary"></div>
@@ -560,6 +585,39 @@ The browser never silently changes an incompatible choice. It leaves the
 selection visible and reports the core validation error, so the numerical
 method is always an explicit user decision.
 
+## Direct and verified workflows
+
+The direct workflow emits the ordinary high-level package calls documented in
+the table above. It is the route to use for trajectories, selected spectra,
+gaps, a shared global pseudomode, or state-free deterministic dynamics.
+
+The typed workflow emits a `PIExperiment`, calls `explain_experiment` before
+the solve, and executes it with `verified_solve`. The resulting program prints
+the selected route, verification report, and deterministic provenance digest.
+It also includes an optional, commented `save_experiment` call for a portable
+result directory. This workflow currently accepts deterministic stationary
+states and deterministic dynamics on an ordinary PI model or an identical
+local-pseudomode supersite model. Unsupported combinations are rejected; the
+assistant does not fall back to the direct workflow silently.
+
+Verified dynamics retains the state at every requested output time so that
+physicality can be checked. The package preflight counts this history against
+the declared memory budget. Select the direct workflow when only a streamed
+observable is needed and retaining those states would be wasteful.
+
+Every generated program reports the retained representation, exact coordinate
+count, and memory budget before solving. The browser also reports the exact
+bytes in one `ComplexF64` coordinate vector. That number is deliberately
+labelled a lower bound: prepared geometry, task-owned workspaces, Krylov
+history, and output can dominate it. The Julia-side resource preflight is
+authoritative for components it marks as measured or bounded and reports
+`:unknown` for exclusions rather than claiming a certified fit. Generated
+stationary-trajectory programs preflight known raw-model preparation costs
+before constructing the channel-resolved plan and pass the same budget to
+`trajectory_steady_state`, which counts the retained plan/workspace and its
+predictable seed, sampling, accumulator, and result arrays. Allocator metadata
+and RNG implementation storage remain documented exclusions.
+
 ## Stationary states and optional analyses
 
 For a deterministic stationary calculation, ordinary and local-pseudomode
@@ -570,6 +628,13 @@ trajectory alternative prepares a channel-resolved `TrajectoryPlan`, reuses
 a fixed-capacity `TrajectoryBatchWorkspace`, and calls
 `trajectory_steady_state`. Post-settling states are reduced online, so no path
 history is retained.
+
+For the shared-global-mode deterministic route, the generated checks certify
+the full composite trace and Hermiticity and validate the reduced physical
+system state. They do not certify positivity of the complete composite density
+operator. A calculation that needs that stronger check must use a separately
+budgeted full-composite positivity analysis; reduced-state positivity alone is
+not equivalent.
 
 The trajectory route emits a reproducible seed and an explicit pure product
 initial state. For a pseudomode model, each physical system starts in the
@@ -660,7 +725,9 @@ rather than changing only one literal type.
 The generated program uses `PIBasis(N, d)` rather than guessing a
 fully-symmetric-sector restriction. It also does not guess a population-only
 backend: those optimizations require structural certification by the library.
-Stationary solves check convergence and validate the density operator;
+Stationary solves check convergence and apply the route-specific state checks
+described above (the shared-mode route does not certify full-composite
+positivity);
 trajectory calculations report statistical diagnostics; selected spectra
 report solver metadata; and the gap route reports explicit certification
 flags. None of these checks substitutes for the others. Use the
@@ -684,3 +751,34 @@ julia --threads=auto --project=. generated_pi_trajectory_dynamics_observable.jl
 The generated filename records the architecture, method where applicable, and
 calculation. For example, a selected spectrum uses
 `generated_pi_liouvillian_spectrum.jl`.
+
+“Download experiment bundle” creates three local files with a common stem:
+
+- the executable `.jl` program;
+- a machine-readable `.json` manifest containing the normalized typed model,
+  calculation, parameters, representation, resource lower bound, and
+  warnings;
+- a `_README.txt` with the exact run command and interpretation caveats.
+
+## License of generated artifacts
+
+The emitted Julia program contains generator-supplied template code and is
+licensed under **GPL-3.0-only**, without an exception for generated output.
+Its header carries SPDX copyright and license tags, the applicable
+version-only notice, a no-warranty statement, and a link to the complete GNU
+GPL version 3 text.
+Redistribution or modification of that program must therefore comply with the
+root package [license](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/LICENSE).
+
+The JSON manifest is descriptive metadata: it records normalized user model
+inputs and generated resource information, but embeds no Julia or JavaScript
+program template. It does not receive a source-code header. The downloaded
+`_README.txt` repeats both points so the licensing status remains explicit
+when browsers save the three bundle files separately. Users remain responsible
+for rights in formulas, comments, data, or other material they supply to the
+assistant.
+
+No archive library or remote service is used. Some browsers ask once for
+permission to download multiple files from the page; allow it to receive all
+three artifacts. The JSON manifest is descriptive and contains no executable
+JavaScript or Julia expression beyond the separately reviewed program.

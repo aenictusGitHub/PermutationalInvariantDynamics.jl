@@ -12,11 +12,16 @@ the high-level API your calculation needs to go.
 
 These entry points are intended for ordinary research scripts and examples.
 They validate basis ownership and return package-level state or result objects.
+New scripts may import the deliberately compact
+`PermutationalInvariantDynamics.Workflow` namespace instead of the complete
+expert surface. Its bindings are identical to the parent module's bindings;
+it does not wrap calls or alter dispatch. Convention-tested starting models
+live under `Models`.
 
 | Area | Recommended entry points |
 |---|---|
 | Representation | `PIBasis`, `PIState`, `PIOperator`, `PISupersite`, `GlobalPseudomodeModel`, `pseudomode_model`, `global_pseudomode_model`, `exact_binomial`, `exact_multinomial`, Schur-block constructors, spin/state conveniences, `PIModel`, and the physical term constructors |
-| Preparation | `compile`, `compile_family`, `specialize`, `isautonomous`, `freeze` |
+| Preparation | `compile`, `compile_family`, `compile_affine_family`, `specialize`, `prepare_geometry`, `isautonomous`, `freeze` |
 | Dynamics | `solve_dynamics` (including observable-only streaming), `solve_populations`, `dynamics_problem`, `floquet_steady_state`, `quantum_trajectories` (including online ensemble statistics), `trajectory_steady_state`, `HOPSPlan`, `hops_trajectory`, and `hops_average` |
 | Mean-field predictions | `MeanFieldPlan`, `solve_meanfield`, `meanfield_problem`, `meanfield_stationary_state`, `meanfield_stability` |
 | Stationary and spectral analysis | `stationary_state`, `liouvillian_spectrum`, `pi_liouvillian_gap`, `diagnostics`, `recommend_solver` |
@@ -24,6 +29,8 @@ They validate basis ownership and return package-level state or result objects.
 | Visualization | `schur_block_structure`, `visualize_schur_blocks`, `spin_husimi_q`, `spin_wigner`, `qudit_husimi_q`, `visualize_spin_phase_space`, and the density/Liouvillian/Floquet spectrum data and renderers |
 | Reductions and entanglement | `one_body_rdm`, `one_body_rdm!`, `local_factor_trace`, `local_factor_trace!`, `trace_pseudomodes`, `trace_pseudomodes!`, `global_pseudomode_state`, `composite_reduced_state`, `composite_reduced_state!`, `reduced_state`, `reduced_state!`, `reduced_purity`, `negativity`, `partial_transpose_spectrum`, `ppt_mixture_test` |
 | Validation | `state_diagnostics`, `positivity_diagnostics`, `validate_state` |
+| Reproducibility | `PIExperiment`, `plan_experiment`, `explain_experiment`, `verified_solve`, `save_experiment`, `load_experiment` |
+| Inference and counting | `fit_parameters`, `parameter_identifiability`, `TiltedLiouvillianPlan`, `counting_scgf`, `counting_cumulants` |
 
 Prefer these commands in new code. In particular, `stationary_state` returns a
 package state container (`PIState`, or `CompositePIState` for a shared global
@@ -44,6 +51,11 @@ threading contracts.
   the particle bipartition represented by `ReductionPlan`.
   `pseudomode_trace_plan` prepares that same map for all trailing modes of one
   exact `PISupersite`.
+- `PreparedGeometryBundle` groups immutable one-body, selected p-body, and
+  multi-bipartition data for one exact basis and arithmetic context.
+  `PreparationCache` is an explicit, synchronized, user-owned store with a
+  retained-memory budget; there is no process-global cache and no unstable
+  binary persistence contract.
 - `PPTMixturePlan` owns the sparse real conic map for the PI qubit
   PPT-mixture test. It is tied to one exact basis and is safe to share across
   state scans; Clarabel solver state is call-local. Even for a
@@ -56,7 +68,8 @@ threading contracts.
   and read the [nonstabilizerness guide](nonstabilizerness.md) before
   interpreting the result. Mixed or multi-sector states are rejected rather
   than assigned the paper's pure-state measure.
-- `LiouvillianPlan`, `CompiledPIModel`, and `CompiledPIModelFamily` hold lowered model data;
+- `LiouvillianPlan`, `CompiledPIModel`, `CompiledPIModelFamily`, and
+  `AffineCompiledPIModelFamily` hold lowered model data;
   `LiouvillianWorkspace`, `ThreadedLiouvillianWorkspace`,
   `EvolutionWorkspace`, `KrylovWorkspace`,
   `ArnoldiWorkspace`, `SymmetryProjectorWorkspace`,
@@ -99,6 +112,11 @@ threading contracts.
   `TrajectoryWorkspace` owns one path's integration buffers, while
   `TrajectoryBatchWorkspace` owns task-local workspaces and RNGs for repeated
   ensembles. One batch workspace must not serve concurrent ensemble calls.
+- `BatchedConditionalPlan` and fixed-capacity
+  `BatchedConditionalWorkspace` expose matrix-RHS drift, RK4, intensity, and
+  grouped-gain kernels for cohorts already assigned the same time step.
+  They do not replace the independent adaptive scheduling semantics of
+  `quantum_trajectories`.
 - `CorrelationPlan` owns copied quantum-regression insertion blocks and may be
   shared read-only. `CorrelationWorkspace` owns the conditional state, block
   products, RK4 storage, and shifted-GMRES storage; use one per concurrent
@@ -144,6 +162,15 @@ threading contracts.
   output updates or scheduler-ordered reductions. It is useful only after benchmarking
   against ordinary application; small blocks can be dominated by task or
   nested-BLAS overhead. One task takes the ordinary inline fast path.
+- `threaded_matrixfree` wraps a prepared autonomous PI source for a Krylov
+  consumer while reusing one guarded `ThreadedLiouvillianWorkspace`. Share the
+  underlying compiled plan, not this synchronized compatibility wrapper,
+  between concurrent solves.
+- `accelerator_preflight` estimates the simultaneous host/device cost and
+  compatibility of an exact sparse upload without materializing it or
+  initializing hardware. Core currently reports CUDA as unavailable; a
+  backend becomes usable only through a separately tested optional extension,
+  never through an implicit host fallback.
 - `MeanFieldPlan` lowers supported physical terms to one-site contractions
   with at most `d^p` by `d^p` scratch matrices. `MeanFieldWorkspace` owns its
   three-matrix forward RK and contraction scratch; use one workspace per
@@ -283,6 +310,10 @@ algorithms may evolve as the remaining numerical bottlenecks are addressed.
   microscopic `PIModel` terms to QuantumCumulants 0.5 indexed equations;
   direct PI terms and ambiguous schedules are rejected. The selected order
   remains an approximation and still carries `d^(2k)` local-tensor storage.
+- Finite-exponential bath fitting and bounded least-squares parameter
+  inference report rank, residual, convergence, and model limitations
+  explicitly. Fit convergence is not a hierarchy-depth, pseudomode-cutoff,
+  or global-identifiability certificate.
 - `WeakPIPseudoKet`, `WeakPITrajectoryPlan`, and the `weak_pi_*` trajectory
   functions provide an opt-in direct-sum Schur-irrep unraveling. Fixed local
   gains are decomposed into checked one-box Kraus branches for qubits and
@@ -374,6 +405,14 @@ basis. Construct one plan per exact
 `(basis,k)`, benchmark its setup and retained size, and avoid retaining plans
 for bipartitions that are used only once.
 
+For a sequence of subsystem sizes, `ReductionPlanSet` shares the qubit
+factorial table or qudit Littlewood--Richardson construction caches.
+`ReductionWorkspaceSet` is task-owned and lets `reduced_states`,
+`reduced_purities`, and `bipartition_negativities` validate the parent state
+once. Its setup report distinguishes
+`shared_lr_intertwiner_count` (the number of cached intertwiner matrices) from
+`shared_lr_intertwiner_entries` (their total scalar-entry count).
+
 `ReductionPlan` remains immutable and may be shared between tasks.
 `ReductionWorkspace` owns mutable multiplication, partial-transpose, and
 reduced-block buffers plus recoupling data matched once to its working scalar
@@ -398,3 +437,35 @@ validate_state(rho; trace_one=true, hermitian=true, positive=true)
 Validation never normalizes, symmetrizes, or clips the input. Analysis
 functions may average only skew-Hermitian components already shown to be
 within the requested tolerance.
+
+## Curated namespace
+
+`Workflow` includes the complete prepared-geometry lifecycle—validation,
+accessors, explicit cache management—and the multi-bipartition reduction
+consumers. A script can therefore stay within the curated namespace while
+preparing and reusing these immutable plans.
+
+```@docs
+PermutationalInvariantDynamics.Workflow
+PermutationalInvariantDynamics.Models
+PermutationalInvariantDynamics.AffineCompiledPIModelFamily
+PermutationalInvariantDynamics.compile_affine_family
+PermutationalInvariantDynamics.ThreadedMatrixFreeLiouvillian
+PermutationalInvariantDynamics.threaded_matrixfree
+PermutationalInvariantDynamics.ReductionPlanSet
+PermutationalInvariantDynamics.ReductionWorkspaceSet
+PermutationalInvariantDynamics.reduction_plan
+PermutationalInvariantDynamics.reduced_states
+```
+
+## Curated model recipes
+
+```@docs
+PermutationalInvariantDynamics.Models.catalog
+PermutationalInvariantDynamics.Models.driven_qubits
+PermutationalInvariantDynamics.Models.independent_dephasing
+PermutationalInvariantDynamics.Models.local_pump_decay
+PermutationalInvariantDynamics.Models.one_axis_twisting
+PermutationalInvariantDynamics.Models.steady_superradiance
+PermutationalInvariantDynamics.Models.boundary_time_crystal
+```

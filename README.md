@@ -4,6 +4,7 @@
 [![Documentation](https://img.shields.io/badge/docs-dev-blue.svg)](https://aenictusgithub.github.io/PermutationalInvariantDynamics.jl/dev/)
 [![Coverage](https://codecov.io/gh/aenictusGitHub/PermutationalInvariantDynamics.jl/graph/badge.svg)](https://codecov.io/gh/aenictusGitHub/PermutationalInvariantDynamics.jl)
 [![License: GPL v3](https://img.shields.io/badge/license-GPL--3.0--only-blue.svg)](LICENSE)
+[![REUSE status](https://api.reuse.software/badge/github.com/aenictusGitHub/PermutationalInvariantDynamics.jl)](https://api.reuse.software/info/github.com/aenictusGitHub/PermutationalInvariantDynamics.jl)
 
 Exact dynamics in the permutationally invariant operator subspace, based on
 Bastin and Martin, *J. Phys. A* **58**, 275301 (2025).
@@ -39,6 +40,56 @@ julia --project=. -e 'using Pkg; Pkg.instantiate()'
 After registration in Julia's General registry, use
 `Pkg.add("PermutationalInvariantDynamics")`. Julia 1.10 and later are
 supported.
+
+## Choose your path
+
+### First 5 minutes
+
+Start from a convention-tested recipe and keep the complete PI basis:
+
+```julia
+using PermutationalInvariantDynamics
+
+model = Models.driven_qubits(8)
+spin = spin_matrices()
+rho0 = computational_product_state(model.basis, 2)
+prepared = compile(model; backend=:auto)
+result = solve_dynamics(
+    prepared, rho0, (0.0, 4.0);
+    saveat=0.1, observables=(excited=spin.jp * spin.jm,),
+    save_states=false,
+)
+steady = stationary_state(prepared; return_info=true)
+@assert steady.info.converged
+@assert diagnostics(steady.state).valid
+```
+
+Run [`examples/getting_started.jl`](examples/getting_started.jl) for the
+complete version, including a time-step refinement and stationary residual.
+
+### First paper
+
+Pick a model from `Models.catalog()` or the curated
+[`examples/catalog.toml`](examples/catalog.toml), change only physically
+documented parameters, and retain the example's analytical or published
+reference check. Record solver metadata and refine the numerical control that
+applies to the result: time step, Krylov dimension, hierarchy depth,
+pseudomode cutoff, or trajectory count.
+
+### Scaling up
+
+Before a large run, call `recommend_solver(model; task=...)`, compile once,
+stream observables instead of state histories, and reuse prepared plans and
+task-owned workspaces. Use `compile_family` or `compile_affine_family` for
+related parameter points, `prepare_geometry` or a user-owned
+`PreparationCache` for recurring representation setup, `ReductionPlanSet` for
+several marginals, and `threaded_matrixfree` only when one Liouvillian action
+is large enough to benefit from explicit Julia-task parallelism. Use
+`accelerator_preflight` to assess a future optional sparse upload; core does
+not currently claim a functional CUDA backend. The
+[architecture guide](docs/src/architecture.md) explains ownership and memory
+budgets; the [benchmark guide](docs/src/benchmarks.md) provides reproducible
+performance checks.
 
 ## Documentation
 
@@ -77,8 +128,8 @@ by the complete ensemble uses the factorized
 confidence-controlled stochastic stopping are covered by
 [qudit phase space](docs/src/qudit_phase_space.md) and
 [diffusive/trajectory monitoring](docs/src/diffusive_monitoring.md).
-Optional Clarabel, Tables, Makie, Distributed, QuantumCumulants, JLD2, and
-HDF5 adapters are summarized in the
+Optional Clarabel, Tables, Makie, Distributed, QuantumCumulants,
+QuantumOptics, QuantumToolbox, JLD2, and HDF5 adapters are summarized in the
 [interoperability guide](docs/src/interoperability.md).
 The Clarabel extension implements the polynomial-size PI qubit PPT-mixture
 test described in the [genuine-multipartite-entanglement
@@ -312,3 +363,7 @@ BibTeX entry is in [`CITATION.bib`](CITATION.bib).
 
 PermutationalInvariantDynamics.jl is distributed under the
 [GNU General Public License version 3 only](LICENSE) (`GPL-3.0-only`).
+See [copyright and licensing](COPYRIGHT.md), [third-party
+notices](THIRD_PARTY_NOTICES.md), and the [source and research provenance
+ledger](PROVENANCE.md) for ownership, adapted-code attribution, generated-code
+licensing, and release-review obligations.

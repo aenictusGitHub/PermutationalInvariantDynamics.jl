@@ -51,6 +51,16 @@ julia --startup-file=no scripts/release_gate.jl \
   --expect-version X.Y.Z --require-clean
 ```
 
+When licensing, provenance, generated templates, or curated assets change,
+also run the official REUSE audit:
+
+```bash
+reuse lint
+```
+
+CI runs the same audit through the official REUSE action pinned to a reviewed
+commit.
+
 The executable-example CI job is reproducible locally without CairoMakie:
 
 ```bash
@@ -60,6 +70,48 @@ julia --startup-file=no --project=. test/run_quick_examples.jl --shard 2/2
 
 See `docs/src/releasing.md` for the complete clean-checkout gate and the
 maintainer-only General registration step.
+
+## Inbound license and origin certification
+
+Contributions are accepted under `GPL-3.0-only`, the same license as the
+combined project. By submitting a change, you certify that you wrote it or
+otherwise have the right to submit it under those terms while preserving any
+separately identified compatible upstream terms. Do not submit employer-owned,
+institution-owned, confidential, embargoed, or unpublished material without
+the necessary written permission.
+
+Every new human-authored contribution commit made after adoption of this
+policy must carry a Developer Certificate of Origin sign-off:
+
+```text
+Signed-off-by: Your Name <your.email@example.org>
+```
+
+Create it with `git commit -s`. The sign-off certifies the
+[Developer Certificate of Origin 1.1](https://developercertificate.org/):
+you have the right to submit the contribution under the indicated open-source
+license and understand that the contribution and sign-off are public.
+Repository-configured maintenance bots may create unsigned dependency or
+documentation commits; a maintainer must still review their diff, origin, and
+license before merging it.
+
+Before opening a pull request:
+
+- identify copied, translated, or recognizably adapted program expression,
+  preserve its complete compatible license notice, and update
+  `THIRD_PARTY_NOTICES.md`;
+- cite papers, standards, API inspiration, and non-public research material in
+  source/docs and update `PROVENANCE.md`;
+- verify the license of each new dependency and native artifact;
+- include only figures generated from repository scripts or assets you are
+  authorized to redistribute; and
+- disclose AI assistance, review and understand the resulting code, and check
+  it for unintended reproduction of third-party source.
+
+A citation does not replace a software license notice, and an open-access
+paper does not automatically license its code, figures, or supplementary
+files. Ask a maintainer before adapting source whose license or ownership is
+unclear.
 
 ## Architectural expectations
 

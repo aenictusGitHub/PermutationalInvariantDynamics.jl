@@ -1295,3 +1295,49 @@ multi-charge steady solving, and multi-charge spectra use aggregate memory
 guards that include retained restrictions, lowered gain scratch, solver
 peaks, ambient residual validation, and requested outputs. Reduced-only
 stationary output avoids retaining one ambient PI state per charge.
+
+## Prepared studies and matrix-RHS stochastic kernels (2026-07-26)
+
+Named affine generator families now lower the union of a fixed base and
+autonomous physical term groups through the existing compiled-family route.
+Specialization changes only the prepared scalar schedules and returns the
+ordinary specialized source, so sparse and matrix-free values, precision
+checks, selection rules, and downstream solver dispatch remain shared.
+
+`PreparedGeometryBundle` groups a bounded one-box coefficient cache, optional
+one-body geometry, selected Appendix-D geometries, and a shared
+`ReductionPlanSet` for one exact basis and arithmetic context. The optional
+`PreparationCache` is caller-owned and synchronized. It conservatively counts
+standalone retained sizes and never stores workspaces, callbacks, solver
+state, or an unversioned binary representation. Multi-bipartition construction
+shares the SU(2) factorial table for qubits and the LR generator/intertwiner
+setup caches for qudits.
+
+Conditional density-trajectory drift, RK4 stages, channel intensities, and
+selected gains have fixed-capacity matrix-RHS kernels. Fixed local one- and
+p-body gains retain their rectangular Schur contractions; columns choosing
+the same jump channel are gathered once and passed through the corresponding
+batch sandwich. The layer deliberately leaves intensity-capped path
+scheduling outside the kernel: only paths already sharing one time and step
+form a cohort, and their index-derived RNG streams remain attached when
+columns are regrouped.
+
+The reproducible-study layer records resource planning, solver evidence,
+physical-state validation, and requested refinement separately, then writes a
+versioned numerical archive without executable closures. Mutable numerical
+experiment inputs are snapshotted, cumulative refinement retention is guarded
+before the first solve, and archive schema 2 flattens numerical evidence into
+inert metadata while retaining schema-1 reads. Archive writing streams the
+already retained states and observable arrays instead of copying an entire
+history first. Term-resolved tilted generators reuse trajectory channel
+lowering for counting statistics.
+Bath-correlation fits and parameter-inference results retain rank, residual,
+conditioning, convergence, and applicability metadata rather than converting
+them into implicit certificates.
+
+Accelerator support stops at a prepared-source capability and sparse-upload
+preflight until a hardware-tested extension exists. The preflight uses the
+same exact-support materialization bounds as the CPU backend and counts
+simultaneous host assembly, device CSC storage, matrix right-hand sides, and
+index-width limits without initializing hardware or materializing an
+operator. No CPU fallback is presented as accelerator execution.

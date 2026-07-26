@@ -443,6 +443,11 @@ its work-array estimate fits `memory_budget`; otherwise ordinary Arnoldi is
 selected and its workspace is checked against the same budget. `method=:iram` and `:jd` expose
 the corresponding bounded-memory solvers. Iterative results retain residuals,
 convergence flags, and partial spectral scope.
+
+Ordinary Arnoldi advances one initial vector, so an exact degenerate
+eigenspace may contribute only one Ritz direction. Use
+`pi_liouvillian_spectrum(...; method=:block_arnoldi)` when resolving spectral
+multiplicities is required.
 """
 function liouvillian_modes(L0;k::Integer=6,which=:largest_real,
         method::Symbol=:auto,target=nothing,

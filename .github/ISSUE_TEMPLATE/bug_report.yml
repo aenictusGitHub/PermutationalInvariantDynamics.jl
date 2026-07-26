@@ -1,0 +1,54 @@
+name: Bug report
+description: Report incorrect behavior, a regression, or a reliability problem
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not post credentials, confidential research material, or security vulnerabilities here. Use the private process in SECURITY.md for security reports.
+  - type: input
+    id: version
+    attributes:
+      label: Package revision
+      description: Package version or exact git commit.
+      placeholder: v0.1.0 or 0123456
+    validations:
+      required: true
+  - type: input
+    id: julia
+    attributes:
+      label: Julia and platform
+      placeholder: Julia 1.10.x, macOS 15 arm64
+    validations:
+      required: true
+  - type: textarea
+    id: reproducer
+    attributes:
+      label: Minimal reproducer
+      description: Include the smallest complete code and exact command.
+      render: julia
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed and expected result
+      description: Include the complete error and any analytical or small-system reference.
+    validations:
+      required: true
+  - type: textarea
+    id: convergence
+    attributes:
+      label: Numerical controls
+      description: Relevant tolerances, memory budget, hierarchy/cutoff depth, trajectory count, seed, and convergence checks.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing issues and used a current supported revision.
+          required: true
+        - label: This report contains no secret, credential, or confidential manuscript material.
+          required: true
+

@@ -271,6 +271,14 @@
             steady_plan,steady_initial;
             trajectories=2,settling_time=0.1,dt=0.01,
             observables=(excitation=excitation,))
+        @test_throws ArgumentError trajectory_steady_state(
+            steady_plan,steady_initial;
+            trajectories=2,settling_time=0.1,dt=0.01,
+            memory_budget=1)
+        @test_throws ArgumentError trajectory_steady_state(
+            steady_plan,steady_initial;
+            trajectories=2,settling_time=0.1,dt=0.01,
+            memory_budget=NaN)
     end
 
     @testset "adaptive event timing" begin

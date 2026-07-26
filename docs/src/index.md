@@ -14,7 +14,9 @@ reports, finite-exponential PI--HEOM, stochastic PI--HOPS for shared
 structured baths, and exact PI supersites for identical finite-cutoff local
 pseudomodes extend that workflow for larger research calculations. A separate
 factorized embedding covers one finite-cutoff pseudomode shared by the
-complete ensemble.
+complete ensemble. Matrix-free full counting statistics, finite-exponential
+bath fitting, parameter inference, and verified experiment archives support
+reproducible model-to-data studies.
 
 The exact PI representation scales polynomially with `N` at fixed `d` and
 does not construct the full `d^N` Hilbert space in production algorithms.
@@ -77,6 +79,9 @@ local-versus-collective jump semantics. Its architecture selector also covers
 identical local pseudomodes and one shared global pseudomode without exposing
 free-form tensor code. Compatible state and dynamics calculations can use
 deterministic prepared solvers or streaming quantum-trajectory statistics.
+For supported deterministic PI calculations it can instead emit a typed
+`PIExperiment`, show the resource/representation plan, verify the result, and
+download the Julia program with a normalized JSON manifest and README.
 
 ## Five-minute preview
 
@@ -87,16 +92,12 @@ stationary state. The getting-started chapter explains every choice.
 ```julia
 using PermutationalInvariantDynamics
 
-basis = PIBasis(8, 2)
+model = Models.driven_qubits(8)
+basis = model.basis
 spin = spin_matrices()  # local order: (|g>, |e>)
 number = spin.jp * spin.jm
 
 rho0 = computational_product_state(basis, 2)
-model = PIModel(basis, (
-    LocalHamiltonian(spin.jx; rate=0.7),
-    LocalJump(spin.jm; rate=0.12),
-    LocalJump(spin.jp; rate=0.02),
-))
 prepared = compile(model; backend=:auto)
 
 solution = solve_dynamics(
@@ -130,8 +131,11 @@ and convergence metadata. Adaptive or stiff integration is available through
   representation, scaling, model terms, and validity conditions.
 - [Architecture and efficient workflows](architecture.md) explains sparse and
   matrix-free backends, preallocated workspaces, concurrency, and solver use.
+- [Reusable prepared geometry](prepared_artifacts.md) covers immutable
+  representation bundles and an explicit user-owned preparation cache.
 - [API tiers and prepared analysis](api_tiers.md) separates recommended
-  high-level commands from advanced research interfaces.
+  high-level commands from advanced research interfaces and documents the
+  compact `Workflow` namespace.
 - [Streaming output](streaming_output.md), [weak-PI pseudo-ket
   trajectories](weak_pi_trajectories.md), [quantum regression and
   spectra](correlations.md), [higher-order cumulant closures](cumulant_bridge.md),
@@ -141,8 +145,17 @@ and convergence metadata. Adaptive or stiff integration is available through
   supersites](pseudomodes.md) describe memory-conscious research extension
   workflows.
 - [Prepared parameter scans](parameter_scans.md), [advanced Krylov
-  families](krylov_extensions.md), and [numerical convergence
-  reports](convergence.md) cover continuation and explicit numerical evidence.
+  families](krylov_extensions.md), [optional accelerator
+  preflight](accelerators.md), and [numerical convergence
+  reports](convergence.md) cover continuation and explicit numerical evidence;
+  [reproducible experiments](experiments.md) combine planning, verification,
+  refinement, and portable numerical archives.
+- [Counting statistics](counting_statistics.md), [bath-correlation
+  fitting](bath_fitting.md), and [parameter inference](inference.md) cover
+  rare-event, non-Markovian preparation, and model-to-data workflows.
+- [Matrix-RHS trajectory cohorts](batched_trajectories.md) expose
+  fixed-capacity batched kernels when an external scheduler has already
+  grouped paths at the same time and step.
 - [PI--HEOM](heom.md) documents the deterministic common-bath finite-memory
   convention, while [PI--HOPS](hops.md) propagates direct-sum Schur
   pseudo-ket hierarchies and reconstructs the density by Monte Carlo;
@@ -151,7 +164,8 @@ and convergence metadata. Adaptive or stiff integration is available through
   finite-mode embeddings; and [qudit Husimi phase
   space](qudit_phase_space.md) describes generalized coherent-state Q data.
 - [Optional ecosystem integrations](interoperability.md) records the precise
-  Tables, Makie, Distributed, QuantumCumulants, JLD2, and HDF5 boundaries.
+  QuantumOptics, QuantumToolbox, Tables, Makie, Distributed,
+  QuantumCumulants, JLD2, and HDF5 boundaries.
 - [Complete public API index](api_reference.md) categorizes every exported
   function and type and links its full description.
 - [Published validation](published_validation.md) and

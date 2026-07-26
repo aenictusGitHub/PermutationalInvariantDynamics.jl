@@ -905,6 +905,11 @@ The returned residual estimates are `norm(L*v-lambda*v)` Ritz estimates.
 Pass a reusable `ArnoldiWorkspace` to avoid reallocating the large basis and
 Hessenberg arrays. Residual tolerances scale with the sampled operator action,
 without an absolute unit-scale floor.
+
+This is a single-vector Arnoldi method. An exact degenerate eigenspace may
+therefore contribute only one Ritz direction even when `nev` is larger; use
+[`block_arnoldi_spectrum`](@ref) when spectral multiplicities must be
+resolved.
 """
 function krylov_liouvillian_spectrum(L;nev::Integer=6,krylovdim::Integer=max(20,2nev+4),
                                      which=:LR,initial_vector=nothing,

@@ -32,13 +32,17 @@ include("geometry.jl")
 include("pbody.jl")
 include("operators.jl")
 include("terms.jl")
+include("interchange.jl")
 include("correlated_jumps.jl")
 include("spin.jl")
 include("vectorization.jl")
 include("liouvillian.jl")
 include("threaded_apply.jl")
 include("compiled_families.jl")
+include("affine_families.jl")
 include("source_protocol.jl")
+include("threaded_operator.jl")
+include("accelerators.jl")
 include("result_protocol.jl")
 include("solver_algorithms.jl")
 
@@ -52,6 +56,8 @@ include("evans.jl")
 include("local_factor_trace.jl")
 include("pseudomodes.jl")
 include("entanglement.jl")
+include("reduction_sets.jl")
+include("prepared_artifacts.jl")
 include("genuine_entanglement.jl")
 include("observables.jl")
 include("cumulants.jl")
@@ -70,10 +76,13 @@ include("restricted_symmetries.jl")
 include("automatic_symmetries.jl")
 include("heom.jl")
 include("trajectories.jl")
+include("batched_trajectories.jl")
+include("counting_statistics.jl")
 include("composite_trajectories.jl")
 include("global_pseudomodes.jl")
 include("weak_pi_trajectories.jl")
 include("hops.jl")
+include("bath_fitting.jl")
 include("diffusive.jl")
 include("adaptive_ensembles.jl")
 include("distributed_api.jl")
@@ -90,12 +99,16 @@ include("research_utilities.jl")
 include("channels.jl")
 include("tomography.jl")
 include("checkpoints.jl")
+include("experiments.jl")
 include("control.jl")
+include("inference.jl")
+include("model_zoo.jl")
 
 # Dependency-free visualization data and SVG renderers.
 include("visualization.jl")
 include("spectral_visualization.jl")
 include("phase_space_visualization.jl")
+include("workflow_namespace.jl")
 
 export Partition, partitions, weight, length_nonzero, removable_corners,
        addable_corners, remove_corner, add_corner, minus_plus_neighbors,
@@ -125,7 +138,13 @@ export Partition, partitions, weight, length_nonzero, removable_corners,
        OneBodyGeometry,
        PBodyGeometry, pbody_collective_block, pbody_collective_operator,
        pbody_kernel_element, pbody_kernel_operator,
+       PreparedGeometryBundle, prepare_geometry,
+       validate_prepared_geometry, onebody_geometry, pbody_geometry,
+       prepared_reductions, PreparationCache, prepare_geometry!,
+       evict_prepared_geometry!, clear_preparation_cache!,
+       preparation_cache_summary,
        AbstractPITerm, InPlaceTimeOperator,
+       local_operator_matrix,
        LocalHamiltonian, CollectiveHamiltonian, LocalJump,
        CollectiveJump, CorrelatedLocalJumps, CorrelatedCollectiveJumps,
        DirectPIHamiltonian, DirectPIJump, PIModel,
@@ -139,6 +158,10 @@ export Partition, partitions, weight, length_nonzero, removable_corners,
        ThreadedLiouvillianWorkspace, threaded_apply!,
        threaded_apply_adjoint!,
        CompiledPIModelFamily, SpecializedPIModel, compile_family, specialize,
+       AffineCompiledPIModelFamily, compile_affine_family,
+       ThreadedMatrixFreeLiouvillian, threaded_matrixfree,
+       AcceleratorCapability, AcceleratorPreflight,
+       accelerator_capability, accelerator_preflight, accelerate,
        CompositeSuperoperatorTerm, factorized_superoperator_term,
        local_superoperator_term, CompositeSuperoperator,
        CompositeSuperoperatorWorkspace,
@@ -155,6 +178,14 @@ export Partition, partitions, weight, length_nonzero, removable_corners,
        quantum_trajectories, trajectory_steady_state, trajectory_average,
        jump_statistics,
        trajectory_observable_statistics, trajectory_statistics,
+       BatchedConditionalPlan, BatchedConditionalWorkspace,
+       batched_conditional_action!, batched_conditional_rk4!,
+       batched_channel_intensities!, batched_apply_jumps!,
+       batched_trajectory_rngs, batched_sample_jumps!,
+       TiltedLiouvillianPlan, TiltedLiouvillianWorkspace,
+       TiltedLiouvillian, apply_tilted!, apply_tilted_adjoint!,
+       tilted_liouvillian, counting_scgf, counting_cumulants,
+       counting_scgf_curve, large_deviation_rate_function, finite_time_mgf,
        CompositeJumpChannel, CompositeTrajectoryPlan,
        CompositeTrajectoryWorkspace, CompositeTrajectoryBatchWorkspace,
        CompositeQuantumTrajectory, composite_master_superoperator,
@@ -173,6 +204,9 @@ export Partition, partitions, weight, length_nonzero, removable_corners,
        HOPSBath, HOPSPlan, HOPSWorkspace, HOPSBatchWorkspace,
        HOPSRootKet, HOPSTrajectory, HOPSEnsembleResult,
        HOPSInitialEnsemble, hops_initial_ensemble,
+       BathCorrelationSamples, BathFitResult,
+       correlation_from_spectral_density, fit_bath_correlation,
+       fit_bath_from_spectral_density, prepare_heom_bath, prepare_hops_bath,
        PIUnitaryPulse, HierarchyPulseSequence, apply_hierarchy_pulse!,
        platonic_pulse_sequence, tetrahedral_pulse_sequence,
        octahedral_pulse_sequence, icosahedral_pulse_sequence,
@@ -237,8 +271,9 @@ export Partition, partitions, weight, length_nonzero, removable_corners,
        pseudomode_model, pseudomode_product_state,
        pseudomode_trace_plan, trace_pseudomodes, trace_pseudomodes!,
        negativity, logarithmic_negativity, ReductionPlan, ReductionWorkspace,
+       ReductionPlanSet, ReductionWorkspaceSet, reduction_plan,
        PPTMixturePlan, PPTMixtureResult, ppt_mixture_test,
-       reduced_state, reduced_state!, reduced_purity,
+       reduced_state, reduced_state!, reduced_states, reduced_purity,
        reduced_purities,
        partial_transpose_spectrum, minimum_partial_transpose_eigenvalue,
        bipartition_negativities,
@@ -334,9 +369,18 @@ export Partition, partitions, weight, length_nonzero, removable_corners,
        PITomographyResult, maximum_likelihood_tomography,
        PI_CHECKPOINT_VERSION, PIStateCheckpoint, checkpoint_state,
        save_checkpoint, load_checkpoint,
+       RefinementSpec, VerificationSpec, PIExperiment,
+       ExperimentExecutionPlan, plan_experiment, explain_experiment,
+       ExperimentProvenance, ExperimentReport, ExperimentResult,
+       verified_solve, PI_EXPERIMENT_ARCHIVE_VERSION, ExperimentArchive,
+       save_experiment, load_experiment,
        SteadyStateGradientPlan, SteadyStateGradientWorkspace,
        SteadyStateGradientResult, implicit_steady_state_gradient,
        AdjointControlResult, checkpointed_adjoint_gradient,
+       LeastSquaresInferenceProblem, ParameterIdentifiabilityReport,
+       ParameterInferenceResult, steady_state_inference_problem,
+       parameter_identifiability, fit_parameters,
+       Models, Workflow,
        SchurBlockStructure, SchurBlockVisualization,
        schur_block_structure, visualize_schur_blocks,
        save_schur_block_visualization,

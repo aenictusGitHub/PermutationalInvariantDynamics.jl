@@ -8,6 +8,26 @@ Start with [`getting_started.jl`](getting_started.jl) and its
 It covers the basis, local operators, physical terms, initial state,
 compilation, dynamics, stationary state, diagnostics, and a time-step check.
 
+## Three routes through the examples
+
+**First 5 minutes.** Run `getting_started.jl`, then replace its manual model
+construction with a convention-tested recipe such as
+`Models.driven_qubits(8)` or `Models.local_pump_decay(20)`.
+
+**First paper.** Choose a literature validation from the machine-readable
+[`catalog.toml`](catalog.toml). Each curated entry records its tasks,
+difficulty, default runtime class, stochastic status, optional dependencies,
+citation, and reviewed expected-output assets. Keep the guide's normalization
+and convergence check beside any parameter changes.
+
+**Scaling up.** Continue with `steady_state_methods.jl`,
+`parameter_scan.jl`, and `streaming_output.jl`. Preflight with
+`recommend_solver`, reuse a compiled model or family, retain only requested
+observables, and create one task-owned workspace per concurrent solve.
+
+`catalog.toml` is a curated navigation layer, not the exhaustive inventory;
+the table below remains the complete script-and-guide index.
+
 ## Recommended workflow
 
 New research scripts should prepare a model once and use the typed high-level

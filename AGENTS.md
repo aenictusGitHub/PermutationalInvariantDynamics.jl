@@ -84,12 +84,12 @@ Published validation also uses maintainer-local copies of
 - Core dependencies: `LinearAlgebra`, `SparseArrays`, `Random`, and
   `SciMLBase`.
 - Weak dependencies: `Clarabel`, `Distributed`, `Tables`, `Makie`,
-  `QuantumCumulants`, `JLD2`, and `HDF5`. Their methods belong in matching
-  `ext/` modules.
+  `QuantumCumulants`, `QuantumOptics`, `QuantumToolbox`, `JLD2`, and `HDF5`.
+  Their methods belong in matching `ext/` modules.
 - Current extension compatibility is Clarabel 0.11, Tables 1, Makie 0.21--0.24,
-  QuantumCumulants 0.5, JLD2 0.4--0.5, HDF5 0.16--0.17, and the supported
-  Julia 1.10+ `Distributed` stdlib. Update compat and optional smoke tests
-  together.
+  QuantumCumulants 0.5, QuantumOptics 1, QuantumToolbox 0.45,
+  JLD2 0.4--0.5, HDF5 0.16--0.17, and the supported Julia 1.10+
+  `Distributed` stdlib. Update compat and optional smoke tests together.
 - `Distributed` can load transitively through SciMLBase. Extension activation
   is not proof that the user requested remote workers.
 - Do not commit generated root, `quality/`, `examples/`, `benchmark/`,
@@ -98,6 +98,27 @@ Published validation also uses maintainer-local copies of
 - Public repository:
   `https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl`.
 - License: `GPL-3.0-only`; the root `LICENSE` file is canonical.
+- `COPYRIGHT.md`, `PROVENANCE.md`, and `THIRD_PARTY_NOTICES.md` are mandatory
+  release records. Update them when authorship, an implementation source,
+  unpublished research material, or an adapted third-party routine changes.
+- Keep the QuTiP BSD-3-Clause snippet markers around the adapted Drude Padé
+  routine and the CC-BY-4.0 markers around the published Platonic pulse data.
+  Preserve both complete notices. A scholarly citation never substitutes for
+  an upstream software or content license.
+- Keep the pinned REUSE licensing CI job green. New or generated files must
+  remain covered by `REUSE.toml` or a more specific valid SPDX declaration.
+- Contributions use the DCO sign-off described in `CONTRIBUTING.md`. A
+  maintainer must obtain any coauthor, employer, institution, or manuscript
+  permission that automation cannot establish.
+- The browser assistant emits substantial fixed templates and therefore
+  labels generated Julia programs `GPL-3.0-only` without an output exception.
+- Pin every external GitHub Action to a reviewed 40-character commit SHA.
+  Dependabot is the update path; do not replace an immutable pin with a moving
+  major-version tag.
+- A source-package license audit is not a binary-distribution audit. A
+  sysimage, container, application, or executable release needs an exact
+  transitive dependency/artifact inventory, all required notices, and the
+  corresponding-source/install-information review required by the GPL.
 
 ## Mandatory mathematical conventions
 
@@ -187,6 +208,15 @@ Related workflows are:
   `parameter grid + builder -> ParameterScanPlan -> workspace -> scan/resume`.
 - Scalar-rate families:
   `PIModel -> compile_family -> CompiledPIModelFamily -> specialize`.
+- Named affine generator families:
+  `base PIModel + named term groups -> compile_affine_family -> specialize`.
+- Reusable representation setup:
+  `PIBasis -> prepare_geometry/PreparationCache -> immutable geometry bundle`.
+- Verified deterministic studies:
+  `PIExperiment -> plan/explain -> verified_solve -> versioned result archive`.
+- Counting and inference:
+  `TrajectoryPlan -> TiltedLiouvillianPlan -> cumulants`, and
+  `model/observable builder -> inference problem -> fit/identifiability`.
 - Identical local pseudomodes:
   `system + finite modes -> PISupersite -> pseudomode_model -> compile`.
 - Bosonic PI--HEOM:
@@ -200,7 +230,9 @@ Prefer `compile`, `solve_dynamics`, `stationary_state`,
 `liouvillian_spectrum`, `diagnostics`, and `recommend_solver` in research
 scripts. Lower-level `liouvillian`, `steady_state`, `apply!`, and Krylov APIs
 are advanced interfaces. `docs/src/api_tiers.md` defines the intended stability
-tier.
+tier. `Workflow` is the curated stable namespace and must alias parent-module
+bindings rather than wrap them. `Models` owns convention-tested recipes and
+detached catalog metadata; examples should not fork their normalizations.
 
 The static GitHub Pages model assistant lives in
 `docs/src/model_code_generator.md` with dependency-free parser/emitter and UI
@@ -209,7 +241,11 @@ lower through a typed whitelist AST, never `eval`, textual Julia
 interpolation, or a remote service. Keep local versus collective jump
 semantics explicit, default generated models to the complete PI basis and
 memory-guarded automatic solver route, and test both parser rejection and
-generated Julia syntax in `test/test_model_code_generator.jl`. Its structured
+generated Julia syntax in `test/test_model_code_generator.jl`. The direct and
+verified-experiment workflow selectors must reject unsupported combinations;
+verified output lowers through `PIExperiment`, `explain_experiment`, and
+`verified_solve`. Browser downloads contain Julia source, a normalized JSON
+manifest, and a README, with no executable deserialization. Its structured
 architecture selector covers an ordinary PI ensemble, identical local
 pseudomodes through `PISupersite`, and one shared pseudomode through
 `GlobalPseudomodeModel`. Its typed calculation selector covers stationary
@@ -233,6 +269,14 @@ free-form `kron` parsing.
 read-only blocks, contractions, and rate descriptions. `LiouvillianWorkspace`
 owns mutable scratch. Compatibility `mul!`/`action!` calls are synchronized;
 parallel hot loops need explicit task-owned workspaces.
+
+`compile_affine_family` lowers the union of one fixed base and named,
+autonomous physical term groups once. Specialization must require exactly the
+declared parameters, multiply complete generator contributions, preserve
+ordinary compiled-family precision and selection rules, and return an
+ordinary `SpecializedPIModel`. Negative coefficients are valid for
+deterministic time-local generators; stochastic consumers must still reject
+negative rates.
 
 The first composite factor is the fastest coordinate. A factorized vector is
 `kron(x_last,...,x_first)`, and the factorized map has reversed Kronecker
@@ -258,7 +302,9 @@ pattern.
   `tensor_indices.jl`, `geometry.jl`, `pbody.jl`, and `operators.jl`.
 - Model terms and lowering: `terms.jl`, `correlated_jumps.jl`, `spin.jl`,
   `vectorization.jl`, `liouvillian.jl`, `threaded_apply.jl`, and
-  `compiled_families.jl`. `source_protocol.jl` centralizes private basis,
+  `compiled_families.jl`. `interchange.jl` owns dependency-neutral one-site
+  operator import, and `affine_families.jl` owns named affine generator
+  specialization. `source_protocol.jl` centralizes private basis,
   structured trace-functional, task-workspace, adjoint-capability, and
   matrix-free-only discovery for prepared linear-operator wrappers; extend
   those traits instead of adding consumer-local `isa` cascades.
@@ -269,21 +315,23 @@ pattern.
   `spectra.jl`, `evans.jl`, `symmetries.jl`, and
   `restricted_symmetries.jl`, and `automatic_symmetries.jl`.
 - State analysis: `observables.jl`, `entanglement.jl`,
-  `local_factor_trace.jl`,
+  `reduction_sets.jl`, `prepared_artifacts.jl`, `local_factor_trace.jl`,
   `genuine_entanglement.jl`, `information.jl`, `nonstabilizerness.jl`,
   `symmetry_information.jl`, `populations.jl`, and
   `research_utilities.jl`.
 - Deterministic dynamics and studies: `sciml.jl`, `evolution.jl`,
   `meanfield.jl`, `floquet.jl`, `response.jl`, `correlations.jl`,
-  `highlevel.jl`, `scans.jl`, and `convergence.jl`.
+  `highlevel.jl`, `scans.jl`, `convergence.jl`, `experiments.jl`,
+  `inference.jl`, `model_zoo.jl`, and `workflow_namespace.jl`.
 - Non-Markovian and stochastic systems: `pseudomodes.jl`,
   `global_pseudomodes.jl`, `composite.jl`, `heom.jl`, `hops.jl`,
-  `hierarchy_pulses.jl`, `trajectories.jl`,
+  `hierarchy_pulses.jl`, `bath_fitting.jl`, `trajectories.jl`,
+  `batched_trajectories.jl`, `counting_statistics.jl`,
   `composite_trajectories.jl`,
   `weak_pi_trajectories.jl`, `diffusive.jl`, `adaptive_ensembles.jl`, and
   `distributed_api.jl`.
 - Research utilities and optional bridges: `cumulants.jl`, `channels.jl`,
-  `tomography.jl`, `checkpoints.jl`, and `control.jl`.
+  `tomography.jl`, `checkpoints.jl`, `control.jl`, and `accelerators.jl`.
 - Visualization and phase space: `phase_space.jl`, `qudit_phase_space.jl`,
   `visualization.jl`, `spectral_visualization.jl`, and
   `phase_space_visualization.jl`.
@@ -350,6 +398,11 @@ pattern.
 - Batched application evaluates each schedule once and uses sectorwise matrix-
   matrix kernels where supported. Preserve vector/column fallbacks for custom
   callbacks and uncommon driven kernels.
+- Batched conditional trajectories operate only on cohorts whose scheduler
+  has already selected the same time and step. Fixed-capacity workspaces must
+  reject growth; per-index RNG streams move with regrouped columns. Never
+  replace independent intensity-capped trajectory scheduling with a hidden
+  common minimum step.
 - A complete vector action packs each immutable input Schur block once, before
   visiting the heterogeneous kernel tuple. The same contract applies to
   adjoint, conditional-trajectory, lowered restricted-symmetry, and
@@ -392,6 +445,10 @@ BLAS threading. The workspace is guarded against concurrent reuse.
   Plan-less callbacks retain a conservative unknown-scratch allowance.
 - Block methods must include block size in both Krylov and fixed-capacity
   operator-batch storage.
+- Accelerator preflight must run on an already prepared source, account the
+  simultaneous host assembly and device payload, check device index ranges,
+  and initialize no hardware. Core must not claim a functional accelerator,
+  materialize merely to probe capability, or hide per-action host transfers.
 - `recommend_solver` separates setup, retained, solve, output, and peak
   estimates. Unknown builder, callback, or diagnostic allocations imply
   `safe_to_run=missing`, never `true`.
@@ -485,6 +542,16 @@ prototype precision used by compiled parameter families.
   once per `(basis,k)`, and `CompositeReductionPlan` once per retained
   composite factor. Plans are tied to the exact basis; workspaces are
   task-owned.
+- `PreparedGeometryBundle` may share a depth-bounded `OneBoxCGCache`,
+  one-body geometry, selected p-body geometries, and a `ReductionPlanSet`.
+  Validate exact basis identity, the retained basis layout, scalar type, and
+  `BigFloat` precision/rounding before reuse. `PreparationCache` is explicit,
+  user-owned, synchronized, and budgeted; never replace it with a process-
+  global cache. Do not persist private geometry graphs until a versioned,
+  reconstructing interchange schema can validate every convention.
+  Because qudit LR/SPQR reduction setup has no allocation-free transient
+  bound, a bundle containing qudit reductions must reject finite
+  `memory_budget` before setup and require the explicit `Inf` opt-out.
 - Repeated geometry-based one-body marginals use `OneBodyRDMWorkspace` and
   `one_body_rdm!`. The workspace owns one largest-sector
   multiplicity-weighted block and exact prepared scales; it is tied to one
@@ -1006,6 +1073,11 @@ expv calls rather than freezing them implicitly.
   each path, then combines at least two independent path means. It reports
   sample uncertainty, residual, and trace error but never a convergence or
   uniqueness certificate.
+- `BatchedConditionalPlan` shares term-resolved lowering across a matrix RHS.
+  Its workspace has immutable capacity and must match repeated scalar drift,
+  RK4, channel-intensity, and gain application. It does not choose time steps;
+  callers may batch only paths already assigned the same physical time and
+  step, and must preserve one RNG stream per global trajectory index.
 
 ### Weak-PI pseudo-kets
 
@@ -1078,6 +1150,31 @@ reductions are not implemented.
   Checkpointed control gradients require a Hermitian terminal objective and
   time-step convergence.
 
+## Verified studies, counting statistics, and inference
+
+- `PIExperiment` is a deterministic PI-state orchestration layer. Planning
+  and explanation are read-only; `verified_solve` retains separate physical,
+  solver, and requested refinement evidence and never changes the requested
+  algorithm. Constructor inputs with mutable numerical storage are
+  defensively snapshotted. A refinement must preflight cumulative retained
+  level outputs plus the next solve peak before its first solve. Archives
+  contain versioned numerical data, inert flattened verification evidence,
+  and provenance, not executable closures, workspaces, or solver state;
+  schema 2 remains backward-readable with schema 1.
+- `TiltedLiouvillianPlan` derives channel-resolved counting fields from a
+  term-resolved `TrajectoryPlan`; never reconstruct channels from a fused
+  deterministic kernel. Finite-time MGFs, SCGFs, cumulants, and Legendre data
+  must retain their residual, discretization, and boundary diagnostics.
+- Bath-correlation fitting reports quadrature, residual, rank, and candidate-
+  selection limitations before constructing HEOM/HOPS baths. An unconverged
+  or rank-deficient fit is rejected unless the caller explicitly opts into
+  that condition for a convergence study.
+- Parameter inference keeps parameter bounds, weighting, derivative route,
+  solver evidence, Fisher rank, and local-identifiability limitations
+  explicit. Every steady-state prediction requires `converged=true`; missing
+  or false convergence is not accepted as data. A pseudocovariance for a
+  rank-deficient problem is diagnostic, not an uncertainty certificate.
+
 ## Optional extension contracts
 
 Only matching `ext/` modules may import weak dependencies. Core algorithms must
@@ -1093,10 +1190,14 @@ not dispatch on the accidental presence of an optional package.
   currently accepts model inputs rather than compiled task-local plans.
 - QuantumCumulants follows the neutral payload contract and supported
   microscopic lowering rules.
+- QuantumOptics and QuantumToolbox bridges accept only finite square one-site
+  operators and copy their dense or sparse data without narrowing. Reject
+  kets, superoperators, rectangular maps, and dimension mismatches; never
+  import a many-body state or superoperator through these conveniences.
 - JLD2 and HDF5 implement storage for the versioned checkpoint schema without
   changing that schema.
-- Makie, QuantumCumulants, JLD2, and HDF5 changes require the isolated
-  `test/optional` smoke suite.
+- Makie, QuantumCumulants, QuantumOptics, QuantumToolbox, JLD2, and HDF5
+  changes require the isolated `test/optional` smoke suite.
 
 ## Documentation and public API
 
@@ -1210,11 +1311,17 @@ compiler-sensitive change.
 ```sh
 JULIA_NUM_THREADS=4 julia --project=. benchmark/performance_regression.jl
 julia --project=. benchmark/performance_audit.jl
+julia --project=benchmark benchmark/cold_start.jl --mode quick
+julia --project=benchmark benchmark/time_to_solution.jl --mode quick
+julia --project=benchmark benchmark/batched_trajectories.jl
 ```
 
 The regression script is the CI allocation/equivalence/thread-safety gate. The
 global performance audit is a broader manual check; it deliberately avoids
-brittle wall-clock thresholds. Run the CI-parity threaded gate with Julia 1.10.
+brittle wall-clock thresholds. Cold-start measurements use fresh Julia
+processes. Time-to-solution records setup, solve, validation, output, and
+provenance separately; its analytic validation is mandatory. Run the
+CI-parity threaded gate with Julia 1.10.
 
 For reproducible internal scaling and cross-package comparisons, follow
 `benchmark/README.md` and `benchmark/comparison/README.md`. Keep external

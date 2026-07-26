@@ -28,12 +28,21 @@ function undocumented_exports(mod::Module)
     end
 end
 
-const undocumented = undocumented_exports(PermutationalInvariantDynamics)
+const DOCUMENTED_MODULES = (
+    PermutationalInvariantDynamics,
+    PermutationalInvariantDynamics.Models,
+)
+const undocumented = [
+    "$(nameof(mod)).$(name)"
+    for mod in DOCUMENTED_MODULES
+    for name in undocumented_exports(mod)
+]
 isempty(undocumented) || error(
     "Every exported binding must have a docstring; missing: " *
-    join(sort!(string.(undocumented)), ", "))
+    join(sort!(undocumented), ", "))
 
-makedocs(sitename="PermutationalInvariantDynamics.jl", modules=[PermutationalInvariantDynamics],
+makedocs(sitename="PermutationalInvariantDynamics.jl",
+         modules=collect(DOCUMENTED_MODULES),
          checkdocs=:exports,
          remotes=Dict(PACKAGE_ROOT => (REMOTE, SOURCE_REVISION)),
          format=Documenter.HTML(
@@ -62,11 +71,13 @@ makedocs(sitename="PermutationalInvariantDynamics.jl", modules=[PermutationalInv
                     "Framework and conventions"=>"framework.md",
                     "Architecture and efficient workflows"=>"architecture.md",
                     "API tiers and prepared analysis"=>"api_tiers.md",
+                    "Reusable prepared geometry"=>"prepared_artifacts.md",
                 ],
                 "Dynamics workflows"=>[
                     "Streaming output"=>"streaming_output.md",
                     "Mean-field predictions"=>"meanfield.md",
                     "Diffusive monitoring"=>"diffusive_monitoring.md",
+                    "Matrix-RHS trajectory cohorts"=>"batched_trajectories.md",
                     "Weak-PI pseudo-ket trajectories"=>"weak_pi_trajectories.md",
                     "Quantum regression and spectra"=>"correlations.md",
                     "Higher-order cumulant bridge"=>"cumulant_bridge.md",
@@ -75,17 +86,23 @@ makedocs(sitename="PermutationalInvariantDynamics.jl", modules=[PermutationalInv
                     "Local pseudomodes and PI supersites"=>"pseudomodes.md",
                     "PI--HEOM non-Markovian dynamics"=>"heom.md",
                     "PI--HOPS stochastic non-Markovian dynamics"=>"hops.md",
+                    "Bath-correlation fitting"=>"bath_fitting.md",
+                    "Counting statistics and rare events"=>"counting_statistics.md",
                 ],
                 "Large-scale numerical methods"=>[
                     "Matrix-free Krylov solvers"=>"matrix_free_krylov.md",
                     "Block, multi-shift, and recycled Krylov"=>"krylov_extensions.md",
+                    "Optional accelerators"=>"accelerators.md",
                     "Prepared parameter scans"=>"parameter_scans.md",
                     "Numerical convergence reports"=>"convergence.md",
+                    "Reproducible verified experiments"=>"experiments.md",
+                    "Startup latency and local sysimages"=>"startup_performance.md",
                 ],
                 "Analysis and visualization"=>[
                     "Nonstabilizerness"=>"nonstabilizerness.md",
                     "Genuine multipartite entanglement"=>"genuine_entanglement.md",
                     "Research utilities and control"=>"research_utilities.md",
+                    "Parameter inference"=>"inference.md",
                     "Schur-block visualization"=>"schur_visualization.md",
                     "Spectral visualization"=>"spectral_visualization.md",
                     "Spin phase space"=>"spin_phase_space.md",

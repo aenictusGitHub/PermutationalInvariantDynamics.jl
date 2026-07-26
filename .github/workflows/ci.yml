@@ -4,6 +4,12 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+    inputs:
+      release_readiness:
+        description: Require finalized, dated release metadata
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -17,23 +23,45 @@ jobs:
     name: release metadata
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          fetch-depth: 0
           persist-credentials: false
-      - uses: julia-actions/setup-julia@v3
+      - uses: julia-actions/setup-julia@fa02766e078afaaf09b14210362cee14137e6a32 # v3
         with:
           version: '1.10'
       - name: Validate release-candidate metadata and repository hygiene
-        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        if: >-
+          ${{ !startsWith(github.ref, 'refs/tags/') &&
+          !(github.event_name == 'workflow_dispatch' &&
+          inputs.release_readiness) }}
         run: >-
           julia --startup-file=no scripts/release_gate.jl
           --require-clean
+      - name: Validate finalized release metadata before registration
+        if: >-
+          ${{ !startsWith(github.ref, 'refs/tags/') &&
+          github.event_name == 'workflow_dispatch' &&
+          inputs.release_readiness }}
+        run: >-
+          julia --startup-file=no scripts/release_gate.jl
+          --require-clean --require-released
       - name: Validate immutable release tag
         if: ${{ startsWith(github.ref, 'refs/tags/') }}
         run: >-
           julia --startup-file=no scripts/release_gate.jl
           --require-clean --require-released
           --tag-ref "${{ github.ref }}"
+
+  licensing:
+    name: REUSE licensing
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Validate machine-readable copyright and licensing
+        uses: fsfe/reuse-action@676e2d560c9a403aa252096d99fcab3e1132b0f5 # v6.0.0
 
   test:
     name: Julia ${{ matrix.julia-version }} / ${{ matrix.os }}
@@ -58,27 +86,27 @@ jobs:
             coverage: false
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: julia-actions/setup-julia@v3
+      - uses: julia-actions/setup-julia@fa02766e078afaaf09b14210362cee14137e6a32 # v3
         with:
           version: ${{ matrix.julia-version }}
-      - uses: julia-actions/cache@v3
+      - uses: julia-actions/cache@a45e8fa8be21c18a06b7177052533149e61e9b38 # v3
         with:
           delete-old-caches: 'false'
-      - uses: julia-actions/julia-runtest@v1
+      - uses: julia-actions/julia-runtest@6e050c8013b833b1195105ff2fce9cd802f53271 # v1
         with:
           coverage: ${{ matrix.coverage }}
       - name: Process coverage
         if: matrix.coverage
-        uses: julia-actions/julia-processcoverage@v1
+        uses: julia-actions/julia-processcoverage@03114f09f119417c3242a9fb6e0b722676aedf38 # v1
       - name: Upload coverage to Codecov
         if: >-
           matrix.coverage &&
           (github.event_name != 'pull_request' ||
           github.event.pull_request.head.repo.full_name == github.repository)
-        uses: codecov/codecov-action@v7
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7
         with:
           fail_ci_if_error: true
           files: lcov.info
@@ -87,7 +115,7 @@ jobs:
   quality:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
       - name: Enforce tracked-manifest policy
@@ -99,10 +127,10 @@ jobs:
             echo "${tracked_manifests}"
             exit 1
           fi
-      - uses: julia-actions/setup-julia@v3
+      - uses: julia-actions/setup-julia@fa02766e078afaaf09b14210362cee14137e6a32 # v3
         with:
           version: '1.12'
-      - uses: julia-actions/cache@v3
+      - uses: julia-actions/cache@a45e8fa8be21c18a06b7177052533149e61e9b38 # v3
         with:
           delete-old-caches: 'false'
       - name: Instantiate quality environment
@@ -116,20 +144,20 @@ jobs:
     name: optional extensions
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: julia-actions/setup-julia@v3
+      - uses: julia-actions/setup-julia@fa02766e078afaaf09b14210362cee14137e6a32 # v3
         with:
           version: '1.10'
-      - uses: julia-actions/cache@v3
+      - uses: julia-actions/cache@a45e8fa8be21c18a06b7177052533149e61e9b38 # v3
         with:
           delete-old-caches: 'false'
       - name: Instantiate optional-extension environment
         run: >-
           julia --project=test/optional -e 'using Pkg;
           Pkg.develop(path=pwd()); Pkg.instantiate()'
-      - name: Clarabel, Makie, QuantumCumulants, JLD2, and HDF5 smoke tests
+      - name: Optional integration smoke tests
         run: julia --project=test/optional test/optional/runtests.jl
 
   executable-examples:
@@ -144,13 +172,13 @@ jobs:
       matrix:
         shard: ['1/2', '2/2']
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: julia-actions/setup-julia@v3
+      - uses: julia-actions/setup-julia@fa02766e078afaaf09b14210362cee14137e6a32 # v3
         with:
           version: '1.10'
-      - uses: julia-actions/cache@v3
+      - uses: julia-actions/cache@a45e8fa8be21c18a06b7177052533149e61e9b38 # v3
         with:
           delete-old-caches: 'false'
       - name: Instantiate core environment
@@ -165,13 +193,13 @@ jobs:
     env:
       JULIA_NUM_THREADS: 4
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: julia-actions/setup-julia@v3
+      - uses: julia-actions/setup-julia@fa02766e078afaaf09b14210362cee14137e6a32 # v3
         with:
           version: '1.10'
-      - uses: julia-actions/cache@v3
+      - uses: julia-actions/cache@a45e8fa8be21c18a06b7177052533149e61e9b38 # v3
         with:
           delete-old-caches: 'false'
       - name: Instantiate benchmark environment
@@ -182,3 +210,7 @@ jobs:
         run: >-
           julia --startup-file=no --project=benchmark
           benchmark/performance_regression.jl
+      - name: Productization benchmark harness smoke tests
+        run: >-
+          julia --startup-file=no --project=benchmark
+          benchmark/test_productization_harnesses.jl

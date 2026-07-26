@@ -4,6 +4,32 @@ The core package remains lightweight. Optional Julia packages activate
 extensions only after they are loaded; none changes the PI representation or
 causes a full-Hilbert reconstruction.
 
+## QuantumOptics.jl and QuantumToolbox.jl
+
+One-particle operators from either general-purpose package can be passed
+directly to `LocalHamiltonian`, `CollectiveHamiltonian`, `LocalJump`,
+`CollectiveJump`, and `collective_operator` after loading the corresponding
+package:
+
+```julia
+using PermutationalInvariantDynamics
+using QuantumOptics
+
+local_basis = NLevelBasis(2)
+lowering = transition(local_basis, 1, 2)
+basis = PIBasis(20, 2)
+model = PIModel(basis, (LocalJump(lowering; rate=0.1),))
+```
+
+The same pattern works with a QuantumToolbox `QuantumObject` of operator type.
+The bridge copies only the supplied one-site matrix and preserves its dense or
+sparse storage and scalar type. It rejects kets, superoperators, rectangular
+maps, QuantumOptics maps whose left and right Hilbert-space bases differ even
+when their dimensions agree, nonfinite data, and an operator whose dimension
+does not match the PI basis. It never imports a `d^N` state or superoperator.
+The dependency-neutral `local_operator_matrix` helper can be used explicitly
+when a script wants to inspect the detached matrix before constructing terms.
+
 ## Clarabel
 
 [Clarabel.jl](https://github.com/oxfordcontrol/Clarabel.jl) supplies the
@@ -114,6 +140,13 @@ JLD2 and HDF5 activate portable checkpoint writers described in the
 their schema and reject ambiguous or narrowing conversions.
 
 The repository's isolated optional-extension CI environment smoke-tests the
-Clarabel PPT-mixture solve, Makie conversions, QuantumCumulants lowering, and
-JLD2/HDF5 checkpoint round trips without adding any of these packages to the
-core dependency set.
+Clarabel PPT-mixture solve, Makie conversions, QuantumOptics and
+QuantumToolbox one-site imports, QuantumCumulants lowering, and JLD2/HDF5
+checkpoint round trips without adding any of these packages to the core
+dependency set.
+
+## API
+
+```@docs
+PermutationalInvariantDynamics.local_operator_matrix
+```

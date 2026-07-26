@@ -1,0 +1,36 @@
+name: Feature request
+description: Propose a new research workflow, algorithm, or API
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: Research need
+      description: What calculation should become possible or easier?
+    validations:
+      required: true
+  - type: textarea
+    id: interface
+    attributes:
+      label: Proposed user workflow
+      description: Show a compact API sketch if possible.
+  - type: textarea
+    id: references
+    attributes:
+      label: References and provenance
+      description: Cite papers and identify any existing implementation whose source would be consulted or adapted, including its license.
+    validations:
+      required: true
+  - type: textarea
+    id: scaling
+    attributes:
+      label: Scaling and validation
+      description: Expected time/RAM scaling, symmetry assumptions, and suitable test oracles.
+  - type: checkboxes
+    id: rights
+    attributes:
+      label: Source-material check
+      options:
+        - label: I disclosed relevant third-party implementations and included no confidential or unauthorized unpublished material.
+          required: true

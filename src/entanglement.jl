@@ -951,14 +951,15 @@ function _qubit_reduction_couplings(b::PIBasis{2},k::Int,
     out
 end
 
-function _qudit_reduction_couplings(b::PIBasis{D},k::Int,atol::Real) where D
+function _qudit_reduction_couplings(b::PIBasis{D},k::Int,atol::Real;
+        cache=Dict{Tuple{Partition{D},Partition{D},Partition{D}},
+                   Vector{Matrix{ComplexF64}}}(),
+        gencache=Dict{Partition{D},Vector{Matrix{ComplexF64}}}()) where D
     na=k
     nb=b.N-k
     Packed=_PackedLRIntertwiner{ComplexF64,Int}
     Coupling=_ProductSchurCoupling{ComplexF64,D,Packed}
     out=Coupling[]
-    cache=Dict{Tuple{Partition{D},Partition{D},Partition{D}},Vector{Matrix{ComplexF64}}}()
-    gencache=Dict{Partition{D},Vector{Matrix{ComplexF64}}}()
     for alpha in partitions(na,D),beta in partitions(nb,D)
         da=Int(unitary_group_dimension(alpha));db=Int(unitary_group_dimension(beta))
         intertwiners=Tuple{Int,Vector{Packed}}[]

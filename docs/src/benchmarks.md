@@ -7,7 +7,7 @@ versions, solver choices, thread settings, and hardware. A result is useful
 only together with that context and the numerical checks performed on the
 same case.
 
-There are four complementary internal suites and one cross-package track:
+There are seven complementary internal suites and one cross-package track:
 
 1. `performance_regression.jl` supplies deterministic CI correctness,
    equivalence, retained-storage, and hot-allocation gates without
@@ -16,8 +16,16 @@ There are four complementary internal suites and one cross-package track:
 3. `benchmarks.jl` is the longer `BenchmarkTools` collection for targeted
    optimization;
 4. `internal_scaling.jl` retains a stable four-family schema for core PI
-   preparation and application scaling; and
-5. the cross-package runner compares a deliberately small common operation
+   preparation and application scaling;
+5. `cold_start.jl` measures independent-process Julia startup and package-load
+   latency;
+6. `time_to_solution.jl` separates setup, solve, validation, and total time
+   for representative stationary-state, dynamics, streaming-trajectory, and
+   reduction workflows;
+7. `batched_trajectories.jl` compares fixed-capacity matrix-RHS conditional
+   trajectory kernels with equivalent repeated scalar workspaces, including
+   warmed allocation measurements; and
+8. the cross-package runner compares a deliberately small common operation
    with general-purpose Julia quantum-dynamics packages where the underlying
    representations can be matched or clearly identified.
 
@@ -28,6 +36,43 @@ and
 Generated timing tables and local manifests are intentionally ignored rather
 than committed. This avoids presenting one developer machine's measurements
 as package-wide results.
+
+## Startup latency and complete workflows
+
+Package loading and warmed numerical work answer different performance
+questions and are therefore measured by separate entry points:
+
+```sh
+julia --startup-file=no --project=benchmark \
+  benchmark/cold_start.jl --mode quick
+julia --startup-file=no --project=benchmark \
+  benchmark/time_to_solution.jl --mode quick
+```
+
+`cold_start.jl` launches one new Julia process for each raw sample. It measures
+a startup-only control and a package-load probe; the latter also reports the
+child's interval around `using PermutationalInvariantDynamics` and constructs
+a tiny basis as a deterministic smoke test.
+
+`time_to_solution.jl` first discards complete workflow warmups, then reports
+raw setup, solve, validation, and summed total rows. Its four cases exercise:
+
+- an independently pumped and decaying qubit ensemble with an analytic thermal
+  product stationary state;
+- independent emission dynamics with an analytic product state at the final
+  time;
+- fixed-seed, state-free trajectory statistics checked against binomial
+  excitation and jump-count laws; and
+- a reusable Schur reduction plan checked against the half-system GHZ
+  marginal purity.
+
+Both scripts write schema-versioned TSV plus a metadata sidecar. Run controls,
+environment and manifest hashes, Git/worktree identity, hardware, and
+validation outcomes belong with every timing table. Defaults use one discarded
+warmup, a 512 MiB explicit operation budget, and ignored files under
+`benchmark/results/`. `--dry-run` exercises parsing and metadata output without
+timing anything. The canonical options and case sizes are documented in
+[`benchmark/README.md`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/benchmark/README.md).
 
 ## Internal workflow coverage
 
@@ -141,6 +186,8 @@ julia --startup-file=no --project=benchmark \
   benchmark/performance_audit.jl
 JULIA_NUM_THREADS=4 julia --startup-file=no --project=benchmark \
   benchmark/performance_regression.jl
+julia --startup-file=no --project=benchmark \
+  benchmark/batched_trajectories.jl
 julia --startup-file=no --project=benchmark -e \
   'include("benchmark/benchmarks.jl"); display(run(SUITE; verbose=true))'
 ```

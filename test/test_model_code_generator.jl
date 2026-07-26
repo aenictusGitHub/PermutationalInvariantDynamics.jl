@@ -79,6 +79,23 @@
     page_source=read(page,String)
     make_source=read(joinpath(root,"docs","make.jl"),String)
     @test occursin("PIDModelCodeGenerator",core_source)
+    # REUSE-IgnoreStart
+    # These strings describe generated Julia output, not this test file.
+    @test occursin(
+        "lines.push(\"# SPDX-FileCopyrightText: " *
+        "2026 PermutationalInvariantDynamics.jl contributors\")",
+        core_source)
+    @test occursin(
+        "lines.push(\"# SPDX-License-Identifier: GPL-3.0-only\")",
+        core_source)
+    # REUSE-IgnoreEnd
+    @test occursin("// REUSE-IgnoreStart",core_source)
+    @test occursin("// REUSE-IgnoreEnd",core_source)
+    @test occursin(
+        "GPL-3.0-only, without an output-license exception",
+        core_source)
+    @test occursin(
+        "The JSON file is descriptive metadata",core_source)
     @test occursin("\"local-pseudomode\"",core_source)
     @test occursin("\"global-pseudomode\"",core_source)
     @test occursin("pseudomode_supersite",core_source)
@@ -178,6 +195,17 @@
         generated=read(fixture_command,String)
         parsed=Meta.parseall(generated;filename="generated_pi_steady_state.jl")
         @test !has_parse_error(parsed)
+        # REUSE-IgnoreStart
+        # This expected header describes generated output, not this test file.
+        @test startswith(
+            generated,
+            "# SPDX-FileCopyrightText: 2026 " *
+            "PermutationalInvariantDynamics.jl contributors\n#\n" *
+            "# SPDX-License-Identifier: GPL-3.0-only\n")
+        # REUSE-IgnoreEnd
+        @test occursin(
+            "# of the GNU General Public License, with no option to use a later",
+            generated)
         @test occursin("DirectPIHamiltonian",generated)
         @test occursin("LocalJump",generated)
         @test occursin("CollectiveJump",generated)
@@ -433,6 +461,14 @@
         @test length(dynamics_values)==3
         @test all(isfinite,dynamics_values)
 
+        local_dynamics_module=execute_generated(
+            expanded_generated[:local_dynamics],
+            "runtime_local_pseudomode_dynamics.jl")
+        local_dynamics_values=Core.eval(
+            local_dynamics_module,:observable_values)
+        @test length(local_dynamics_values)==3
+        @test all(isfinite,local_dynamics_values)
+
         trajectory_dynamics_module=execute_generated(
             expanded_generated[:trajectory_dynamics],
             "runtime_pi_trajectory_dynamics.jl")
@@ -445,11 +481,26 @@
         @test length(trajectory_errors)==3
         @test all(error->isfinite(error)&&error>=0,trajectory_errors)
 
+        local_trajectory_module=execute_generated(
+            local_trajectory_generated,
+            "runtime_local_pseudomode_trajectory_steady_state.jl")
+        local_trajectory_result=Core.eval(local_trajectory_module,:steady)
+        @test local_trajectory_result isa TrajectorySteadyStateResult
+        @test isfinite(local_trajectory_result.relative_residual)
+        @test validate_state(local_trajectory_result.state)===
+            local_trajectory_result.state
+
         spectrum_module=execute_generated(
             expanded_generated[:spectrum],"runtime_pi_spectrum.jl")
         spectrum_values=Core.eval(spectrum_module,:spectrum_values)
         @test length(spectrum_values)>=2
         @test all(isfinite,spectrum_values)
+
+        gap_module=execute_generated(
+            expanded_generated[:gap],"runtime_pi_gap.jl")
+        gap_result=Core.eval(gap_module,:gap_result)
+        @test isfinite(gap_result.gap)
+        @test gap_result.gap_certified
 
         analysis_module=execute_generated(
             expanded_generated[:analysis],"runtime_pi_analysis.jl")

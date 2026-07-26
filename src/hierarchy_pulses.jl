@@ -205,6 +205,12 @@ function HierarchyPulseSequence(times,pulses_input::AbstractVector)
         first_pulse.basis,converted,typed)
 end
 
+# SPDX-SnippetBegin
+# SPDX-SnippetCopyrightText: 2025 Colin Read, Eduardo Serrano-Ensástiga, and John Martin
+# SPDX-License-Identifier: CC-BY-4.0
+# The published Platonic pulse words and generator axes/angles below are
+# transcribed from Quantum 9, 1661 (2025). They are encoded and made
+# precision-generic here; see THIRD_PARTY_NOTICES.md for attribution and terms.
 const _TETRAHEDRAL_DD_WORD="abaababbbaababbbaababbaa"
 const _OCTAHEDRAL_DD_WORD=
     "abaaabbbabaabbbaababbaaa" *
@@ -252,6 +258,7 @@ function _platonic_pulse_spec(group,::Type{R}) where R<:AbstractFloat
     end
     (;axis_a,axis_b,angle_a,angle_b,word)
 end
+# SPDX-SnippetEnd
 
 function _platonic_cycle_count(cycles)
     cycles isa Integer&&!(cycles isa Bool)||throw(ArgumentError(

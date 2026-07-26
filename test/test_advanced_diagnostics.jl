@@ -20,9 +20,12 @@ end
     observable=collective_operator(b,sx)
     n=length(b);work=ResponseWorkspace(matrixfree;krylovdim=n)
 
-    modes=liouvillian_modes(matrixfree;k=3,method=:arnoldi,
+    # A single-vector Arnoldi Krylov space contains at most one direction from
+    # an exactly degenerate eigenspace.  Compare the two nondegenerate leading
+    # decay rates here; multiplicity recovery is covered by block-Arnoldi tests.
+    modes=liouvillian_modes(matrixfree;k=2,method=:arnoldi,
         krylovdim=n,rng=MersenneTwister(501))
-    dense_modes=liouvillian_modes(dense;k=3)
+    dense_modes=liouvillian_modes(dense;k=2)
     @test modes.values≈dense_modes.values atol=2e-12
     @test maximum(modes.residuals)<1e-11
     @test modes.partial_scope

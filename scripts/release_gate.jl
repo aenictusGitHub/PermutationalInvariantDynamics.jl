@@ -49,11 +49,34 @@ function release_gate(
         expected_version::Union{Nothing,VersionNumber}=nothing,
         tag_ref::Union{Nothing,AbstractString}=nothing)
     root = abspath(root)
-    required = ("Project.toml", "CITATION.cff", "CHANGELOG.md", "README.md",
-                "LICENSE", "docs/src/releasing.md")
+    required = (
+        "Project.toml",
+        "CITATION.cff",
+        "CHANGELOG.md",
+        "README.md",
+        "LICENSE",
+        "LICENSES/GPL-3.0-only.txt",
+        "LICENSES/BSD-3-Clause.txt",
+        "LICENSES/CC-BY-4.0.txt",
+        "COPYRIGHT.md",
+        "PROVENANCE.md",
+        "THIRD_PARTY_NOTICES.md",
+        "CONTRIBUTING.md",
+        "SECURITY.md",
+        "CODE_OF_CONDUCT.md",
+        "REUSE.toml",
+        "src/heom.jl",
+        "src/hierarchy_pulses.jl",
+        "docs/src/assets/example_figures/README.md",
+        "docs/src/assets/model_code_generator_core.js",
+        "docs/src/model_code_generator.md",
+        "docs/src/releasing.md",
+    )
     for filename in required
-        isfile(joinpath(root, filename)) ||
+        path = joinpath(root, filename)
+        isfile(path) ||
             error("release gate must run from the package checkout; missing $filename")
+        filesize(path) > 0 || error("required release file is empty: $filename")
     end
 
     project = TOML.parsefile(joinpath(root, "Project.toml"))
@@ -118,6 +141,120 @@ function release_gate(
     occursin("GNU GENERAL PUBLIC LICENSE", license) &&
         occursin("Version 3, 29 June 2007", license) ||
         error("LICENSE is not the canonical GPL version 3 text")
+    read(joinpath(root, "LICENSES/GPL-3.0-only.txt"), String) == license ||
+        error("LICENSES/GPL-3.0-only.txt must match the canonical root LICENSE")
+    bsd_license = read(joinpath(root, "LICENSES/BSD-3-Clause.txt"), String)
+    occursin("QuTiP developers and contributors", bsd_license) &&
+        occursin("Redistribution and use in source and binary forms", bsd_license) &&
+        occursin("THIS SOFTWARE IS PROVIDED", bsd_license) ||
+        error("LICENSES/BSD-3-Clause.txt must retain the QuTiP BSD notice")
+    cc_by_license = read(joinpath(root, "LICENSES/CC-BY-4.0.txt"), String)
+    occursin("Creative Commons Attribution 4.0 International Public License",
+            cc_by_license) &&
+        occursin("Section 3 -- License Conditions", cc_by_license) ||
+        error("LICENSES/CC-BY-4.0.txt must retain the complete CC BY 4.0 terms")
+
+    reuse = TOML.parsefile(joinpath(root, "REUSE.toml"))
+    get(reuse, "version", nothing) == 1 ||
+        error("REUSE.toml must use schema version 1")
+    annotations = get(reuse, "annotations", Any[])
+    any(annotation ->
+        get(annotation, "path", nothing) == "**" &&
+        get(annotation, "precedence", nothing) == "aggregate" &&
+        get(annotation, "SPDX-License-Identifier", nothing) ==
+            "GPL-3.0-only" &&
+        !isempty(strip(get(
+            annotation, "SPDX-FileCopyrightText", ""))),
+        annotations) ||
+        error("REUSE.toml must aggregate the project GPL/copyright notice")
+
+    copyright = read(joinpath(root, "COPYRIGHT.md"), String)
+    occursin("GPL-3.0-only", copyright) ||
+        error("COPYRIGHT.md must identify GPL-3.0-only")
+
+    provenance = read(joinpath(root, "PROVENANCE.md"), String)
+    occursin(r"(?i)\bHEOM\b", provenance) ||
+        error("PROVENANCE.md must record the HEOM implementation provenance")
+    occursin(r"(?i)\bPIQS\b", provenance) ||
+        error("PROVENANCE.md must record the PIQS-inspired feature provenance")
+
+    third_party = read(joinpath(root, "THIRD_PARTY_NOTICES.md"), String)
+    occursin(r"(?i)\bQuTiP\b", third_party) ||
+        error("THIRD_PARTY_NOTICES.md must retain the QuTiP notice")
+    occursin("BSD-3-Clause", third_party) ||
+        error("THIRD_PARTY_NOTICES.md must identify the QuTiP BSD-3-Clause license")
+    occursin("CC-BY-4.0", third_party) ||
+        error("THIRD_PARTY_NOTICES.md must identify the Platonic-sequence CC-BY-4.0 license")
+    occursin("q-2025-03-12-1661", third_party) ||
+        error("THIRD_PARTY_NOTICES.md must retain the Platonic-sequence source")
+
+    # REUSE-IgnoreStart
+    # These identifiers are expected contents of audited source snippets, not
+    # licensing declarations for this release-gate file.
+    heom_source = read(joinpath(root, "src/heom.jl"), String)
+    occursin("# SPDX-SnippetBegin", heom_source) &&
+        occursin("# SPDX-SnippetEnd", heom_source) &&
+        occursin("SPDX-License-Identifier: BSD-3-Clause", heom_source) &&
+        occursin("e5dbb0195fdbf37fb39d4e52e27c80594f8eb655",
+            heom_source) ||
+        error("src/heom.jl must retain the marked QuTiP BSD snippet")
+
+    pulse_source = read(joinpath(root, "src/hierarchy_pulses.jl"), String)
+    occursin("# SPDX-SnippetBegin", pulse_source) &&
+        occursin("# SPDX-SnippetEnd", pulse_source) &&
+        occursin("SPDX-License-Identifier: CC-BY-4.0", pulse_source) &&
+        occursin("_TETRAHEDRAL_DD_WORD", pulse_source) &&
+        occursin("_ICOSAHEDRAL_DD_WORD", pulse_source) ||
+        error("src/hierarchy_pulses.jl must retain the marked CC BY pulse data")
+    # REUSE-IgnoreEnd
+
+    contributing = read(joinpath(root, "CONTRIBUTING.md"), String)
+    occursin("GPL-3.0-only", contributing) ||
+        error("CONTRIBUTING.md must state the inbound GPL-3.0-only license")
+    occursin(r"(?i)\b(DCO|Developer Certificate of Origin)\b", contributing) ||
+        error("CONTRIBUTING.md must document the DCO contribution process")
+    occursin("Signed-off-by:", contributing) ||
+        error("CONTRIBUTING.md must document the DCO Signed-off-by trailer")
+
+    figure_provenance = read(
+        joinpath(root, "docs/src/assets/example_figures/README.md"), String)
+    occursin(r"(?i)\b(provenance|generated|generating)\b", figure_provenance) ||
+        error("the curated-figure README must record figure provenance")
+
+    generator = read(
+        joinpath(root, "docs/src/assets/model_code_generator_core.js"), String)
+    # REUSE-IgnoreStart
+    # These strings describe generated Julia output, not this release-gate file.
+    occursin(
+        "# SPDX-FileCopyrightText: 2026 " *
+        "PermutationalInvariantDynamics.jl contributors",
+        generator) ||
+        error("the model-code generator must emit a copyright SPDX header")
+    occursin("# SPDX-License-Identifier: GPL-3.0-only", generator) ||
+        error("the model-code generator must emit a GPL-3.0-only SPDX header")
+    # REUSE-IgnoreEnd
+    occursin("without an output-license exception", generator) ||
+        error("the model-code generator must emit the no-exception notice")
+
+    generator_docs = read(joinpath(root, "docs/src/model_code_generator.md"), String)
+    occursin("GPL-3.0-only", generator_docs) &&
+        occursin("without an exception for generated output", generator_docs) ||
+        error("the model-code-generator guide must document generated-code licensing")
+
+    workflow_directory = joinpath(root, ".github", "workflows")
+    for filename in readdir(workflow_directory; join=true)
+        (endswith(filename, ".yml") || endswith(filename, ".yaml")) ||
+            continue
+        source = read(filename, String)
+        for matched in eachmatch(
+                r"(?m)^\s*-?\s*uses:\s*([^#\s]+)", source)
+            action = only(matched.captures)
+            startswith(action, "./") && continue
+            occursin(r"^[^@]+@[0-9a-f]{40}$", action) ||
+                error("workflow action is not pinned to an immutable SHA: " *
+                      "$action in $(basename(filename))")
+        end
+    end
 
     tracked_manifests = _capture_git(
         root, "ls-files", "--", ":(glob)**/Manifest.toml")
@@ -144,6 +281,13 @@ function release_gate(
             error("tag $normalized does not match package version v$version")
         release_date === nothing &&
             error("tag validation requires a dated release")
+        tag_commit = only(_capture_git(
+            root, "rev-parse", "--verify", "$normalized^{commit}"))
+        checkout_commit = only(_capture_git(
+            root, "rev-parse", "--verify", "HEAD^{commit}"))
+        tag_commit == checkout_commit ||
+            error("checked-out commit $checkout_commit is not the target " *
+                  "$tag_commit of tag $normalized")
     end
 
     (

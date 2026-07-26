@@ -17,6 +17,19 @@ Initial public release candidate.
   workflows.
 - Prepared parameter scans with continuation, restart, streaming records, and
   optional threaded or distributed execution.
+- A curated `Workflow` namespace, convention-tested `Models` recipes, named
+  affine generator families, and strict one-site operator bridges for
+  QuantumOptics.jl and QuantumToolbox.jl.
+- Reproducible `PIExperiment` planning and verified deterministic solves with
+  separate physical, solver, and refinement evidence plus a versioned,
+  non-executable result archive.
+- Matrix-free counting statistics and rare-event analysis, bath-correlation
+  fitting for guarded HEOM/HOPS construction, and bounded parameter inference
+  with implicit stationary sensitivities and identifiability diagnostics.
+- Immutable prepared-geometry bundles, shared multi-bipartition reduction
+  plans, and an explicit user-owned, memory-budgeted preparation cache.
+- Fixed-capacity matrix-RHS conditional trajectory kernels with grouped jump
+  gains and trajectory-index-stable random streams.
 - Block, multi-shift, and recycled GMRES, plus adaptive matrix-free Krylov
   exponential actions and an autonomous high-level `ExpvAlgorithm` dynamics
   route with saved-state or observable-only output.
@@ -56,6 +69,10 @@ Initial public release candidate.
 - Literature validation examples, same-basename guides, package documentation,
   curated expected-output figures for every example guide, release automation,
   and a Pluto research-workflow notebook.
+- Machine-readable example discovery, verified browser-generator bundles,
+  fresh-process cold-start and complete time-to-solution harnesses, an optional
+  PackageCompiler workload, and guarded accelerator capability/resource
+  preflight without claiming an untested CUDA backend.
 
 ### Changed
 
@@ -69,6 +86,8 @@ Initial public release candidate.
 - Sensitivity systems, composite superoperators, and PI--HEOM generators now
   apply matrix right-hand sides through bounded, reusable batch workspaces;
   driven schedules are evaluated once per batched HEOM action.
+- Prepared autonomous PI sources can opt into sector-parallel Krylov actions
+  through a synchronized wrapper around task-owned threaded workspaces.
 - Schur-sector GMRES preconditioners now lower diagonal blocks directly from
   prepared kernels, including specialized family rates, while plan-less
   callbacks retain the probing fallback.
@@ -76,6 +95,16 @@ Initial public release candidate.
   sparse support. Model preflights include every distinct p-body geometry,
   driven cancellation checks traverse packed support with preallocated
   scratch, and product-irrep dimensions use checked indexing arithmetic.
+- Counting-statistics source wrappers and SCGF curves now include hidden plan
+  retention and retained reports in their memory guards; finite-time MGFs copy
+  a tilted state only when `return_info=true`.
+- Bath fitting infers precision from explicit floating-point fit controls. Its
+  precision-local default is now expressed as `rtol=nothing` (still `1e-6` in
+  the inferred type), avoiding accidental `Float32` widening while rejecting
+  silent narrowing.
+- Accelerator preflight accepts an explicit `rhs_kind`, reports the selected
+  vector/matrix representation, and rejects backends whose transfer policy is
+  not one explicit upload.
 
 ### Notes
 

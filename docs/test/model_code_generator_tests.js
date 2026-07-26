@@ -43,6 +43,34 @@
 \Gamma = 0.01`,
   });
 
+  // REUSE-IgnoreStart
+  // These strings describe generated Julia output, not this test file.
+  assertIncludes(
+    driven.code,
+    "# SPDX-FileCopyrightText: 2026 PermutationalInvariantDynamics.jl contributors",
+    "generated Julia copyright identifier",
+  );
+  assertIncludes(
+    driven.code,
+    "# SPDX-License-Identifier: GPL-3.0-only",
+    "generated Julia license identifier",
+  );
+  // REUSE-IgnoreEnd
+  assertIncludes(
+    driven.code,
+    "with no option to use a later",
+    "GPL-3.0-only generated-program notice",
+  );
+  assertIncludes(
+    driven.bundle.files[2].contents,
+    "GPL-3.0-only, without an output-license exception",
+    "bundle README generated-program license",
+  );
+  assertIncludes(
+    driven.bundle.files[2].contents,
+    "The JSON file is descriptive metadata",
+    "bundle README distinguishes the descriptive manifest",
+  );
   assertIncludes(driven.code, "LocalHamiltonian(", "one-body Hamiltonian lowering");
   assertIncludes(driven.code, "2 * spin.jx", "Pauli normalization");
   assertIncludes(driven.code, "LocalJump(jump_1;", "independent local jump");
@@ -90,6 +118,16 @@
     trajectorySteady.code,
     "TrajectoryPlan(model)",
     "trajectory route prepares channel-resolved kernels once",
+  );
+  assertIncludes(
+    trajectorySteady.code,
+    "trajectory_preflight = recommend_solver(",
+    "trajectory route performs a guarded preparation preflight",
+  );
+  assertIncludes(
+    trajectorySteady.code,
+    "memory_budget=MEMORY_BUDGET",
+    "trajectory estimator receives the declared memory budget",
   );
   assertIncludes(
     trajectorySteady.code,
@@ -337,6 +375,16 @@ g=0.15`,
   assertIncludes(globalPseudomode.code, "rho_system = trace_pseudomodes(rho_ss, embedding)", "packed system reduction");
   assertIncludes(globalPseudomode.code, "rho_mode = global_pseudomode_state", "packed mode reduction");
   assertIncludes(globalPseudomode.code, "LinearAlgebra.ishermitian(", "composite Hermiticity check");
+  assertIncludes(
+    globalPseudomode.code,
+    "does not certify positivity of the complete composite state",
+    "shared-mode code states the full-positivity limitation",
+  );
+  assert(
+    globalPseudomode.warnings.some((warning) =>
+      warning.includes("does not certify positivity")),
+    "shared-mode warning states the full-positivity limitation",
+  );
   assertIncludes(globalPseudomode.code, "mode_top_population", "global cutoff diagnostic");
   assert(!globalPseudomode.code.includes("compile(\n    embedding"), "shared model must not be compiled as an ordinary PI model");
   assert(!globalPseudomode.code.includes("kron("), "shared model stays factorized");
@@ -928,6 +976,42 @@ g=0.1`,
     }),
     "memory budget",
     "memory budget must be positive",
+  );
+
+  assertRejects(
+    () => api.generate({
+      N: 2,
+      d: 2,
+      target: "steady",
+      hamiltonian: "J_z",
+      jumps: [{ operator: "j_-", rate: "0.1" }],
+    }),
+    "jump 1 kind",
+    "missing jump semantics are rejected instead of defaulting to local",
+  );
+  assertRejects(
+    () => api.generate({
+      N: 2,
+      d: 2,
+      target: "steady",
+      hamiltonian: "J_z",
+      jumps: [{ kind: "diagonal", operator: "j_-", rate: "0.1" }],
+    }),
+    "jump 1 kind",
+    "unknown jump semantics are rejected",
+  );
+
+  const zeroRate = api.generate({
+    N: 2,
+    d: 2,
+    target: "steady",
+    hamiltonian: "J_z",
+    jumps: [{ kind: "local", operator: "j_-", rate: 0 }],
+  });
+  assertIncludes(
+    zeroRate.code,
+    "LocalJump(jump_1; rate=0.0)",
+    "a numeric zero jump rate is preserved",
   );
 
   assertRejects(

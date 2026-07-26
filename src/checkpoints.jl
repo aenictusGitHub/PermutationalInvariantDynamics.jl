@@ -70,6 +70,14 @@ end
 
 function _read_checkpoint_string(io)
     length_value=Int(read(io,UInt32))
+    # Reject a corrupt length before `read(io, length_value)` can request a
+    # large allocation from a short untrusted file.
+    current=position(io)
+    seekend(io)
+    remaining=position(io)-current
+    seek(io,current)
+    length_value<=remaining||throw(ArgumentError(
+        "checkpoint string length exceeds the remaining file payload"))
     String(read(io,length_value))
 end
 

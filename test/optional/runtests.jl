@@ -1,9 +1,12 @@
 using Test
 using LinearAlgebra
+using SparseArrays
 using PermutationalInvariantDynamics
 using Clarabel
 using Makie
 using QuantumCumulants
+import QuantumOptics
+import QuantumToolbox
 using JLD2
 using HDF5
 
@@ -18,6 +21,10 @@ using HDF5
         :PermutationalInvariantDynamicsJLD2Ext)!==nothing
     @test Base.get_extension(PermutationalInvariantDynamics,
         :PermutationalInvariantDynamicsHDF5Ext)!==nothing
+    @test Base.get_extension(PermutationalInvariantDynamics,
+        :PermutationalInvariantDynamicsQuantumOpticsExt)!==nothing
+    @test Base.get_extension(PermutationalInvariantDynamics,
+        :PermutationalInvariantDynamicsQuantumToolboxExt)!==nothing
 
     spectrum=liouvillian_spectrum_data(ComplexF64[0,-1+0.25im])
     x,y=Makie.convert_arguments(Makie.Scatter,spectrum)
@@ -57,6 +64,48 @@ using HDF5
             @test loaded.metadata==checkpoint.metadata
         end
     end
+end
+
+@testset "optional local-operator interchange" begin
+    basis=PIBasis(3,2)
+    expected=ComplexF64[0 1;0 0]
+
+    qo_basis=QuantumOptics.NLevelBasis(2)
+    qo_lowering=QuantumOptics.DenseOperator(qo_basis,expected)
+    @test local_operator_matrix(qo_lowering;dimension=2)==expected
+    @test LocalJump(qo_lowering;rate=0.2).operator==expected
+    @test collective_operator(basis,qo_lowering).data≈
+        collective_operator(basis,expected).data
+    qo_sparse=QuantumOptics.SparseOperator(qo_basis,sparse(expected))
+    @test local_operator_matrix(qo_sparse) isa SparseMatrixCSC
+    @test_throws ArgumentError local_operator_matrix(
+        QuantumOptics.Ket(qo_basis,ComplexF64[1,0]))
+    @test_throws ArgumentError local_operator_matrix(
+        QuantumOptics.spre(qo_lowering))
+    qo_other_basis=QuantumOptics.FockBasis(1)
+    qo_basis_map=QuantumOptics.DenseOperator(
+        qo_basis,qo_other_basis,expected)
+    @test_throws ArgumentError local_operator_matrix(qo_basis_map)
+    @test_throws ArgumentError LocalJump(qo_basis_map;rate=0.2)
+    @test_throws ArgumentError local_operator_matrix(
+        QuantumOptics.DenseOperator(
+            qo_basis,ComplexF64[NaN 0;0 0]))
+
+    qt_lowering=QuantumToolbox.QuantumObject(expected)
+    @test local_operator_matrix(qt_lowering;dimension=2)==expected
+    @test CollectiveJump(qt_lowering;rate=0.2).operator==expected
+    @test collective_operator(basis,qt_lowering).data≈
+        collective_operator(basis,expected).data
+    qt_sparse=QuantumToolbox.QuantumObject(sparse(expected))
+    @test local_operator_matrix(qt_sparse) isa SparseMatrixCSC
+    @test_throws ArgumentError local_operator_matrix(
+        QuantumToolbox.QuantumObject(ComplexF64[1,0]))
+    @test_throws ArgumentError local_operator_matrix(
+        QuantumToolbox.spre(qt_lowering))
+    @test_throws ArgumentError local_operator_matrix(
+        QuantumToolbox.QuantumObject(ComplexF64[NaN 0;0 0]))
+    @test_throws DimensionMismatch local_operator_matrix(
+        QuantumToolbox.QuantumObject(zeros(ComplexF64,3,3));dimension=2)
 end
 
 @testset "optional Clarabel PI PPT-mixture solver" begin

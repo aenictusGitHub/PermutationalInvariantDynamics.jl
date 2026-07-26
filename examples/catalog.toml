@@ -1,0 +1,218 @@
+schema_version = 1
+
+# Curated, user-facing examples. This is intentionally not an inventory of
+# every script in examples/: README.md remains the exhaustive index.
+#
+# Runtime classes describe a default root-environment run after package
+# precompilation:
+#   instant  < 10 s, short < 1 min, medium < 5 min, long >= 5 min.
+
+[[example]]
+id = "getting-started"
+title = "From a PI model to dynamics and a stationary state"
+script = "examples/getting_started.jl"
+guide = "examples/getting_started.md"
+difficulty = "beginner"
+tasks = ["dynamics", "steady-state", "observables", "convergence"]
+runtime_class = "short"
+stochastic = false
+optional_dependencies = ["CairoMakie"]
+citation = "PermutationalInvariantDynamics.jl model-to-solution tutorial"
+model_recipe = "Models.driven_qubits"
+expected_outputs = ["docs/src/assets/example_figures/getting_started.png"]
+
+[[example]]
+id = "driven-qubits"
+title = "Driven qubits with independent decay"
+script = "examples/driven_qubits.jl"
+guide = "examples/driven_qubits.md"
+difficulty = "beginner"
+tasks = ["dynamics", "observables", "one-body-rdm"]
+runtime_class = "short"
+stochastic = false
+optional_dependencies = ["CairoMakie"]
+citation = "PermutationalInvariantDynamics.jl driven-qubit validation example"
+model_recipe = "Models.driven_qubits"
+expected_outputs = ["docs/src/assets/example_figures/driven_qubits.png"]
+
+[[example]]
+id = "one-axis-twisting"
+title = "One-axis twisting and spin squeezing"
+script = "examples/one_axis_twisting.jl"
+guide = "examples/one_axis_twisting.md"
+difficulty = "intermediate"
+tasks = ["dynamics", "spin-squeezing", "entanglement"]
+runtime_class = "short"
+stochastic = false
+optional_dependencies = ["CairoMakie"]
+citation = "Kitagawa and Ueda, Phys. Rev. A 47, 5138 (1993)"
+model_recipe = "Models.one_axis_twisting"
+expected_outputs = ["docs/src/assets/example_figures/one_axis_twisting.png"]
+
+[[example]]
+id = "steady-superradiance"
+title = "Pumped steady-state superradiance"
+script = "examples/steady_superradiance.jl"
+guide = "examples/steady_superradiance.md"
+difficulty = "intermediate"
+tasks = ["steady-state", "observables", "finite-size-scaling"]
+runtime_class = "medium"
+stochastic = false
+optional_dependencies = ["CairoMakie"]
+citation = "Meiser and Holland, Phys. Rev. A 81, 033847 (2010)"
+model_recipe = "Models.steady_superradiance"
+expected_outputs = ["docs/src/assets/example_figures/steady_superradiance.png"]
+
+[[example]]
+id = "steady-state-methods"
+title = "Choosing and validating a stationary-state solver"
+script = "examples/steady_state_methods.jl"
+guide = "examples/steady_state_methods.md"
+difficulty = "intermediate"
+tasks = ["steady-state", "solver-selection", "preconditioning", "diagnostics"]
+runtime_class = "short"
+stochastic = false
+optional_dependencies = ["CairoMakie"]
+citation = "PermutationalInvariantDynamics.jl stationary-solver comparison"
+expected_outputs = ["docs/src/assets/example_figures/steady_state_methods.png"]
+
+[[example]]
+id = "parameter-scan"
+title = "Prepared continuation over a parameter grid"
+script = "examples/parameter_scan.jl"
+guide = "examples/parameter_scan.md"
+difficulty = "intermediate"
+tasks = ["parameter-scan", "continuation", "checkpointing", "sensitivities"]
+runtime_class = "medium"
+stochastic = false
+optional_dependencies = ["CairoMakie"]
+citation = "PermutationalInvariantDynamics.jl prepared-scan workflow"
+expected_outputs = ["docs/src/assets/example_figures/parameter_scan.png"]
+
+[[example]]
+id = "quantum-trajectories"
+title = "Independent-emitter quantum-trajectory benchmark"
+script = "examples/quantum_trajectories.jl"
+guide = "examples/quantum_trajectories.md"
+difficulty = "intermediate"
+tasks = ["quantum-trajectories", "online-statistics", "analytical-validation"]
+runtime_class = "medium"
+stochastic = true
+optional_dependencies = ["CairoMakie"]
+citation = "Mølmer, Castin, and Dalibard, J. Opt. Soc. Am. B 10, 524 (1993)"
+expected_outputs = ["docs/src/assets/example_figures/independent_emitter_quantum_trajectories.png"]
+
+[[example]]
+id = "weak-pi-trajectories"
+title = "Weak-PI pseudo-ket trajectories"
+script = "examples/weak_pi_trajectories.jl"
+guide = "examples/weak_pi_trajectories.md"
+difficulty = "advanced"
+tasks = ["weak-pi", "quantum-trajectories", "steady-state", "method-comparison"]
+runtime_class = "medium"
+stochastic = true
+optional_dependencies = ["CairoMakie"]
+citation = "Lloyd, Ziolkowska, and Keeling, Permutation-symmetric quantum trajectories, arXiv:2605.11103 (2026)"
+expected_outputs = [
+    "docs/src/assets/example_figures/weak_pi_decay_trajectory_comparison.png",
+    "docs/src/assets/example_figures/weak_pi_trajectories_method_comparison.png",
+]
+
+[[example]]
+id = "pi-heom"
+title = "Deterministic PI hierarchy equations of motion"
+script = "examples/pi_heom.jl"
+guide = "examples/pi_heom.md"
+difficulty = "advanced"
+tasks = ["heom", "non-markovian-dynamics", "hierarchy-convergence"]
+runtime_class = "medium"
+stochastic = false
+optional_dependencies = ["CairoMakie"]
+citation = "Tanimura, J. Chem. Phys. 153, 020901 (2020)"
+expected_outputs = ["docs/src/assets/example_figures/pi_heom.png"]
+
+[[example]]
+id = "pi-hops"
+title = "Stochastic PI hierarchy of pure states"
+script = "examples/pi_hops.jl"
+guide = "examples/pi_hops.md"
+difficulty = "advanced"
+tasks = ["hops", "non-markovian-dynamics", "ensemble-convergence"]
+runtime_class = "medium"
+stochastic = true
+optional_dependencies = ["CairoMakie"]
+citation = "Suess, Eisfeld, and Strunz, Phys. Rev. Lett. 113, 150403 (2014)"
+expected_outputs = ["docs/src/assets/example_figures/pi_hops.png"]
+
+[[example]]
+id = "nonmarkovian-dynamical-decoupling"
+title = "Dynamical decoupling with PI-HOPS and PI-HEOM"
+script = "examples/nonmarkovian_dynamical_decoupling.jl"
+guide = "examples/nonmarkovian_dynamical_decoupling.md"
+difficulty = "advanced"
+tasks = ["hops", "heom", "control", "filter-functions", "convergence"]
+runtime_class = "long"
+stochastic = true
+optional_dependencies = ["CairoMakie"]
+citation = "Colin Read, Studying pure dephasing and dynamical decoupling (2023 report)"
+expected_outputs = ["docs/src/assets/example_figures/nonmarkovian_dynamical_decoupling.png"]
+
+[[example]]
+id = "local-pseudomodes"
+title = "All-to-all spins with identical local pseudomodes"
+script = "examples/all_to_all_xx_spin_local_pseudomodes.jl"
+guide = "examples/all_to_all_xx_spin_local_pseudomodes.md"
+difficulty = "advanced"
+tasks = ["pseudomodes", "steady-state", "negativity", "parameter-map"]
+runtime_class = "long"
+stochastic = false
+optional_dependencies = ["CairoMakie"]
+citation = "Debecker et al., Generating spatial correlations in Ising chains via bath engineering (2026 draft); PI all-to-all specialization"
+expected_outputs = [
+    "docs/src/assets/example_figures/all_to_all_xx_spin_local_pseudomodes.png",
+    "docs/src/assets/example_figures/all_to_all_xx_spin_local_pseudomodes_cutoff.png",
+    "docs/src/assets/example_figures/all_to_all_xx_spin_local_pseudomodes_ghz.png",
+]
+
+[[example]]
+id = "global-pseudomode"
+title = "One pseudomode shared by a PI ensemble"
+script = "examples/global_pseudomode_cavity.jl"
+guide = "examples/global_pseudomode_cavity.md"
+difficulty = "advanced"
+tasks = ["global-pseudomode", "composite-dynamics", "partial-trace", "cutoff-convergence"]
+runtime_class = "medium"
+stochastic = false
+optional_dependencies = ["CairoMakie"]
+citation = "Garraway, Phys. Rev. A 55, 2290 (1997)"
+expected_outputs = ["docs/src/assets/example_figures/global_pseudomode_cavity.png"]
+
+[[example]]
+id = "composite-ensembles"
+title = "Factorized dynamics of several PI subsystems"
+script = "examples/composite_ensembles.jl"
+guide = "examples/composite_ensembles.md"
+difficulty = "advanced"
+tasks = ["composite-systems", "matrix-free-dynamics", "partial-trace", "batch-action"]
+runtime_class = "short"
+stochastic = false
+optional_dependencies = ["CairoMakie"]
+citation = "PermutationalInvariantDynamics.jl composite-system workflow"
+expected_outputs = ["docs/src/assets/example_figures/composite_ensembles.png"]
+
+[[example]]
+id = "spectral-visualization"
+title = "Liouvillian and Floquet spectral visualization"
+script = "examples/spectral_visualization.jl"
+guide = "examples/spectral_visualization.md"
+difficulty = "intermediate"
+tasks = ["liouvillian-spectrum", "floquet-spectrum", "visualization"]
+runtime_class = "short"
+stochastic = false
+optional_dependencies = []
+citation = "PermutationalInvariantDynamics.jl compressed-spectrum workflow"
+expected_outputs = [
+    "docs/src/assets/example_figures/spectral_visualization_liouvillian.svg",
+    "docs/src/assets/example_figures/spectral_visualization_floquet_multipliers.svg",
+    "docs/src/assets/example_figures/spectral_visualization_floquet_exponents.svg",
+]

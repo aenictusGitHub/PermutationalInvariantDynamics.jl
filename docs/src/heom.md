@@ -244,6 +244,11 @@ parameters; use Matsubara for BigFloat. A coincident Drude and thermal pole is
 rejected because the separate terms are singular and require a combined
 analytic limit. Padé setup has the package-wide 512 MiB `memory_budget`; use
 `Inf` only as an explicit opt-out after checking the quadratic eigensystem.
+The Padé parameter routine was adapted from QuTiP's BSD-3-Clause HEOM bath
+implementation and modified for the package's precision, validation, and
+memory contracts. The exact revision, affected routine, modifications, and
+complete upstream notice are recorded in
+[`THIRD_PARTY_NOTICES.md`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/THIRD_PARTY_NOTICES.md).
 
 ```julia
 bath = drude_lorentz_bath(

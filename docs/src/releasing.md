@@ -4,12 +4,29 @@ The repository contains the metadata and automation needed for registration,
 but registration itself must be triggered by a maintainer after reviewing a
 clean release commit. Do not register an unreviewed working tree.
 
+The first-release sequence is deliberately one-way:
+
+```text
+clean candidate
+    -> assign one matching CHANGELOG/CITATION release date
+    -> run the finalized release gate and green CI
+    -> ask Registrator to open the General pull request
+    -> merge the General pull request
+    -> let TagBot create the immutable version tag
+    -> let tag-triggered CI verify the tag and build versioned docs
+```
+
+Do not create, move, or reuse the version tag by hand.
+
 ## Release gate
 
 The dependency-free metadata gate checks the package/citation/changelog
 version, release-date state, GPL identifier and canonical license, public
-URLs, the tracked-manifest policy, generated-output paths, and optionally the
-complete nonignored worktree:
+URLs, required copyright/provenance/third-party records, the tracked-manifest
+policy, generated-output paths, and optionally the complete nonignored
+worktree.
+
+During ordinary development and candidate preparation, run:
 
 ```sh
 julia --startup-file=no scripts/release_gate.jl \
@@ -17,10 +34,25 @@ julia --startup-file=no scripts/release_gate.jl \
 ```
 
 It deliberately accepts a synchronized release candidate whose changelog is
-still marked `Unreleased`. After a release date actually exists in both
-`CHANGELOG.md` and `CITATION.cff`, add `--require-released`. The script only
-validates local metadata: it never creates or moves a tag, publishes a GitHub
-release, or contacts General.
+still marked `Unreleased`. Before asking Registrator to act, replace
+`Unreleased` with the intended release date, add the same `date-released` to
+`CITATION.cff`, and run the stricter gate:
+
+```sh
+julia --startup-file=no scripts/release_gate.jl \
+  --expect-version X.Y.Z --require-clean --require-released
+```
+
+If publication must move to another date, update both files in a new candidate
+commit and repeat every final check before registration. Do not repair release
+metadata after a version tag has been published. The script only validates
+local metadata: it never creates or moves a tag, publishes a GitHub release,
+or contacts General.
+
+The **CI** workflow has a manual `release_readiness` input. Dispatch it with
+that input enabled on the exact dated release commit. This makes the hosted
+metadata job use `--require-released`; an ordinary push or pull request keeps
+using the candidate gate.
 
 Before changing the public version:
 
@@ -45,13 +77,28 @@ Before changing the public version:
 3. Review every public API change, numerical convention, convergence claim,
    and literature comparison. Update `CHANGELOG.md`, `Project.toml`, and the
    version in `CITATION.cff` together.
-4. Confirm `LICENSE` is the canonical GPL-3.0-only text and that repository,
-   documentation, and citation URLs agree.
-5. Require green GitHub CI and documentation checks on the exact commit that
-   will be registered. In particular, confirm both `executable examples`
-   shards and the `release metadata` job. On a `vX.Y.Z` push, that job
-   automatically switches to `--require-released --tag-ref refs/tags/vX.Y.Z`;
-   an undated or version-mismatched release tag therefore fails.
+4. Audit ownership and provenance before relying on the GPL declaration:
+   confirm contributor and employer/institution rights; review
+   `COPYRIGHT.md`, `PROVENANCE.md`, and `THIRD_PARTY_NOTICES.md`; retain the
+   original notice, license, exact upstream revision, and modification record
+   for adapted code; and verify the provenance ledger for curated figures.
+   Review the browser assistant's generated-code license separately because
+   its output contains reusable template text.
+5. Confirm `LICENSE` is the canonical GPL-3.0-only text and that repository,
+   documentation, and citation URLs agree. Re-audit licenses for dependencies
+   and binary artifacts whenever distributing a sysimage, application,
+   container, or offline bundle rather than only package source. Confirm every
+   external GitHub Action is pinned to a reviewed full commit SHA; Dependabot's
+   monthly GitHub-Actions pull requests are the update path for those pins.
+6. Run `reuse lint` and require the pinned **REUSE licensing** CI job to pass.
+   This verifies file-level declarations and every license text independently
+   of the package's metadata gate.
+7. Assign the intended release date to both the current `CHANGELOG.md` heading
+   and `CITATION.cff`, then run the strict `--require-released` gate.
+8. Require green GitHub CI and documentation checks on the exact dated commit
+   that will be registered. In particular, confirm both `executable examples`
+   shards and the manually dispatched `release metadata` job with
+   `release_readiness=true`.
 
 ## Documentation deployment
 
@@ -84,17 +131,28 @@ generated documentation commit on `main`.
 
 ## Registering
 
-Install the JuliaRegistrator GitHub App for the repository, then comment
+Install the JuliaRegistrator GitHub App for the repository. Configure a GitHub
+tag ruleset for `v*` that prevents published tags from being updated or
+deleted except by the narrowly authorized release automation.
+
+Only after the exact dated commit passes the strict local gate and the manual
+release-readiness CI run, comment
 
 ```text
 @JuliaRegistrator register
 ```
 
-on a commit or issue after the release gate passes. Review the generated
-General-registry pull request. Once it merges, TagBot uses the repository's
-configured credentials to create the version tag, which in turn builds
-versioned documentation. Add `date-released` to `CITATION.cff` only after that
-release actually exists.
+on that commit or its issue. Review the generated General-registry pull
+request. Once it merges, TagBot uses the repository's configured credentials
+to create the version tag; do not create the tag in advance. The tag push runs
+the release-metadata gate with
+`--require-released --tag-ref refs/tags/vX.Y.Z`. That check verifies the tag
+name, dated package metadata, and that the workflow checkout is the commit
+targeted by the tag. The same tag then builds versioned documentation.
+
+If General does not merge on the assigned date, stop the release, close or
+supersede the pending registration, update both date fields, and rerun the
+strict gate and hosted checks on the new commit. Never move a published tag.
 
 For later releases, increase the semantic version, update the changelog, and
 repeat the same clean-checkout gate. Never reuse or move an existing version

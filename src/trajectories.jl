@@ -6,6 +6,25 @@ struct QuantumTrajectory{T,S<:PIState}
     jump_channels::Vector{Int}
 end
 
+function _trajectory_steady_runtime_bytes(rho0,prepared_storage,
+        worker_count,path_count,sample_count,observable_count,::Type{R}) where R
+    state_entries=BigInt(length(rho0.data))
+    # Each worker owns one post-settling sampler mean and one path-mean
+    # accumulator. The final state is constructed while those accumulators
+    # remain live.
+    state_bytes=_performance_entries_bytes(
+        (2BigInt(worker_count)+1)*state_entries,eltype(rho0.data))
+    seed_bytes=_performance_entries_bytes(path_count,UInt64)
+    time_bytes=_performance_entries_bytes(2BigInt(sample_count)+1,R)
+    # Per worker: one observable buffer plus mean/M2. The returned summary
+    # retains mean, variance, standard error, and two confidence endpoints.
+    observable_entries=BigInt(observable_count)*
+        (3BigInt(worker_count)+5)
+    observable_bytes=_performance_entries_bytes(observable_entries,R)
+    BigInt(prepared_storage)+state_bytes+seed_bytes+time_bytes+
+        observable_bytes
+end
+
 """
     TrajectoryEnsembleResult
 
@@ -1855,6 +1874,7 @@ end
         samples_per_trajectory=1, sampling_interval=nothing,
         seed=0, threaded=false, workspace=nothing,
         observables=nothing, confidence=0.95, return_info=false,
+        memory_budget=512*1024^2,
         parameters=nothing, max_jump_probability=0.05,
         algorithm=:fixed, abstol=1e-9, reltol=1e-7,
         dtmin=eps(R), dtmax=dt, event_time_tolerance=1e-10)
@@ -1894,6 +1914,12 @@ state is never normalized, symmetrized, or positivity-repaired. With
 variances, standard errors, and normal confidence intervals across the
 independent path means; requesting observables without the detailed result is
 rejected rather than computing and discarding their statistics.
+
+`memory_budget` guards the retained prepared plan/workspace and the predictable
+sampling, accumulator, seed, and result arrays. For a raw `PIModel`, an
+assembly-free preparation preflight also runs before trajectory lowering.
+`Inf` is the explicit opt-out. Allocator metadata and RNG implementation
+storage remain outside the estimate.
 """
 function trajectory_steady_state(
         source::Union{PIModel,CompiledPIModel,TrajectoryPlan},
@@ -1901,10 +1927,12 @@ function trajectory_steady_state(
         samples_per_trajectory::Integer=1,sampling_interval=nothing,
         seed::Integer=0,threaded::Bool=false,workspace=nothing,
         observables=nothing,confidence::Real=0.95,return_info::Bool=false,
+        memory_budget=_DEFAULT_HIGHLEVEL_MEMORY_BUDGET,
         parameters=nothing,max_jump_probability=nothing,
         algorithm::Symbol=:fixed,abstol=nothing,reltol=nothing,
         dtmin=nothing,dtmax=nothing,event_time_tolerance=nothing) where
         {R<:AbstractFloat}
+    _resource_memory_budget(memory_budget)
     path_count_int=_trajectory_integer_count(trajectories,"trajectories",2)
     samples_per_path=_trajectory_integer_count(
         samples_per_trajectory,"samples_per_trajectory",1)
@@ -1915,6 +1943,18 @@ function trajectory_steady_state(
     0<confidence<1||throw(ArgumentError("confidence must lie in (0,1)"))
     observables!==nothing&&!return_info&&throw(ArgumentError(
         "trajectory steady-state observables require return_info=true"))
+
+    preparation_peak=big(0)
+    if source isa PIModel
+        recommendation=recommend_solver(
+            source;task=:dynamics,algorithm=:rk4,samples=1,saved_states=0,
+            memory_budget,T=R)
+        recommendation.budget_status===:exceeds&&throw(ArgumentError(
+            "trajectory steady-state preparation exceeds memory_budget=$memory_budget bytes; " *
+            "inspect recommend_solver(model; task=:dynamics, algorithm=:rk4) " *
+            "or raise the explicit budget"))
+        preparation_peak=recommendation.known_peak_bytes
+    end
 
     if workspace===nothing
         plan=_plan_for_source(source,rho0)
@@ -1965,6 +2005,17 @@ function trajectory_steady_state(
         workers=batch.workers
         rngs=batch.rngs
     end
+
+    prepared_storage=Base.summarysize(
+        batch===nothing ? workspace : batch)
+    runtime_bytes=_trajectory_steady_runtime_bytes(
+        rho0,prepared_storage,worker_count,path_count_int,
+        samples_per_path,length(ops),R)
+    _require_performance_budget(
+        "trajectory steady-state estimator",
+        max(preparation_peak,runtime_bytes),memory_budget;
+        guidance="Reduce active workers or trajectory output, reuse a smaller " *
+                 "workspace, or raise the explicit memory budget.")
 
     samplers=[_TrajectoryStateSampler(rho0.data) for _ in 1:worker_count]
     state_accumulators=[_OnlineStateAccumulator(rho0.data)

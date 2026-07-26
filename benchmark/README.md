@@ -1,6 +1,6 @@
 # Benchmarks
 
-This directory separates four complementary internal performance tasks:
+This directory separates seven complementary internal performance tasks:
 
 - `performance_regression.jl` provides small deterministic CI correctness,
   equivalence, retained-storage, and hot-allocation gates. It deliberately
@@ -14,6 +14,17 @@ This directory separates four complementary internal performance tasks:
 - `internal_scaling.jl` produces machine-readable scaling tables for one
   stable four-family core workload. It does not replace the broader regression,
   audit, or detailed suites.
+- `cold_start.jl` measures fresh-process Julia startup and package-load
+  latency. Each row comes from a separate Julia process, and the package-load
+  probe reports both external wall time and the interval surrounding `using`
+  inside the child.
+- `time_to_solution.jl` measures warmed end-to-end workflows with setup,
+  solve, validation, and total phases reported separately for a stationary
+  state, deterministic dynamics, streaming trajectories, and a prepared
+  particle reduction.
+- `batched_trajectories.jl` compares a fixed-capacity matrix-RHS conditional
+  trajectory cohort with mathematically identical repeated scalar workspaces.
+  It reports timing and warmed allocations without changing path scheduling.
 
 The detailed suite includes an `N=64` symmetric collective group with separate
 plan construction, sparse-first materialization, `:auto` compilation, sparse
@@ -68,6 +79,8 @@ JULIA_NUM_THREADS=4 julia --startup-file=no --project=benchmark \
   benchmark/performance_regression.jl
 julia --startup-file=no --project=benchmark \
   benchmark/performance_audit.jl
+julia --startup-file=no --project=benchmark \
+  benchmark/batched_trajectories.jl
 ```
 
 Load and run the longer suite from the isolated benchmark environment:
@@ -75,6 +88,66 @@ Load and run the longer suite from the isolated benchmark environment:
 ```sh
 julia --startup-file=no --project=benchmark -e \
   'include("benchmark/benchmarks.jl"); display(run(SUITE; verbose=true))'
+```
+
+## Cold-start and end-to-end time to solution
+
+Fresh-process latency is intentionally separate from warmed numerical
+workloads:
+
+```sh
+julia --startup-file=no --project=benchmark \
+  benchmark/cold_start.jl --mode quick
+julia --startup-file=no --project=benchmark \
+  benchmark/cold_start.jl --mode full
+```
+
+The startup probe launches Julia without loading the package. The load probe
+starts another process, executes `using PermutationalInvariantDynamics`, and
+constructs a tiny PI basis as a correctness smoke test. Child startup and
+history files are disabled. The default child thread count is one; change it
+explicitly with `--threads`. Discarded process warmups establish the ordinary
+warm-precompile-cache measurement policy. They do not turn a child into a
+reused process.
+
+Run the four complete numerical workflows with:
+
+```sh
+julia --startup-file=no --project=benchmark \
+  benchmark/time_to_solution.jl --mode quick
+julia --startup-file=no --project=benchmark \
+  benchmark/time_to_solution.jl --mode full
+```
+
+Every measured repetition reconstructs its basis, physical model, and
+prepared resources in the `setup` phase. `solve` measures only the requested
+numerical result, and `validation` compares it with an analytic state,
+observable law, sampling-confidence bound, or GHZ marginal. A `total` row is
+the sum of those three phases. The trajectory workload uses deterministic
+index-derived seeds and online observable/jump statistics, so it does not
+retain a state history merely for benchmarking. All high-level solves receive
+the explicit memory budget selected by `--memory-budget-mib`; the reduction
+case additionally enforces a conservative retained-setup bound before
+constructing its plan.
+
+Quick mode defaults to two measured repetitions after one discarded complete
+warmup; full mode uses seven. These are raw repetitions, not
+`BenchmarkTools` microbenchmarks. Both scripts accept `--samples`,
+`--warmups`, `--output`, and `--dry-run`. The default ignored outputs are:
+
+- `benchmark/results/cold_start_<mode>.tsv`;
+- `benchmark/results/time_to_solution_<mode>.tsv`;
+- a sibling `.metadata.tsv` for each result.
+
+The sidecars record the active project and manifest hashes, Julia, CPU, BLAS,
+threads, Git revision/worktree hash, phase policy, and run controls. Keep the
+raw TSV and sidecar together. Do not commit machine-specific results.
+
+The dependency-light parser and dry-run checks can be run independently:
+
+```sh
+julia --startup-file=no --project=benchmark \
+  benchmark/test_productization_harnesses.jl
 ```
 
 ## Internal scaling benchmark

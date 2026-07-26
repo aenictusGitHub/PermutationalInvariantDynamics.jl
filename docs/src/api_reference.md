@@ -25,6 +25,7 @@ PermutationalInvariantDynamics
 | [Stationary states, spectra, and research solvers](api/solvers.md) | Direct and Krylov solvers, Liouvillian spectra and gaps, Evans tests, weak symmetries, response, memory estimates, and typed high-level commands |
 | [Visualization](api/visualization.md) | Schur-block, density-spectrum, Liouvillian-spectrum, Floquet-spectrum, and spin phase-space SVG renderers |
 | [Streaming output](streaming_output.md) | Observable-only deterministic evolution and state-free online trajectory statistics |
+| [Matrix-RHS trajectory cohorts](batched_trajectories.md) | Fixed-capacity conditional propagation, intensities, grouped gains, and index-stable stochastic streams |
 | [Weak-PI pseudo-ket trajectories](weak_pi_trajectories.md) | Direct-sum Schur-irrep pseudo-kets and sector-changing local Kraus branches |
 | [Quantum regression and spectra](correlations.md) | Prepared two-time correlations, delayed intensity correlations, shifted-GMRES spectra, and finite-window FFTs |
 | [Higher-order cumulant bridge](cumulant_bridge.md) | Exact distinct-site PI moments, neutral microscopic metadata, closure comparisons, and the optional QuantumCumulants adapter |
@@ -34,17 +35,26 @@ PermutationalInvariantDynamics
 | [Composite systems](composite_systems.md) | Multiple PI ensembles, finite auxiliary factors, preallocated tensor-product superoperators, and density-valued quantum jumps |
 | [Global pseudomodes and shared cavities](global_pseudomodes.md) | One shared finite-cutoff mode, collective coupling, factorized dynamics, cutoff observables, and system/mode reductions |
 | [Local pseudomodes and PI supersites](pseudomodes.md) | Identical finite-cutoff local modes, system-term lifting, matrix-free dynamics, cutoff checks, and prepared mode tracing |
+| [Reusable prepared geometry](prepared_artifacts.md) | Immutable representation bundles and an explicit user-owned preparation cache |
 | [Prepared parameter scans](parameter_scans.md) | Continuation, resumable point records, deterministic threaded scans, and tabular exports |
 | [Block, multi-shift, and recycled Krylov](krylov_extensions.md) | Thick-restarted block spectra, multiple-right-hand-side solves, shifted families, recycled subspaces, and exponential actions |
+| [Optional accelerators](accelerators.md) | Device capability reports, sparse-upload resource preflight, and guarded extension contracts |
 | [PI--HEOM non-Markovian dynamics](heom.md) | PI auxiliary-density hierarchies, matrix-free propagation, and stationary states |
 | [PI--HOPS stochastic non-Markovian dynamics](hops.md) | Direct-sum Schur-irrep pure-state hierarchies, colored-noise trajectories, and Monte Carlo density reconstruction |
 | [Numerical convergence reports](convergence.md) | Time-step, Krylov, HEOM-depth, and sector-cutoff refinement evidence |
-| [Optional ecosystem integrations](interoperability.md) | Tables and Makie data adapters, process-parallel scans/ensembles, symbolic cumulants, and checkpoint backends |
+| [Reproducible verified experiments](experiments.md) | Typed calculations, resource explanations, physical/solver/refinement evidence, and portable result archives |
+| [Counting statistics and rare events](counting_statistics.md) | Matrix-free tilted generators, finite-time MGFs, SCGFs, cumulants, and discrete rate functions |
+| [Bath-correlation fitting](bath_fitting.md) | Spectral quadrature, finite exponential fits, rank diagnostics, and guarded HEOM/HOPS bath construction |
+| [Parameter inference](inference.md) | Bounded weighted fitting, implicit stationary sensitivities, Fisher matrices, and identifiability diagnostics |
+| [Optional ecosystem integrations](interoperability.md) | QuantumOptics/QuantumToolbox operator bridges, Tables and Makie adapters, process-parallel scans/ensembles, symbolic cumulants, and checkpoint backends |
 
 ## Alphabetical index
 
 ```@index
-Modules = [PermutationalInvariantDynamics]
-Pages = ["api/representation.md", "api/dynamics.md", "api/analysis.md", "api/solvers.md", "api/visualization.md", "streaming_output.md", "diffusive_monitoring.md", "weak_pi_trajectories.md", "correlations.md", "cumulant_bridge.md", "research_utilities.md", "composite_systems.md", "global_pseudomodes.md", "parameter_scans.md", "krylov_extensions.md", "heom.md", "hops.md", "convergence.md", "qudit_phase_space.md", "nonstabilizerness.md", "genuine_entanglement.md", "interoperability.md"]
+Modules = [
+    PermutationalInvariantDynamics,
+    PermutationalInvariantDynamics.Models,
+]
+Pages = ["api/representation.md", "api/dynamics.md", "api/analysis.md", "api/solvers.md", "api/visualization.md", "api_tiers.md", "streaming_output.md", "batched_trajectories.md", "diffusive_monitoring.md", "weak_pi_trajectories.md", "correlations.md", "cumulant_bridge.md", "research_utilities.md", "composite_systems.md", "global_pseudomodes.md", "prepared_artifacts.md", "parameter_scans.md", "krylov_extensions.md", "accelerators.md", "heom.md", "hops.md", "bath_fitting.md", "counting_statistics.md", "experiments.md", "inference.md", "convergence.md", "qudit_phase_space.md", "nonstabilizerness.md", "genuine_entanglement.md", "interoperability.md"]
 Order = [:type, :function, :constant, :macro]
 ```
