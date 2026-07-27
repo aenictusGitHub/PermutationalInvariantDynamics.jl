@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>Searchable example gallery · PermutationalInvariantDynamics.jl</title><meta name="title" content="Searchable example gallery · PermutationalInvariantDynamics.jl"/><meta property="og:title" content="Searchable example gallery · PermutationalInvariantDynamics.jl"/><meta property="twitter:title" content="Searchable example gallery · PermutationalInvariantDynamics.jl"/><meta name="description" content="Documentation for PermutationalInvariantDynamics.jl."/><meta property="og:description" content="Documentation for PermutationalInvariantDynamics.jl."/><meta property="twitter:description" content="Documentation for PermutationalInvariantDynamics.jl."/><meta property="og:url" content="https://aenictusgithub.github.io/PermutationalInvariantDynamics.jl/dev/example_gallery/"/><meta property="twitter:url" content="https://aenictusgithub.github.io/PermutationalInvariantDynamics.jl/dev/example_gallery/"/><link rel="canonical" href="https://aenictusgithub.github.io/PermutationalInvariantDynamics.jl/dev/example_gallery/"/><script data-outdated-warner src="../assets/warner.js"></script><link href="https://cdnjs.cloudflare.com/ajax/libs/lato-font/3.0.0/css/lato-font.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/juliamono/0.050/juliamono.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/fontawesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/solid.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/brands.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.8/katex.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL=".."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" data-main="../assets/documenter.js"></script><script src="../search_index.js"></script><script src="../siteinfo.js"></script><script src="../../versions.js"></script><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/catppuccin-mocha.css" data-theme-name="catppuccin-mocha"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/catppuccin-macchiato.css" data-theme-name="catppuccin-macchiato"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/catppuccin-frappe.css" data-theme-name="catppuccin-frappe"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/catppuccin-latte.css" data-theme-name="catppuccin-latte"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/documenter-dark.css" data-theme-name="documenter-dark" data-theme-primary-dark/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/documenter-light.css" data-theme-name="documenter-light" data-theme-primary/><script src="../assets/themeswap.js"></script><link href="../assets/model_code_generator.css" rel="stylesheet" type="text/css"/><script src="../assets/model_code_generator_core.js" defer></script><script src="../assets/model_code_generator_ui.js" defer></script></head><body><div id="documenter"><nav class="docs-sidebar"><div class="docs-package-name"><span class="docs-autofit"><a href="../">PermutationalInvariantDynamics.jl</a></span></div><button class="docs-search-query input is-rounded is-small is-clickable my-2 mx-auto py-1 px-2" id="documenter-search-query">Search docs (Ctrl + /)</button><ul class="docs-menu"><li><a class="tocitem" href="../">Home</a></li><li><span class="tocitem">Start here</span><ul><li><a class="tocitem" href="../quickstart/">90-second quickstart</a></li><li><a class="tocitem" href="../installing/">Installation and environment checks</a></li><li><a class="tocitem" href="../choosing_workflow/">Choose the right workflow</a></li><li><a class="tocitem" href="../getting_started/">Build a model step by step</a></li><li><a class="tocitem" href="../model_code_generator/">Model code generator</a></li></ul></li><li><span class="tocitem">Concepts and core workflow</span><ul><li><a class="tocitem" href="../framework/">Framework and conventions</a></li><li><a class="tocitem" href="../architecture/">Architecture and efficient workflows</a></li><li><a class="tocitem" href="../api_tiers/">API tiers and prepared analysis</a></li><li><a class="tocitem" href="../result_outputs/">Results, tables, plots, and exports</a></li><li><a class="tocitem" href="../prepared_artifacts/">Reusable prepared geometry</a></li></ul></li><li><span class="tocitem">Dynamics workflows</span><ul><li><a class="tocitem" href="../streaming_output/">Streaming output</a></li><li><a class="tocitem" href="../meanfield/">Mean-field predictions</a></li><li><a class="tocitem" href="../diffusive_monitoring/">Diffusive monitoring</a></li><li><a class="tocitem" href="../batched_trajectories/">Matrix-RHS trajectory cohorts</a></li><li><a class="tocitem" href="../weak_pi_trajectories/">Weak-PI pseudo-ket trajectories</a></li><li><a class="tocitem" href="../correlations/">Quantum regression and spectra</a></li><li><a class="tocitem" href="../cumulant_bridge/">Higher-order cumulant bridge</a></li><li><a class="tocitem" href="../composite_systems/">Composite systems</a></li><li><a class="tocitem" href="../global_pseudomodes/">Global pseudomodes and shared cavities</a></li><li><a class="tocitem" href="../pseudomodes/">Local pseudomodes and PI supersites</a></li><li><a class="tocitem" href="../heom/">PI–HEOM non-Markovian dynamics</a></li><li><a class="tocitem" href="../hops/">PI–HOPS stochastic non-Markovian dynamics</a></li><li><a class="tocitem" href="../bath_fitting/">Bath-correlation fitting</a></li><li><a class="tocitem" href="../counting_statistics/">Counting statistics and rare events</a></li></ul></li><li><span class="tocitem">Large-scale numerical methods</span><ul><li><a class="tocitem" href="../matrix_free_krylov/">Matrix-free Krylov solvers</a></li><li><a class="tocitem" href="../krylov_extensions/">Block, multi-shift, and recycled Krylov</a></li><li><a class="tocitem" href="../accelerators/">Optional accelerators</a></li><li><a class="tocitem" href="../parameter_scans/">Prepared parameter scans</a></li><li><a class="tocitem" href="../progress/">Progress and cancellation</a></li><li><a class="tocitem" href="../convergence/">Numerical convergence reports</a></li><li><a class="tocitem" href="../experiments/">Reproducible verified experiments</a></li><li><a class="tocitem" href="../startup_performance/">Startup latency and local sysimages</a></li></ul></li><li><span class="tocitem">Analysis and visualization</span><ul><li><a class="tocitem" href="../nonstabilizerness/">Nonstabilizerness</a></li><li><a class="tocitem" href="../genuine_entanglement/">Genuine multipartite entanglement</a></li><li><a class="tocitem" href="../research_utilities/">Research utilities and control</a></li><li><a class="tocitem" href="../inference/">Parameter inference</a></li><li><a class="tocitem" href="../schur_visualization/">Schur-block visualization</a></li><li><a class="tocitem" href="../spectral_visualization/">Spectral visualization</a></li><li><a class="tocitem" href="../spin_phase_space/">Spin phase space</a></li><li><a class="tocitem" href="../qudit_phase_space/">Qudit Husimi phase space</a></li></ul></li><li><span class="tocitem">Examples and validation</span><ul><li class="is-active"><a class="tocitem" href>Searchable example gallery</a></li><li><a class="tocitem" href="../published_validation/">Published validation</a></li><li><a class="tocitem" href="../research_examples/">Research examples</a></li><li><a class="tocitem" href="../benchmarks/">Performance benchmarks</a></li></ul></li><li><a class="tocitem" href="../interoperability/">Optional ecosystem integrations</a></li><li><a class="tocitem" href="../mathematics/">Mathematical reference</a></li><li><span class="tocitem">Public API</span><ul><li><a class="tocitem" href="../api_reference/">Complete index</a></li><li><a class="tocitem" href="../api/representation/">Representations, states, and models</a></li><li><a class="tocitem" href="../api/dynamics/">Dynamics and evolution</a></li><li><a class="tocitem" href="../api/analysis/">Observables and quantum information</a></li><li><a class="tocitem" href="../api/solvers/">Stationary states, spectra, and solvers</a></li><li><a class="tocitem" href="../api/visualization/">Visualization</a></li></ul></li><li><span class="tocitem">Maintainer guide</span><ul><li><a class="tocitem" href="../releasing/">Release and General registration</a></li></ul></li></ul><div class="docs-version-selector field has-addons"><div class="control"><span class="docs-label button is-static is-size-7">Version</span></div><div class="docs-selector control is-expanded"><div class="select is-fullwidth is-size-7"><select id="documenter-version-selector"></select></div></div></div></nav><div class="docs-main"><header class="docs-navbar"><a class="docs-sidebar-button docs-navbar-link fa-solid fa-bars is-hidden-desktop" id="documenter-sidebar-button" href="#"></a><nav class="breadcrumb"><ul class="is-hidden-mobile"><li><a class="is-disabled">Examples and validation</a></li><li class="is-active"><a href>Searchable example gallery</a></li></ul><ul class="is-hidden-tablet"><li class="is-active"><a href>Searchable example gallery</a></li></ul></nav><div class="docs-right"><a class="docs-navbar-link" href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl" title="View the repository on GitHub"><span class="docs-icon fa-brands"></span><span class="docs-label is-hidden-touch">GitHub</span></a><a class="docs-navbar-link" href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/docs/src/example_gallery.md" title="Edit source on GitHub"><span class="docs-icon fa-solid"></span></a><a class="docs-settings-button docs-navbar-link fa-solid fa-gear" id="documenter-settings-button" href="#" title="Settings"></a><a class="docs-article-toggle-button fa-solid fa-chevron-up" id="documenter-article-toggle-button" href="javascript:;" title="Collapse all docstrings"></a></div></header><article class="content" id="documenter-page"><h1 id="Searchable-example-gallery"><a class="docs-heading-anchor" href="#Searchable-example-gallery">Searchable example gallery</a><a id="Searchable-example-gallery-1"></a><a class="docs-heading-anchor-permalink" href="#Searchable-example-gallery" title="Permalink"></a></h1><p>This page is generated from <a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/catalog.toml"><code>examples/catalog.toml</code></a>. Every card links to a runnable script, its physical guide, and a reviewed expected output. Filters run locally in the browser.</p><style>
+.pid-example-filters{display:grid;grid-template-columns:minmax(14rem,2fr) repeat(3,minmax(9rem,1fr));gap:.75rem;align-items:end;margin:1rem 0}.pid-example-filters label{display:grid;gap:.25rem;font-weight:600}.pid-example-filters input,.pid-example-filters select{width:100%;padding:.5rem;border:1px solid #8a8f98;border-radius:.4rem;background:inherit;color:inherit}.pid-example-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(18rem,1fr));gap:1rem}.pid-example-card{border:1px solid #8a8f9866;border-radius:.65rem;padding:.9rem;min-width:0}.pid-example-card[hidden]{display:none}.pid-example-card img{width:100%;height:11rem;object-fit:contain;border-radius:.35rem;background:#fff}.pid-example-card h2{font-size:1.08rem;margin:.65rem 0 .35rem}.pid-example-card p{margin:.35rem 0}.pid-example-card pre{overflow:auto;font-size:.75rem}.pid-example-tasks code{white-space:nowrap}@media(max-width:52rem){.pid-example-filters{grid-template-columns:1fr 1fr}}@media(max-width:32rem){.pid-example-filters{grid-template-columns:1fr}}
+</style>
+<div id="pid-example-gallery" class="pid-example-gallery">
+  <div class="pid-example-filters">
+    <label>Search <input id="pid-example-search" type="search" placeholder="model, task, citation…"></label>
+    <label>Difficulty <select id="pid-example-difficulty">
+      <option value="">All</option>
+      <option value="beginner">Beginner</option>
+      <option value="intermediate">Intermediate</option>
+      <option value="advanced">Advanced</option>
+    </select></label>
+    <label>Task <select id="pid-example-task">
+      <option value="">All</option>
+      <option value="analytical-validation">analytical-validation</option>
+      <option value="appendix-d">appendix-d</option>
+      <option value="batch-action">batch-action</option>
+      <option value="certification">certification</option>
+      <option value="channels">channels</option>
+      <option value="checkpointing">checkpointing</option>
+      <option value="checkpoints">checkpoints</option>
+      <option value="collective-emission">collective-emission</option>
+      <option value="composite-dynamics">composite-dynamics</option>
+      <option value="composite-systems">composite-systems</option>
+      <option value="conditional-dynamics">conditional-dynamics</option>
+      <option value="continuation">continuation</option>
+      <option value="control">control</option>
+      <option value="convergence">convergence</option>
+      <option value="correlated-noise">correlated-noise</option>
+      <option value="correlations">correlations</option>
+      <option value="cumulants">cumulants</option>
+      <option value="cutoff-convergence">cutoff-convergence</option>
+      <option value="density-spectrum">density-spectrum</option>
+      <option value="dephasing">dephasing</option>
+      <option value="diagnostics">diagnostics</option>
+      <option value="diffusive-trajectories">diffusive-trajectories</option>
+      <option value="dynamics">dynamics</option>
+      <option value="ensemble-convergence">ensemble-convergence</option>
+      <option value="entanglement">entanglement</option>
+      <option value="filter-functions">filter-functions</option>
+      <option value="finite-size-comparison">finite-size-comparison</option>
+      <option value="finite-size-scaling">finite-size-scaling</option>
+      <option value="floquet">floquet</option>
+      <option value="floquet-spectrum">floquet-spectrum</option>
+      <option value="gap">gap</option>
+      <option value="global-pseudomode">global-pseudomode</option>
+      <option value="heom">heom</option>
+      <option value="hierarchy-convergence">hierarchy-convergence</option>
+      <option value="homodyne">homodyne</option>
+      <option value="hops">hops</option>
+      <option value="husimi-q">husimi-q</option>
+      <option value="importance-pruning">importance-pruning</option>
+      <option value="interactions">interactions</option>
+      <option value="interoperability">interoperability</option>
+      <option value="kossakowski-matrix">kossakowski-matrix</option>
+      <option value="liouvillian-spectrum">liouvillian-spectrum</option>
+      <option value="liouvillian-structure">liouvillian-structure</option>
+      <option value="literature-validation">literature-validation</option>
+      <option value="matrix-free-dynamics">matrix-free-dynamics</option>
+      <option value="mean-field">mean-field</option>
+      <option value="method-comparison">method-comparison</option>
+      <option value="mixed-states">mixed-states</option>
+      <option value="model-construction">model-construction</option>
+      <option value="moments">moments</option>
+      <option value="multiple-baths">multiple-baths</option>
+      <option value="negativity">negativity</option>
+      <option value="non-markovian-dynamics">non-markovian-dynamics</option>
+      <option value="observables">observables</option>
+      <option value="one-body-rdm">one-body-rdm</option>
+      <option value="online-statistics">online-statistics</option>
+      <option value="optical-spectrum">optical-spectrum</option>
+      <option value="p-body">p-body</option>
+      <option value="parameter-map">parameter-map</option>
+      <option value="parameter-scan">parameter-scan</option>
+      <option value="partial-trace">partial-trace</option>
+      <option value="periodic-steady-state">periodic-steady-state</option>
+      <option value="phase-space">phase-space</option>
+      <option value="population-comparison">population-comparison</option>
+      <option value="populations">populations</option>
+      <option value="preconditioning">preconditioning</option>
+      <option value="pseudomodes">pseudomodes</option>
+      <option value="pt-symmetry">pt-symmetry</option>
+      <option value="qfi">qfi</option>
+      <option value="quantum-regression">quantum-regression</option>
+      <option value="quantum-trajectories">quantum-trajectories</option>
+      <option value="qudit">qudit</option>
+      <option value="reproducibility">reproducibility</option>
+      <option value="schur-sectors">schur-sectors</option>
+      <option value="schur-visualization">schur-visualization</option>
+      <option value="sensitivities">sensitivities</option>
+      <option value="solver-selection">solver-selection</option>
+      <option value="spectrum">spectrum</option>
+      <option value="spin-squeezing">spin-squeezing</option>
+      <option value="spin-wigner">spin-wigner</option>
+      <option value="steady-state">steady-state</option>
+      <option value="streaming">streaming</option>
+      <option value="superradiance">superradiance</option>
+      <option value="symmetries">symmetries</option>
+      <option value="time-crystal">time-crystal</option>
+      <option value="tomography">tomography</option>
+      <option value="visualization">visualization</option>
+      <option value="weak-pi">weak-pi</option>
+    </select></label>
+    <label>Method <select id="pid-example-stochastic">
+      <option value="">All</option>
+      <option value="false">Deterministic</option>
+      <option value="true">Stochastic</option>
+    </select></label>
+  </div>
+  <p id="pid-example-count" role="status"></p>
+  <div class="pid-example-cards">
+    <article class="pid-example-card" data-search="all-to-all spins with identical local pseudomodes debecker et al., generating spatial correlations in ising chains via bath engineering (2026 draft); pi all-to-all specialization advanced long pseudomodes steady-state negativity parameter-map" data-difficulty="advanced" data-tasks="pseudomodes steady-state negativity parameter-map" data-stochastic="false">
+      <img loading="lazy" src="../assets/example_figures/all_to_all_xx_spin_local_pseudomodes.png" alt="Expected output for All-to-all spins with identical local pseudomodes">
+      <h2>All-to-all spins with identical local pseudomodes</h2>
+      <p><strong>advanced</strong> · long · deterministic</p>
+      <p>Debecker et al., Generating spatial correlations in Ising chains via bath engineering (2026 draft); PI all-to-all specialization</p>
+      <p class="pid-example-tasks"><code>pseudomodes</code> <code>steady-state</code> <code>negativity</code> <code>parameter-map</code></p>
+      <p><a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/all_to_all_xx_spin_local_pseudomodes.md">Guide</a> · <a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/all_to_all_xx_spin_local_pseudomodes.jl">Script</a></p>
+      <pre><code>julia --project=. examples/all_to_all_xx_spin_local_pseudomodes.jl</code></pre>
+    </article>
+    <article class="pid-example-card" data-search="boundary time-crystal slow modes iemini et al., phys. rev. lett. 121, 035301 (2018) advanced medium liouvillian-spectrum gap dynamics" data-difficulty="advanced" data-tasks="liouvillian-spectrum gap dynamics" data-stochastic="false">
+      <img loading="lazy" src="../assets/example_figures/boundary_time_crystal.png" alt="Expected output for Boundary time-crystal slow modes">
+      <h2>Boundary time-crystal slow modes</h2>
+      <p><strong>advanced</strong> · medium · deterministic</p>
+      <p>Iemini et al., Phys. Rev. Lett. 121, 035301 (2018)</p>
+      <p class="pid-example-tasks"><code>liouvillian-spectrum</code> <code>gap</code> <code>dynamics</code></p>
+      <p><a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/boundary_time_crystal.md">Guide</a> · <a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/boundary_time_crystal.jl">Script</a></p>
+      <pre><code>julia --project=. examples/boundary_time_crystal.jl</code></pre>
+    </article>
+    <article class="pid-example-card" data-search="certified qubit population dynamics shammah et al., phys. rev. a 98, 063815 (2018) beginner short populations dynamics steady-state certification" data-difficulty="beginner" data-tasks="populations dynamics steady-state certification" data-stochastic="false">
+      <img loading="lazy" src="../assets/example_figures/qubit_population_dynamics.png" alt="Expected output for Certified qubit population dynamics">
+      <h2>Certified qubit population dynamics</h2>
+      <p><strong>beginner</strong> · short · deterministic</p>
+      <p>Shammah et al., Phys. Rev. A 98, 063815 (2018)</p>
+      <p class="pid-example-tasks"><code>populations</code> <code>dynamics</code> <code>steady-state</code> <code>certification</code></p>
+      <p><a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/qubit_population_dynamics.md">Guide</a> · <a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/qubit_population_dynamics.jl">Script</a></p>
+      <pre><code>julia --project=. examples/qubit_population_dynamics.jl</code></pre>
+    </article>
+    <article class="pid-example-card" data-search="choosing and validating a stationary-state solver permutationalinvariantdynamics.jl stationary-solver comparison intermediate short steady-state solver-selection preconditioning diagnostics" data-difficulty="intermediate" data-tasks="steady-state solver-selection preconditioning diagnostics" data-stochastic="false">
+      <img loading="lazy" src="../assets/example_figures/steady_state_methods.png" alt="Expected output for Choosing and validating a stationary-state solver">
+      <h2>Choosing and validating a stationary-state solver</h2>
+      <p><strong>intermediate</strong> · short · deterministic</p>
+      <p>PermutationalInvariantDynamics.jl stationary-solver comparison</p>
+      <p class="pid-example-tasks"><code>steady-state</code> <code>solver-selection</code> <code>preconditioning</code> <code>diagnostics</code></p>
+      <p><a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/steady_state_methods.md">Guide</a> · <a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/steady_state_methods.jl">Script</a></p>
+      <pre><code>julia --project=. examples/steady_state_methods.jl</code></pre>
+    </article>
+    <article class="pid-example-card" data-search="correlated local and collective reservoirs permutationalinvariantdynamics.jl correlated-reservoir workflow advanced short correlated-noise dynamics kossakowski-matrix" data-difficulty="advanced" data-tasks="correlated-noise dynamics kossakowski-matrix" data-stochastic="false">
+      <img loading="lazy" src="../assets/example_figures/correlated_reservoirs.png" alt="Expected output for Correlated local and collective reservoirs">
+      <h2>Correlated local and collective reservoirs</h2>
+      <p><strong>advanced</strong> · short · deterministic</p>
+      <p>PermutationalInvariantDynamics.jl correlated-reservoir workflow</p>
+      <p class="pid-example-tasks"><code>correlated-noise</code> <code>dynamics</code> <code>kossakowski-matrix</code></p>
+      <p><a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/correlated_reservoirs.md">Guide</a> · <a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/correlated_reservoirs.jl">Script</a></p>
+      <pre><code>julia --project=. examples/correlated_reservoirs.jl</code></pre>
+    </article>
+    <article class="pid-example-card" data-search="correlated superradiant pulse and schur blocks damanet et al., phys. rev. a 94, 033838 (2016) intermediate medium superradiance dynamics schur-visualization" data-difficulty="intermediate" data-tasks="superradiance dynamics schur-visualization" data-stochastic="false">
+      <img loading="lazy" src="../assets/example_figures/correlated_superradiance.png" alt="Expected output for Correlated superradiant pulse and Schur blocks">
+      <h2>Correlated superradiant pulse and Schur blocks</h2>
+      <p><strong>intermediate</strong> · medium · deterministic</p>
+      <p>Damanet et al., Phys. Rev. A 94, 033838 (2016)</p>
+      <p class="pid-example-tasks"><code>superradiance</code> <code>dynamics</code> <code>schur-visualization</code></p>
+      <p><a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/correlated_superradiance.md">Guide</a> · <a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/correlated_superradiance.jl">Script</a></p>
+      <pre><code>julia --project=. examples/correlated_superradiance.jl</code></pre>
+    </article>
+    <article class="pid-example-card" data-search="density-valued trajectories of composite pi systems permutationalinvariantdynamics.jl composite-trajectory workflow advanced medium composite-systems quantum-trajectories online-statistics" data-difficulty="advanced" data-tasks="composite-systems quantum-trajectories online-statistics" data-stochastic="true">
+      <img loading="lazy" src="../assets/example_figures/composite_quantum_trajectories.png" alt="Expected output for Density-valued trajectories of composite PI systems">
+      <h2>Density-valued trajectories of composite PI systems</h2>
+      <p><strong>advanced</strong> · medium · stochastic</p>
+      <p>PermutationalInvariantDynamics.jl composite-trajectory workflow</p>
+      <p class="pid-example-tasks"><code>composite-systems</code> <code>quantum-trajectories</code> <code>online-statistics</code></p>
+      <p><a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/composite_quantum_trajectories.md">Guide</a> · <a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/composite_quantum_trajectories.jl">Script</a></p>
+      <pre><code>julia --project=. examples/composite_quantum_trajectories.jl</code></pre>
+    </article>
+    <article class="pid-example-card" data-search="deterministic pi hierarchy equations of motion tanimura, j. chem. phys. 153, 020901 (2020) advanced medium heom non-markovian-dynamics hierarchy-convergence" data-difficulty="advanced" data-tasks="heom non-markovian-dynamics hierarchy-convergence" data-stochastic="false">
+      <img loading="lazy" src="../assets/example_figures/pi_heom.png" alt="Expected output for Deterministic PI hierarchy equations of motion">
+      <h2>Deterministic PI hierarchy equations of motion</h2>
+      <p><strong>advanced</strong> · medium · deterministic</p>
+      <p>Tanimura, J. Chem. Phys. 153, 020901 (2020)</p>
+      <p class="pid-example-tasks"><code>heom</code> <code>non-markovian-dynamics</code> <code>hierarchy-convergence</code></p>
+      <p><a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/pi_heom.md">Guide</a> · <a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/pi_heom.jl">Script</a></p>
+      <pre><code>julia --project=. examples/pi_heom.jl</code></pre>
+    </article>
+    <article class="pid-example-card" data-search="dissipative collective-spin pairing passarelli et al., phys. rev. a 110, 062208 (2024) advanced long steady-state mean-field finite-size-scaling" data-difficulty="advanced" data-tasks="steady-state mean-field finite-size-scaling" data-stochastic="false">
+      <img loading="lazy" src="../assets/example_figures/dissipative_collective_spin_pairing_meanfield.png" alt="Expected output for Dissipative collective-spin pairing">
+      <h2>Dissipative collective-spin pairing</h2>
+      <p><strong>advanced</strong> · long · deterministic</p>
+      <p>Passarelli et al., Phys. Rev. A 110, 062208 (2024)</p>
+      <p class="pid-example-tasks"><code>steady-state</code> <code>mean-field</code> <code>finite-size-scaling</code></p>
+      <p><a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/dissipative_collective_spin_pairing.md">Guide</a> · <a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/dissipative_collective_spin_pairing.jl">Script</a></p>
+      <pre><code>julia --project=. examples/dissipative_collective_spin_pairing.jl</code></pre>
+    </article>
+    <article class="pid-example-card" data-search="dissipative discrete time crystal gong et al., phys. rev. lett. 120, 040404 (2018) advanced medium floquet time-crystal dynamics" data-difficulty="advanced" data-tasks="floquet time-crystal dynamics" data-stochastic="false">
+      <img loading="lazy" src="../assets/example_figures/dissipative_discrete_time_crystal.png" alt="Expected output for Dissipative discrete time crystal">
+      <h2>Dissipative discrete time crystal</h2>
+      <p><strong>advanced</strong> · medium · deterministic</p>
+      <p>Gong et al., Phys. Rev. Lett. 120, 040404 (2018)</p>
+      <p class="pid-example-tasks"><code>floquet</code> <code>time-crystal</code> <code>dynamics</code></p>
+      <p><a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/dissipative_discrete_time_crystal.md">Guide</a> · <a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/dissipative_discrete_time_crystal.jl">Script</a></p>
+      <pre><code>julia --project=. examples/dissipative_discrete_time_crystal.jl</code></pre>
+    </article>
+    <article class="pid-example-card" data-search="driven cooperative fluorescence drummond and carmichael, opt. commun. 27, 160 (1978) intermediate medium steady-state observables literature-validation" data-difficulty="intermediate" data-tasks="steady-state observables literature-validation" data-stochastic="false">
+      <img loading="lazy" src="../assets/example_figures/cooperative_fluorescence.png" alt="Expected output for Driven cooperative fluorescence">
+      <h2>Driven cooperative fluorescence</h2>
+      <p><strong>intermediate</strong> · medium · deterministic</p>
+      <p>Drummond and Carmichael, Opt. Commun. 27, 160 (1978)</p>
+      <p class="pid-example-tasks"><code>steady-state</code> <code>observables</code> <code>literature-validation</code></p>
+      <p><a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/cooperative_fluorescence.md">Guide</a> · <a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/cooperative_fluorescence.jl">Script</a></p>
+      <pre><code>julia --project=. examples/cooperative_fluorescence.jl</code></pre>
+    </article>
+    <article class="pid-example-card" data-search="driven qubits with independent decay permutationalinvariantdynamics.jl driven-qubit validation example beginner short dynamics observables one-body-rdm" data-difficulty="beginner" data-tasks="dynamics observables one-body-rdm" data-stochastic="false">
+      <img loading="lazy" src="../assets/example_figures/driven_qubits.png" alt="Expected output for Driven qubits with independent decay">
+      <h2>Driven qubits with independent decay</h2>
+      <p><strong>beginner</strong> · short · deterministic</p>
+      <p>PermutationalInvariantDynamics.jl driven-qubit validation example</p>
+      <p class="pid-example-tasks"><code>dynamics</code> <code>observables</code> <code>one-body-rdm</code></p>
+      <p><a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/driven_qubits.md">Guide</a> · <a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/driven_qubits.jl">Script</a></p>
+      <pre><code>julia --project=. examples/driven_qubits.jl</code></pre>
+    </article>
+    <article class="pid-example-card" data-search="dynamical decoupling with pi-hops and pi-heom colin read, studying pure dephasing and dynamical decoupling (2023 report) advanced long hops heom control filter-functions convergence" data-difficulty="advanced" data-tasks="hops heom control filter-functions convergence" data-stochastic="true">
+      <img loading="lazy" src="../assets/example_figures/nonmarkovian_dynamical_decoupling.png" alt="Expected output for Dynamical decoupling with PI-HOPS and PI-HEOM">
+      <h2>Dynamical decoupling with PI-HOPS and PI-HEOM</h2>
+      <p><strong>advanced</strong> · long · stochastic</p>
+      <p>Colin Read, Studying pure dephasing and dynamical decoupling (2023 report)</p>
+      <p class="pid-example-tasks"><code>hops</code> <code>heom</code> <code>control</code> <code>filter-functions</code> <code>convergence</code></p>
+      <p><a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/nonmarkovian_dynamical_decoupling.md">Guide</a> · <a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/nonmarkovian_dynamical_decoupling.jl">Script</a></p>
+      <pre><code>julia --project=. examples/nonmarkovian_dynamical_decoupling.jl</code></pre>
+    </article>
+    <article class="pid-example-card" data-search="exact pi moments for cumulant closures permutationalinvariantdynamics.jl cumulant-validation bridge advanced short cumulants moments interoperability" data-difficulty="advanced" data-tasks="cumulants moments interoperability" data-stochastic="false">
+      <img loading="lazy" src="../assets/example_figures/cumulant_bridge.png" alt="Expected output for Exact PI moments for cumulant closures">
+      <h2>Exact PI moments for cumulant closures</h2>
+      <p><strong>advanced</strong> · short · deterministic</p>
+      <p>PermutationalInvariantDynamics.jl cumulant-validation bridge</p>
+      <p class="pid-example-tasks"><code>cumulants</code> <code>moments</code> <code>interoperability</code></p>
+      <p><a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/cumulant_bridge.md">Guide</a> · <a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/cumulant_bridge.jl">Script</a></p>
+      <pre><code>julia --project=. examples/cumulant_bridge.jl</code></pre>
+    </article>
+    <article class="pid-example-card" data-search="factorized dynamics of several pi subsystems permutationalinvariantdynamics.jl composite-system workflow advanced short composite-systems matrix-free-dynamics partial-trace batch-action" data-difficulty="advanced" data-tasks="composite-systems matrix-free-dynamics partial-trace batch-action" data-stochastic="false">
+      <img loading="lazy" src="../assets/example_figures/composite_ensembles.png" alt="Expected output for Factorized dynamics of several PI subsystems">
+      <h2>Factorized dynamics of several PI subsystems</h2>
+      <p><strong>advanced</strong> · short · deterministic</p>
+      <p>PermutationalInvariantDynamics.jl composite-system workflow</p>
+      <p class="pid-example-tasks"><code>composite-systems</code> <code>matrix-free-dynamics</code> <code>partial-trace</code> <code>batch-action</code></p>
+      <p><a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/composite_ensembles.md">Guide</a> · <a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/composite_ensembles.jl">Script</a></p>
+      <pre><code>julia --project=. examples/composite_ensembles.jl</code></pre>
+    </article>
+    <article class="pid-example-card" data-search="from a pi model to dynamics and a stationary state permutationalinvariantdynamics.jl model-to-solution tutorial beginner short dynamics steady-state observables convergence" data-difficulty="beginner" data-tasks="dynamics steady-state observables convergence" data-stochastic="false">
+      <img loading="lazy" src="../assets/example_figures/getting_started.png" alt="Expected output for From a PI model to dynamics and a stationary state">
+      <h2>From a PI model to dynamics and a stationary state</h2>
+      <p><strong>beginner</strong> · short · deterministic</p>
+      <p>PermutationalInvariantDynamics.jl model-to-solution tutorial</p>
+      <p class="pid-example-tasks"><code>dynamics</code> <code>steady-state</code> <code>observables</code> <code>convergence</code></p>
+      <p><a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/getting_started.md">Guide</a> · <a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/getting_started.jl">Script</a></p>
+      <pre><code>julia --project=. examples/getting_started.jl</code></pre>
+    </article>
+    <article class="pid-example-card" data-search="homodyne pi trajectories wiseman and milburn, quantum measurement and control (2010) advanced medium diffusive-trajectories homodyne conditional-dynamics" data-difficulty="advanced" data-tasks="diffusive-trajectories homodyne conditional-dynamics" data-stochastic="true">
+      <img loading="lazy" src="../assets/example_figures/homodyne_pi_trajectories.png" alt="Expected output for Homodyne PI trajectories">
+      <h2>Homodyne PI trajectories</h2>
+      <p><strong>advanced</strong> · medium · stochastic</p>
+      <p>Wiseman and Milburn, Quantum Measurement and Control (2010)</p>
+      <p class="pid-example-tasks"><code>diffusive-trajectories</code> <code>homodyne</code> <code>conditional-dynamics</code></p>
+      <p><a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/homodyne_pi_trajectories.md">Guide</a> · <a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/homodyne_pi_trajectories.jl">Script</a></p>
+      <pre><code>julia --project=. examples/homodyne_pi_trajectories.jl</code></pre>
+    </article>
+    <article class="pid-example-card" data-search="independent dephasing and ramsey coherence huelga et al., phys. rev. lett. 79, 3865 (1997) beginner short dynamics dephasing qfi" data-difficulty="beginner" data-tasks="dynamics dephasing qfi" data-stochastic="false">
+      <img loading="lazy" src="../assets/example_figures/independent_dephasing_coherence.png" alt="Expected output for Independent dephasing and Ramsey coherence">
+      <h2>Independent dephasing and Ramsey coherence</h2>
+      <p><strong>beginner</strong> · short · deterministic</p>
+      <p>Huelga et al., Phys. Rev. Lett. 79, 3865 (1997)</p>
+      <p class="pid-example-tasks"><code>dynamics</code> <code>dephasing</code> <code>qfi</code></p>
+      <p><a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/independent_dephasing_coherence.md">Guide</a> · <a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/independent_dephasing_coherence.jl">Script</a></p>
+      <pre><code>julia --project=. examples/independent_dephasing_coherence.jl</code></pre>
+    </article>
+    <article class="pid-example-card" data-search="independent pumping and the thermal product state shammah et al., phys. rev. a 98, 063815 (2018) beginner instant steady-state populations analytical-validation" data-difficulty="beginner" data-tasks="steady-state populations analytical-validation" data-stochastic="false">
+      <img loading="lazy" src="../assets/example_figures/local_pumping.png" alt="Expected output for Independent pumping and the thermal product state">
+      <h2>Independent pumping and the thermal product state</h2>
+      <p><strong>beginner</strong> · instant · deterministic</p>
+      <p>Shammah et al., Phys. Rev. A 98, 063815 (2018)</p>
+      <p class="pid-example-tasks"><code>steady-state</code> <code>populations</code> <code>analytical-validation</code></p>
+      <p><a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/local_pumping.md">Guide</a> · <a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/local_pumping.jl">Script</a></p>
+      <pre><code>julia --project=. examples/local_pumping.jl</code></pre>
+    </article>
+    <article class="pid-example-card" data-search="independent-emitter quantum-trajectory benchmark mølmer, castin, and dalibard, j. opt. soc. am. b 10, 524 (1993) intermediate medium quantum-trajectories online-statistics analytical-validation" data-difficulty="intermediate" data-tasks="quantum-trajectories online-statistics analytical-validation" data-stochastic="true">
+      <img loading="lazy" src="../assets/example_figures/independent_emitter_quantum_trajectories.png" alt="Expected output for Independent-emitter quantum-trajectory benchmark">
+      <h2>Independent-emitter quantum-trajectory benchmark</h2>
+      <p><strong>intermediate</strong> · medium · stochastic</p>
+      <p>Mølmer, Castin, and Dalibard, J. Opt. Soc. Am. B 10, 524 (1993)</p>
+      <p class="pid-example-tasks"><code>quantum-trajectories</code> <code>online-statistics</code> <code>analytical-validation</code></p>
+      <p><a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/quantum_trajectories.md">Guide</a> · <a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/quantum_trajectories.jl">Script</a></p>
+      <pre><code>julia --project=. examples/quantum_trajectories.jl</code></pre>
+    </article>
+    <article class="pid-example-card" data-search="interacting boundary time crystal piccitto et al., phys. rev. b 104, 014307 (2021) advanced long liouvillian-spectrum time-crystal interactions" data-difficulty="advanced" data-tasks="liouvillian-spectrum time-crystal interactions" data-stochastic="false">
+      <img loading="lazy" src="../assets/example_figures/interacting_boundary_time_crystal.png" alt="Expected output for Interacting boundary time crystal">
+      <h2>Interacting boundary time crystal</h2>
+      <p><strong>advanced</strong> · long · deterministic</p>
+      <p>Piccitto et al., Phys. Rev. B 104, 014307 (2021)</p>
+      <p class="pid-example-tasks"><code>liouvillian-spectrum</code> <code>time-crystal</code> <code>interactions</code></p>
+      <p><a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/interacting_boundary_time_crystal.md">Guide</a> · <a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/interacting_boundary_time_crystal.jl">Script</a></p>
+      <pre><code>julia --project=. examples/interacting_boundary_time_crystal.jl</code></pre>
+    </article>
+    <article class="pid-example-card" data-search="liouvillian and floquet spectral visualization permutationalinvariantdynamics.jl compressed-spectrum workflow intermediate short liouvillian-spectrum floquet-spectrum visualization" data-difficulty="intermediate" data-tasks="liouvillian-spectrum floquet-spectrum visualization" data-stochastic="false">
+      <img loading="lazy" src="../assets/example_figures/spectral_visualization_liouvillian.svg" alt="Expected output for Liouvillian and Floquet spectral visualization">
+      <h2>Liouvillian and Floquet spectral visualization</h2>
+      <p><strong>intermediate</strong> · short · deterministic</p>
+      <p>PermutationalInvariantDynamics.jl compressed-spectrum workflow</p>
+      <p class="pid-example-tasks"><code>liouvillian-spectrum</code> <code>floquet-spectrum</code> <code>visualization</code></p>
+      <p><a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/spectral_visualization.md">Guide</a> · <a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/spectral_visualization.jl">Script</a></p>
+      <pre><code>julia --project=. examples/spectral_visualization.jl</code></pre>
+    </article>
+    <article class="pid-example-card" data-search="mean-field time-crystal predictions iemini et al., phys. rev. lett. 121, 035301 (2018) intermediate medium mean-field dynamics finite-size-comparison" data-difficulty="intermediate" data-tasks="mean-field dynamics finite-size-comparison" data-stochastic="false">
+      <img loading="lazy" src="../assets/example_figures/meanfield_time_crystal.png" alt="Expected output for Mean-field time-crystal predictions">
+      <h2>Mean-field time-crystal predictions</h2>
+      <p><strong>intermediate</strong> · medium · deterministic</p>
+      <p>Iemini et al., Phys. Rev. Lett. 121, 035301 (2018)</p>
+      <p class="pid-example-tasks"><code>mean-field</code> <code>dynamics</code> <code>finite-size-comparison</code></p>
+      <p><a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/meanfield_time_crystal.md">Guide</a> · <a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/meanfield_time_crystal.jl">Script</a></p>
+      <pre><code>julia --project=. examples/meanfield_time_crystal.jl</code></pre>
+    </article>
+    <article class="pid-example-card" data-search="memory-bounded observable streaming permutationalinvariantdynamics.jl streaming-output workflow beginner short dynamics streaming online-statistics" data-difficulty="beginner" data-tasks="dynamics streaming online-statistics" data-stochastic="false">
+      <img loading="lazy" src="../assets/example_figures/streaming_output.png" alt="Expected output for Memory-bounded observable streaming">
+      <h2>Memory-bounded observable streaming</h2>
+      <p><strong>beginner</strong> · short · deterministic</p>
+      <p>PermutationalInvariantDynamics.jl streaming-output workflow</p>
+      <p class="pid-example-tasks"><code>dynamics</code> <code>streaming</code> <code>online-statistics</code></p>
+      <p><a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/streaming_output.md">Guide</a> · <a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/streaming_output.jl">Script</a></p>
+      <pre><code>julia --project=. examples/streaming_output.jl</code></pre>
+    </article>
+    <article class="pid-example-card" data-search="mixed-state multi-bath pi-hops suess, eisfeld, and strunz, phys. rev. lett. 113, 150403 (2014) advanced long hops multiple-baths mixed-states importance-pruning" data-difficulty="advanced" data-tasks="hops multiple-baths mixed-states importance-pruning" data-stochastic="true">
+      <img loading="lazy" src="../assets/example_figures/pi_hops_mixed_multibath.png" alt="Expected output for Mixed-state multi-bath PI-HOPS">
+      <h2>Mixed-state multi-bath PI-HOPS</h2>
+      <p><strong>advanced</strong> · long · stochastic</p>
+      <p>Suess, Eisfeld, and Strunz, Phys. Rev. Lett. 113, 150403 (2014)</p>
+      <p class="pid-example-tasks"><code>hops</code> <code>multiple-baths</code> <code>mixed-states</code> <code>importance-pruning</code></p>
+      <p><a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/pi_hops_mixed_multibath.md">Guide</a> · <a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/pi_hops_mixed_multibath.jl">Script</a></p>
+      <pre><code>julia --project=. examples/pi_hops_mixed_multibath.jl</code></pre>
+    </article>
+    <article class="pid-example-card" data-search="one pseudomode shared by a pi ensemble garraway, phys. rev. a 55, 2290 (1997) advanced medium global-pseudomode composite-dynamics partial-trace cutoff-convergence" data-difficulty="advanced" data-tasks="global-pseudomode composite-dynamics partial-trace cutoff-convergence" data-stochastic="false">
+      <img loading="lazy" src="../assets/example_figures/global_pseudomode_cavity.png" alt="Expected output for One pseudomode shared by a PI ensemble">
+      <h2>One pseudomode shared by a PI ensemble</h2>
+      <p><strong>advanced</strong> · medium · deterministic</p>
+      <p>Garraway, Phys. Rev. A 55, 2290 (1997)</p>
+      <p class="pid-example-tasks"><code>global-pseudomode</code> <code>composite-dynamics</code> <code>partial-trace</code> <code>cutoff-convergence</code></p>
+      <p><a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/global_pseudomode_cavity.md">Guide</a> · <a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/global_pseudomode_cavity.jl">Script</a></p>
+      <pre><code>julia --project=. examples/global_pseudomode_cavity.jl</code></pre>
+    </article>
+    <article class="pid-example-card" data-search="one-axis twisting and spin squeezing kitagawa and ueda, phys. rev. a 47, 5138 (1993) intermediate short dynamics spin-squeezing entanglement" data-difficulty="intermediate" data-tasks="dynamics spin-squeezing entanglement" data-stochastic="false">
+      <img loading="lazy" src="../assets/example_figures/one_axis_twisting.png" alt="Expected output for One-axis twisting and spin squeezing">
+      <h2>One-axis twisting and spin squeezing</h2>
+      <p><strong>intermediate</strong> · short · deterministic</p>
+      <p>Kitagawa and Ueda, Phys. Rev. A 47, 5138 (1993)</p>
+      <p class="pid-example-tasks"><code>dynamics</code> <code>spin-squeezing</code> <code>entanglement</code></p>
+      <p><a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/one_axis_twisting.md">Guide</a> · <a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/one_axis_twisting.jl">Script</a></p>
+      <pre><code>julia --project=. examples/one_axis_twisting.jl</code></pre>
+    </article>
+    <article class="pid-example-card" data-search="periodic decay and floquet spectra permutationalinvariantdynamics.jl floquet workflow advanced medium floquet periodic-steady-state spectrum" data-difficulty="advanced" data-tasks="floquet periodic-steady-state spectrum" data-stochastic="false">
+      <img loading="lazy" src="../assets/example_figures/periodic_decay_channel.png" alt="Expected output for Periodic decay and Floquet spectra">
+      <h2>Periodic decay and Floquet spectra</h2>
+      <p><strong>advanced</strong> · medium · deterministic</p>
+      <p>PermutationalInvariantDynamics.jl Floquet workflow</p>
+      <p class="pid-example-tasks"><code>floquet</code> <code>periodic-steady-state</code> <code>spectrum</code></p>
+      <p><a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/periodic_decay_channel.md">Guide</a> · <a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/periodic_decay_channel.jl">Script</a></p>
+      <pre><code>julia --project=. examples/periodic_decay_channel.jl</code></pre>
+    </article>
+    <article class="pid-example-card" data-search="permutation-symmetric pair processes bastin and martin, j. phys. a 58, 275301 (2025), appendix d intermediate short p-body dynamics appendix-d" data-difficulty="intermediate" data-tasks="p-body dynamics appendix-d" data-stochastic="false">
+      <img loading="lazy" src="../assets/example_figures/pbody_pair_processes.png" alt="Expected output for Permutation-symmetric pair processes">
+      <h2>Permutation-symmetric pair processes</h2>
+      <p><strong>intermediate</strong> · short · deterministic</p>
+      <p>Bastin and Martin, J. Phys. A 58, 275301 (2025), Appendix D</p>
+      <p class="pid-example-tasks"><code>p-body</code> <code>dynamics</code> <code>appendix-d</code></p>
+      <p><a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/pbody_pair_processes.md">Guide</a> · <a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/pbody_pair_processes.jl">Script</a></p>
+      <pre><code>julia --project=. examples/pbody_pair_processes.jl</code></pre>
+    </article>
+    <article class="pid-example-card" data-search="pi-hops with collective emission suess, eisfeld, and strunz, phys. rev. lett. 113, 150403 (2014) advanced medium hops collective-emission non-markovian-dynamics" data-difficulty="advanced" data-tasks="hops collective-emission non-markovian-dynamics" data-stochastic="true">
+      <img loading="lazy" src="../assets/example_figures/pi_hops_collective_emission.png" alt="Expected output for PI-HOPS with collective emission">
+      <h2>PI-HOPS with collective emission</h2>
+      <p><strong>advanced</strong> · medium · stochastic</p>
+      <p>Suess, Eisfeld, and Strunz, Phys. Rev. Lett. 113, 150403 (2014)</p>
+      <p class="pid-example-tasks"><code>hops</code> <code>collective-emission</code> <code>non-markovian-dynamics</code></p>
+      <p><a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/pi_hops_collective_emission.md">Guide</a> · <a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/pi_hops_collective_emission.jl">Script</a></p>
+      <pre><code>julia --project=. examples/pi_hops_collective_emission.jl</code></pre>
+    </article>
+    <article class="pid-example-card" data-search="prepared continuation over a parameter grid permutationalinvariantdynamics.jl prepared-scan workflow intermediate medium parameter-scan continuation checkpointing sensitivities" data-difficulty="intermediate" data-tasks="parameter-scan continuation checkpointing sensitivities" data-stochastic="false">
+      <img loading="lazy" src="../assets/example_figures/parameter_scan.png" alt="Expected output for Prepared continuation over a parameter grid">
+      <h2>Prepared continuation over a parameter grid</h2>
+      <p><strong>intermediate</strong> · medium · deterministic</p>
+      <p>PermutationalInvariantDynamics.jl prepared-scan workflow</p>
+      <p class="pid-example-tasks"><code>parameter-scan</code> <code>continuation</code> <code>checkpointing</code> <code>sensitivities</code></p>
+      <p><a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/parameter_scan.md">Guide</a> · <a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/parameter_scan.jl">Script</a></p>
+      <pre><code>julia --project=. examples/parameter_scan.jl</code></pre>
+    </article>
+    <article class="pid-example-card" data-search="pt-symmetric dissipative time crystal nakanishi and sasamoto, phys. rev. a 105, 022219 (2022) advanced medium pt-symmetry liouvillian-spectrum dynamics" data-difficulty="advanced" data-tasks="pt-symmetry liouvillian-spectrum dynamics" data-stochastic="false">
+      <img loading="lazy" src="../assets/example_figures/pt_symmetric_time_crystal.png" alt="Expected output for PT-symmetric dissipative time crystal">
+      <h2>PT-symmetric dissipative time crystal</h2>
+      <p><strong>advanced</strong> · medium · deterministic</p>
+      <p>Nakanishi and Sasamoto, Phys. Rev. A 105, 022219 (2022)</p>
+      <p class="pid-example-tasks"><code>pt-symmetry</code> <code>liouvillian-spectrum</code> <code>dynamics</code></p>
+      <p><a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/pt_symmetric_time_crystal.md">Guide</a> · <a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/pt_symmetric_time_crystal.jl">Script</a></p>
+      <pre><code>julia --project=. examples/pt_symmetric_time_crystal.jl</code></pre>
+    </article>
+    <article class="pid-example-card" data-search="pumped steady-state superradiance meiser and holland, phys. rev. a 81, 033847 (2010) intermediate medium steady-state observables finite-size-scaling" data-difficulty="intermediate" data-tasks="steady-state observables finite-size-scaling" data-stochastic="false">
+      <img loading="lazy" src="../assets/example_figures/steady_superradiance.png" alt="Expected output for Pumped steady-state superradiance">
+      <h2>Pumped steady-state superradiance</h2>
+      <p><strong>intermediate</strong> · medium · deterministic</p>
+      <p>Meiser and Holland, Phys. Rev. A 81, 033847 (2010)</p>
+      <p class="pid-example-tasks"><code>steady-state</code> <code>observables</code> <code>finite-size-scaling</code></p>
+      <p><a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/steady_superradiance.md">Guide</a> · <a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/steady_superradiance.jl">Script</a></p>
+      <pre><code>julia --project=. examples/steady_superradiance.jl</code></pre>
+    </article>
+    <article class="pid-example-card" data-search="quantum regression and optical spectra lax, phys. rev. 129, 2342 (1963) intermediate medium correlations quantum-regression optical-spectrum" data-difficulty="intermediate" data-tasks="correlations quantum-regression optical-spectrum" data-stochastic="false">
+      <img loading="lazy" src="../assets/example_figures/quantum_regression.png" alt="Expected output for Quantum regression and optical spectra">
+      <h2>Quantum regression and optical spectra</h2>
+      <p><strong>intermediate</strong> · medium · deterministic</p>
+      <p>Lax, Phys. Rev. 129, 2342 (1963)</p>
+      <p class="pid-example-tasks"><code>correlations</code> <code>quantum-regression</code> <code>optical-spectrum</code></p>
+      <p><a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/quantum_regression.md">Guide</a> · <a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/quantum_regression.jl">Script</a></p>
+      <pre><code>julia --project=. examples/quantum_regression.jl</code></pre>
+    </article>
+    <article class="pid-example-card" data-search="qudit coherent-state husimi q data perelomov, generalized coherent states and their applications (1986) advanced medium qudit phase-space husimi-q" data-difficulty="advanced" data-tasks="qudit phase-space husimi-q" data-stochastic="false">
+      <img loading="lazy" src="../assets/example_figures/qudit_coherent_state_q_distribution.png" alt="Expected output for Qudit coherent-state Husimi Q data">
+      <h2>Qudit coherent-state Husimi Q data</h2>
+      <p><strong>advanced</strong> · medium · deterministic</p>
+      <p>Perelomov, Generalized Coherent States and Their Applications (1986)</p>
+      <p class="pid-example-tasks"><code>qudit</code> <code>phase-space</code> <code>husimi-q</code></p>
+      <p><a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/qudit_coherent_state_q_distribution.md">Guide</a> · <a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/qudit_coherent_state_q_distribution.jl">Script</a></p>
+      <pre><code>julia --project=. examples/qudit_coherent_state_q_distribution.jl</code></pre>
+    </article>
+    <article class="pid-example-card" data-search="research utilities and interoperability permutationalinvariantdynamics.jl research-utility workflow advanced short channels tomography checkpoints symmetries" data-difficulty="advanced" data-tasks="channels tomography checkpoints symmetries" data-stochastic="false">
+      <img loading="lazy" src="../assets/example_figures/research_utilities.png" alt="Expected output for Research utilities and interoperability">
+      <h2>Research utilities and interoperability</h2>
+      <p><strong>advanced</strong> · short · deterministic</p>
+      <p>PermutationalInvariantDynamics.jl research-utility workflow</p>
+      <p class="pid-example-tasks"><code>channels</code> <code>tomography</code> <code>checkpoints</code> <code>symmetries</code></p>
+      <p><a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/research_utilities.md">Guide</a> · <a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/research_utilities.jl">Script</a></p>
+      <pre><code>julia --project=. examples/research_utilities.jl</code></pre>
+    </article>
+    <article class="pid-example-card" data-search="reusable literature-model constructors published validations collected by permutationalinvariantdynamics.jl intermediate short model-construction literature-validation reproducibility" data-difficulty="intermediate" data-tasks="model-construction literature-validation reproducibility" data-stochastic="false">
+      <img loading="lazy" src="../assets/example_figures/correlated_superradiance.png" alt="Expected output for Reusable literature-model constructors">
+      <h2>Reusable literature-model constructors</h2>
+      <p><strong>intermediate</strong> · short · deterministic</p>
+      <p>Published validations collected by PermutationalInvariantDynamics.jl</p>
+      <p class="pid-example-tasks"><code>model-construction</code> <code>literature-validation</code> <code>reproducibility</code></p>
+      <p><a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/paper_models.md">Guide</a> · <a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/paper_models.jl">Script</a></p>
+      <pre><code>julia --project=. examples/paper_models.jl</code></pre>
+    </article>
+    <article class="pid-example-card" data-search="schur-block and young-diagram visualization permutationalinvariantdynamics.jl schur-block visualization workflow intermediate short schur-visualization density-spectrum liouvillian-structure" data-difficulty="intermediate" data-tasks="schur-visualization density-spectrum liouvillian-structure" data-stochastic="false">
+      <img loading="lazy" src="../assets/example_figures/irrep_block_visualization_state.svg" alt="Expected output for Schur-block and Young-diagram visualization">
+      <h2>Schur-block and Young-diagram visualization</h2>
+      <p><strong>intermediate</strong> · short · deterministic</p>
+      <p>PermutationalInvariantDynamics.jl Schur-block visualization workflow</p>
+      <p class="pid-example-tasks"><code>schur-visualization</code> <code>density-spectrum</code> <code>liouvillian-structure</code></p>
+      <p><a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/irrep_block_visualization.md">Guide</a> · <a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/irrep_block_visualization.jl">Script</a></p>
+      <pre><code>julia --project=. examples/irrep_block_visualization.jl</code></pre>
+    </article>
+    <article class="pid-example-card" data-search="sector-resolved spin phase space agarwal, phys. rev. a 24, 2889 (1981) intermediate short phase-space husimi-q spin-wigner schur-sectors" data-difficulty="intermediate" data-tasks="phase-space husimi-q spin-wigner schur-sectors" data-stochastic="false">
+      <img loading="lazy" src="../assets/example_figures/spin_phase_space_husimi_q.svg" alt="Expected output for Sector-resolved spin phase space">
+      <h2>Sector-resolved spin phase space</h2>
+      <p><strong>intermediate</strong> · short · deterministic</p>
+      <p>Agarwal, Phys. Rev. A 24, 2889 (1981)</p>
+      <p class="pid-example-tasks"><code>phase-space</code> <code>husimi-q</code> <code>spin-wigner</code> <code>schur-sectors</code></p>
+      <p><a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/spin_phase_space.md">Guide</a> · <a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/spin_phase_space.jl">Script</a></p>
+      <pre><code>julia --project=. examples/spin_phase_space.jl</code></pre>
+    </article>
+    <article class="pid-example-card" data-search="stochastic pi hierarchy of pure states suess, eisfeld, and strunz, phys. rev. lett. 113, 150403 (2014) advanced medium hops non-markovian-dynamics ensemble-convergence" data-difficulty="advanced" data-tasks="hops non-markovian-dynamics ensemble-convergence" data-stochastic="true">
+      <img loading="lazy" src="../assets/example_figures/pi_hops.png" alt="Expected output for Stochastic PI hierarchy of pure states">
+      <h2>Stochastic PI hierarchy of pure states</h2>
+      <p><strong>advanced</strong> · medium · stochastic</p>
+      <p>Suess, Eisfeld, and Strunz, Phys. Rev. Lett. 113, 150403 (2014)</p>
+      <p class="pid-example-tasks"><code>hops</code> <code>non-markovian-dynamics</code> <code>ensemble-convergence</code></p>
+      <p><a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/pi_hops.md">Guide</a> · <a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/pi_hops.jl">Script</a></p>
+      <pre><code>julia --project=. examples/pi_hops.jl</code></pre>
+    </article>
+    <article class="pid-example-card" data-search="superradiant quantum trajectories mølmer, castin, and dalibard, j. opt. soc. am. b 10, 524 (1993) advanced long quantum-trajectories superradiance population-comparison" data-difficulty="advanced" data-tasks="quantum-trajectories superradiance population-comparison" data-stochastic="true">
+      <img loading="lazy" src="../assets/example_figures/superradiant_quantum_trajectories.png" alt="Expected output for Superradiant quantum trajectories">
+      <h2>Superradiant quantum trajectories</h2>
+      <p><strong>advanced</strong> · long · stochastic</p>
+      <p>Mølmer, Castin, and Dalibard, J. Opt. Soc. Am. B 10, 524 (1993)</p>
+      <p class="pid-example-tasks"><code>quantum-trajectories</code> <code>superradiance</code> <code>population-comparison</code></p>
+      <p><a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/superradiant_quantum_trajectories.md">Guide</a> · <a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/superradiant_quantum_trajectories.jl">Script</a></p>
+      <pre><code>julia --project=. examples/superradiant_quantum_trajectories.jl</code></pre>
+    </article>
+    <article class="pid-example-card" data-search="weak-pi pseudo-ket trajectories zhang, zhang, and mølmer, new j. phys. 20, 112001 (2018); lloyd, ziolkowska, and keeling, permutation-symmetric quantum trajectories, arxiv:2605.11103 (2026) advanced medium weak-pi quantum-trajectories steady-state method-comparison" data-difficulty="advanced" data-tasks="weak-pi quantum-trajectories steady-state method-comparison" data-stochastic="true">
+      <img loading="lazy" src="../assets/example_figures/weak_pi_decay_trajectory_comparison.png" alt="Expected output for Weak-PI pseudo-ket trajectories">
+      <h2>Weak-PI pseudo-ket trajectories</h2>
+      <p><strong>advanced</strong> · medium · stochastic</p>
+      <p>Zhang, Zhang, and Mølmer, New J. Phys. 20, 112001 (2018); Lloyd, Ziolkowska, and Keeling, Permutation-symmetric quantum trajectories, arXiv:2605.11103 (2026)</p>
+      <p class="pid-example-tasks"><code>weak-pi</code> <code>quantum-trajectories</code> <code>steady-state</code> <code>method-comparison</code></p>
+      <p><a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/weak_pi_trajectories.md">Guide</a> · <a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/weak_pi_trajectories.jl">Script</a></p>
+      <pre><code>julia --project=. examples/weak_pi_trajectories.jl</code></pre>
+    </article>
+  </div>
+</div>
+<script>
+(() => {
+  const root = document.getElementById('pid-example-gallery');
+  if (!root) return;
+  const cards = Array.from(root.querySelectorAll('.pid-example-card'));
+  const search = root.querySelector('#pid-example-search');
+  const difficulty = root.querySelector('#pid-example-difficulty');
+  const task = root.querySelector('#pid-example-task');
+  const stochastic = root.querySelector('#pid-example-stochastic');
+  const count = root.querySelector('#pid-example-count');
+  function filter() {
+    const query = search.value.trim().toLowerCase();
+    let visible = 0;
+    for (const card of cards) {
+      const tasks = card.dataset.tasks.split(/\s+/);
+      const keep = (!query || card.dataset.search.includes(query)) &&
+        (!difficulty.value || card.dataset.difficulty === difficulty.value) &&
+        (!task.value || tasks.includes(task.value)) &&
+        (!stochastic.value || card.dataset.stochastic === stochastic.value);
+      card.hidden = !keep;
+      if (keep) visible += 1;
+    }
+    count.textContent = `${visible} of ${cards.length} examples`;
+  }
+  for (const control of [search, difficulty, task, stochastic]) {
+    control.addEventListener('input', filter);
+    control.addEventListener('change', filter);
+  }
+  filter();
+})();
+</script></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../qudit_phase_space/">« Qudit Husimi phase space</a><a class="docs-footer-nextpage" href="../published_validation/">Published validation »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.17.0 on <span class="colophon-date" title="Monday 27 July 2026 10:57">Monday 27 July 2026</span>. Using Julia version 1.12.6.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>

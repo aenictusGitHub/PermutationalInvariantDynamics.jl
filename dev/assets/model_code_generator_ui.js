@@ -232,6 +232,20 @@ g = 0.1`,
     oneBodyRDM: false,
     qfiAxis: "none",
   };
+  const DEFAULT_SCAN = {
+    enabled: false,
+    axes: [
+      {
+        parameter: String.raw`\Omega`,
+        start: 0,
+        stop: 1,
+        points: 11,
+      },
+    ],
+  };
+  const STORAGE_KEY =
+    "PermutationalInvariantDynamics.modelCodeGenerator.manifest.v1";
+  const SHARE_PREFIX = "#pid-model=";
 
   function element(tag, options) {
     const node = document.createElement(tag);
@@ -252,18 +266,35 @@ g = 0.1`,
     const api = window.PIDModelCodeGenerator;
     const form = root.querySelector("#pid-generator-form");
     const jumpContainer = root.querySelector("#pid-jump-list");
+    const scanAxisContainer = root.querySelector("#pid-scan-axes");
     const output = root.querySelector("#pid-generated-code");
     const status = root.querySelector("#pid-generator-status");
     const warnings = root.querySelector("#pid-generator-warnings");
     const summary = root.querySelector("#pid-generator-summary");
     const copyButton = root.querySelector("#pid-copy-code");
     const downloadButton = root.querySelector("#pid-download-code");
+    const plutoButton = root.querySelector("#pid-download-pluto");
     const bundleButton = root.querySelector("#pid-download-bundle");
+    const loadManifestButton = root.querySelector("#pid-load-manifest");
+    const manifestFile = root.querySelector("#pid-manifest-file");
+    const shareButton = root.querySelector("#pid-copy-share-link");
+    const undoButton = root.querySelector("#pid-undo-model");
+    const resetButton = root.querySelector("#pid-reset-model");
     let generatedCode = "";
     let generatedBundle = null;
+    let generatedManifest = null;
+    let undoManifest = null;
+    let suppressHistory = false;
 
     function labelledControl(labelText, control) {
       const wrapper = element("label", { className: "pid-jump-control" });
+      const label = element("span", { className: "pid-mini-label", text: labelText });
+      wrapper.append(label, control);
+      return wrapper;
+    }
+
+    function labelledScanControl(labelText, control) {
+      const wrapper = element("label", { className: "pid-scan-control" });
       const label = element("span", { className: "pid-mini-label", text: labelText });
       wrapper.append(label, control);
       return wrapper;
@@ -318,20 +349,98 @@ g = 0.1`,
       jumpContainer.append(row);
     }
 
-    function loadPreset(name) {
-      const preset = PRESETS[name] || PRESETS.driven;
+    function addScanAxis(axis) {
+      const value = Object.assign({}, DEFAULT_SCAN.axes[0], axis || {});
+      const row = element("div", { className: "pid-scan-axis-row" });
+
+      const parameter = element("input", {
+        type: "text",
+        value: value.parameter,
+        placeholder: String.raw`\gamma`,
+      });
+      parameter.className = "pid-latex-input pid-scan-parameter";
+      parameter.setAttribute("aria-label", "Scanned parameter in LaTeX");
+
+      const start = element("input", {
+        type: "number",
+        value: value.start,
+      });
+      start.className = "pid-scan-start";
+      start.step = "any";
+      start.setAttribute("aria-label", "Scan start value");
+
+      const stop = element("input", {
+        type: "number",
+        value: value.stop,
+      });
+      stop.className = "pid-scan-stop";
+      stop.step = "any";
+      stop.setAttribute("aria-label", "Scan stop value");
+
+      const points = element("input", {
+        type: "number",
+        value: value.points,
+      });
+      points.className = "pid-scan-points";
+      points.min = "2";
+      points.step = "1";
+      points.setAttribute("aria-label", "Number of scan points");
+
+      const remove = element("button", {
+        type: "button",
+        className: "pid-button pid-button-quiet pid-remove-scan-axis",
+        text: "Remove",
+      });
+      remove.setAttribute("aria-label", "Remove this scan axis");
+      remove.addEventListener("click", function () {
+        row.remove();
+      });
+
+      row.append(
+        labelledScanControl("Parameter", parameter),
+        labelledScanControl("Start", start),
+        labelledScanControl("Stop", stop),
+        labelledScanControl("Points", points),
+        remove,
+      );
+      scanAxisContainer.append(row);
+    }
+
+    function presetScan(preset) {
+      if (preset.scan) {
+        return {
+          enabled: Boolean(preset.scan.enabled),
+          axes: (preset.scan.axes || []).map((axis) => Object.assign({}, axis)),
+        };
+      }
+      const firstAssignment = String(preset.parameters || "")
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .find((line) => line.includes("="));
+      const parameter = firstAssignment
+        ? firstAssignment.split("=", 1)[0].trim()
+        : DEFAULT_SCAN.axes[0].parameter;
+      return {
+        enabled: false,
+        axes: [Object.assign({}, DEFAULT_SCAN.axes[0], { parameter })],
+      };
+    }
+
+    function applyConfiguration(preset) {
       root.querySelector("#pid-architecture").value = preset.architecture || "pi";
-      root.querySelector("#pid-particle-count").value = preset.N;
-      root.querySelector("#pid-local-dimension").value = preset.d;
+      root.querySelector("#pid-particle-count").value =
+        preset.N === undefined ? 8 : preset.N;
+      root.querySelector("#pid-local-dimension").value =
+        preset.d === undefined ? 2 : preset.d;
       root.querySelector("#pid-calculation").value =
         preset.calculation || "steady-observable";
       root.querySelector("#pid-workflow").value =
         preset.workflow || "direct-api";
       root.querySelector("#pid-steady-method").value =
         preset.steadyMethod || "deterministic";
-      root.querySelector("#pid-hamiltonian").value = preset.hamiltonian;
-      root.querySelector("#pid-parameters").value = preset.parameters;
-      root.querySelector("#pid-observable").value = preset.observable;
+      root.querySelector("#pid-hamiltonian").value = preset.hamiltonian || "";
+      root.querySelector("#pid-parameters").value = preset.parameters || "";
+      root.querySelector("#pid-observable").value = preset.observable || "";
       const initialState = preset.initialState || DEFAULT_INITIAL_STATE;
       root.querySelector("#pid-initial-level").value = initialState.level;
       const trajectory = Object.assign(
@@ -376,9 +485,15 @@ g = 0.1`,
       root.querySelector("#pid-analysis-one-body-rdm").checked =
         analysis.oneBodyRDM;
       root.querySelector("#pid-analysis-qfi-axis").value = analysis.qfiAxis;
+      const scan = presetScan(preset);
+      root.querySelector("#pid-scan-enabled").checked = scan.enabled;
+      scanAxisContainer.replaceChildren();
+      (scan.axes.length ? scan.axes : DEFAULT_SCAN.axes).forEach(addScanAxis);
       root.querySelector("#pid-memory-budget").value =
         preset.memoryBudgetMiB || 512;
-      const pseudomode = preset.pseudomode || DEFAULT_PSEUDOMODE;
+      const pseudomode = Object.assign(
+        {}, DEFAULT_PSEUDOMODE, preset.pseudomode || {},
+      );
       root.querySelector("#pid-pseudomode-cutoff").value = pseudomode.nmax;
       root.querySelector("#pid-pseudomode-frequency").value = pseudomode.frequency;
       root.querySelector("#pid-pseudomode-damping").value = pseudomode.damping;
@@ -391,9 +506,13 @@ g = 0.1`,
       root.querySelector("#pid-pseudomode-counterrotating-strength").value =
         pseudomode.counterrotatingStrength;
       jumpContainer.replaceChildren();
-      preset.jumps.forEach(addJump);
+      (preset.jumps || []).forEach(addJump);
       updateVisibility();
       generate();
+    }
+
+    function loadPreset(name) {
+      applyConfiguration(PRESETS[name] || PRESETS.driven);
     }
 
     function readJumps() {
@@ -401,6 +520,21 @@ g = 0.1`,
         kind: row.querySelector("select").value,
         operator: row.querySelectorAll("input")[0].value,
         rate: row.querySelectorAll("input")[1].value,
+      }));
+    }
+
+    function readScanAxes() {
+      function numericValue(input) {
+        const raw = input.value.trim();
+        return raw === "" ? "" : Number(raw);
+      }
+      return Array.from(
+        scanAxisContainer.querySelectorAll(".pid-scan-axis-row"),
+      ).map((row) => ({
+        parameter: row.querySelector(".pid-scan-parameter").value,
+        start: numericValue(row.querySelector(".pid-scan-start")),
+        stop: numericValue(row.querySelector(".pid-scan-stop")),
+        points: numericValue(row.querySelector(".pid-scan-points")),
       }));
     }
 
@@ -455,6 +589,10 @@ g = 0.1`,
           oneBodyRDM:
             root.querySelector("#pid-analysis-one-body-rdm").checked,
           qfiAxis: root.querySelector("#pid-analysis-qfi-axis").value,
+        },
+        scan: {
+          enabled: root.querySelector("#pid-scan-enabled").checked,
+          axes: readScanAxes(),
         },
         resources: {
           memoryBudgetMiB:
@@ -528,6 +666,8 @@ g = 0.1`,
         "gap Krylov dimension": "#pid-gap-krylovdim",
         "QFI axis": "#pid-analysis-qfi-axis",
         "state analysis": "#pid-analysis-section",
+        scan: "#pid-scan-enabled",
+        "parameter scan": "#pid-scan-enabled",
         "memory budget": "#pid-memory-budget",
       };
       const selector = mapping[field];
@@ -539,6 +679,19 @@ g = 0.1`,
         ];
         if (row) {
           node = row.querySelectorAll("input")[jumpMatch[2] ? 1 : 0];
+        }
+      }
+      const scanMatch =
+        /^scan (?:parameter|axis) (\d+)(?: (parameter|start|stop|points|range))?$/.exec(field);
+      if (!node && scanMatch) {
+        const row = scanAxisContainer.querySelectorAll(".pid-scan-axis-row")[
+          Number(scanMatch[1]) - 1
+        ];
+        if (row) {
+          const part = scanMatch[2] || "parameter";
+          node = part === "range"
+            ? row
+            : row.querySelector(`.pid-scan-${part}`);
         }
       }
       if (node) node.setAttribute("aria-invalid", "true");
@@ -565,6 +718,20 @@ g = 0.1`,
           ? null
           : `pseudomode cutoff nmax=${result.summary.cutoff}`,
         result.summary.route,
+        Array.isArray(result.summary.scanAxes) &&
+          result.summary.scanAxes.length > 0
+          ? `${result.summary.scanAxes.length}-axis parameter scan`
+          : null,
+        result.summary.scanPoints === null ||
+          result.summary.scanPoints === undefined
+          ? null
+          : `${result.summary.scanPoints} total scan point${
+            result.summary.scanPoints === 1 ? "" : "s"
+          }`,
+        Array.isArray(result.summary.scanAxes) &&
+          result.summary.scanAxes.length > 0
+          ? `axes: ${result.summary.scanAxes.join(", ")}`
+          : null,
         coordinateDescription,
         result.summary.oneComplexVectorBytes === null
           ? null
@@ -583,12 +750,75 @@ g = 0.1`,
       }
     }
 
+    function serializedManifest(manifest) {
+      return JSON.stringify(manifest);
+    }
+
+    function saveLocalManifest(manifest) {
+      try {
+        window.localStorage.setItem(
+          STORAGE_KEY, serializedManifest(manifest),
+        );
+      } catch (_) {
+        // Private browsing and locked-down browsers may disable persistent
+        // storage. Generation remains completely functional without it.
+      }
+    }
+
+    function encodeShareManifest(manifest) {
+      const bytes = new TextEncoder().encode(serializedManifest(manifest));
+      let binary = "";
+      for (const byte of bytes) binary += String.fromCharCode(byte);
+      return window.btoa(binary)
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=+$/g, "");
+    }
+
+    function decodeShareManifest(encoded) {
+      const normalized = encoded
+        .replace(/-/g, "+")
+        .replace(/_/g, "/");
+      const padding = "=".repeat((4 - (normalized.length % 4)) % 4);
+      const binary = window.atob(normalized + padding);
+      const bytes = Uint8Array.from(
+        binary, (character) => character.charCodeAt(0),
+      );
+      return JSON.parse(new TextDecoder().decode(bytes));
+    }
+
+    function loadManifestObject(manifest, message) {
+      try {
+        const configuration = api.configurationFromManifest(manifest);
+        applyConfiguration(configuration);
+        status.className = "pid-status pid-status-success";
+        status.textContent = message;
+        return true;
+      } catch (error) {
+        status.className = "pid-status pid-status-error";
+        status.textContent = error instanceof api.GeneratorError
+          ? `${error.field}: ${error.message}`
+          : "The manifest could not be loaded.";
+        return false;
+      }
+    }
+
     function generate() {
       clearMessages();
       try {
         const result = api.generate(readConfiguration());
+        if (
+          !suppressHistory &&
+          generatedManifest &&
+          serializedManifest(generatedManifest) !==
+            serializedManifest(result.manifest)
+        ) {
+          undoManifest = generatedManifest;
+        }
         generatedCode = result.code;
         generatedBundle = result.bundle;
+        generatedManifest = result.manifest;
+        saveLocalManifest(generatedManifest);
         output.textContent = generatedCode;
         renderSummary(result);
         renderWarnings(result.warnings);
@@ -596,14 +826,19 @@ g = 0.1`,
         status.textContent = "Code generated locally in your browser.";
         copyButton.disabled = false;
         downloadButton.disabled = false;
+        plutoButton.disabled = false;
         bundleButton.disabled = false;
+        shareButton.disabled = false;
+        undoButton.disabled = undoManifest === null;
       } catch (error) {
         generatedCode = "";
         generatedBundle = null;
         output.textContent = "# Correct the model input to generate Julia code.";
         copyButton.disabled = true;
         downloadButton.disabled = true;
+        plutoButton.disabled = true;
         bundleButton.disabled = true;
+        shareButton.disabled = generatedManifest === null;
         status.className = "pid-status pid-status-error";
         if (error instanceof api.GeneratorError) {
           status.textContent = `${error.field}: ${error.message}`;
@@ -625,6 +860,7 @@ g = 0.1`,
       const spectrum = calculation === "liouvillian-spectrum";
       const gap = calculation === "liouvillian-gap";
       const trajectory = method === "trajectory";
+      const scanEnabled = root.querySelector("#pid-scan-enabled").checked;
 
       function setRequired(section, visible, selector) {
         section.hidden = !visible;
@@ -683,6 +919,12 @@ g = 0.1`,
         control.required = false;
       });
 
+      const scanSection = root.querySelector("#pid-scan-section");
+      scanSection.hidden = !scanEnabled;
+      scanSection.querySelectorAll("input").forEach((input) => {
+        input.required = scanEnabled;
+      });
+
       const isPseudomode = architecture !== "pi";
       const panel = root.querySelector("#pid-pseudomode-section");
       panel.hidden = !isPseudomode;
@@ -695,15 +937,14 @@ g = 0.1`,
       });
     }
 
-    async function copyCode() {
-      if (!generatedCode) return;
+    async function copyText(text, successMessage) {
       try {
-        await navigator.clipboard.writeText(generatedCode);
+        await navigator.clipboard.writeText(text);
         status.className = "pid-status pid-status-success";
-        status.textContent = "Julia code copied to the clipboard.";
+        status.textContent = successMessage;
       } catch (_) {
         const helper = element("textarea");
-        helper.value = generatedCode;
+        helper.value = text;
         helper.setAttribute("readonly", "");
         helper.className = "pid-copy-helper";
         document.body.append(helper);
@@ -712,9 +953,14 @@ g = 0.1`,
           document.execCommand("copy");
         helper.remove();
         status.textContent = copied
-          ? "Julia code copied to the clipboard."
+          ? successMessage
           : "Clipboard access failed; select the code manually.";
       }
+    }
+
+    async function copyCode() {
+      if (!generatedCode) return;
+      await copyText(generatedCode, "Julia code copied to the clipboard.");
     }
 
     function downloadArtifact(artifact) {
@@ -738,6 +984,14 @@ g = 0.1`,
       downloadArtifact(generatedBundle.files[0]);
     }
 
+    function downloadPluto() {
+      if (!generatedBundle) return;
+      const artifact = generatedBundle.files.find(
+        (entry) => entry.name.endsWith("_pluto.jl"),
+      );
+      if (artifact) downloadArtifact(artifact);
+    }
+
     function downloadBundle() {
       if (!generatedBundle) return;
       // Keep the implementation dependency-free: each artifact is a normal
@@ -747,7 +1001,86 @@ g = 0.1`,
       }
       status.className = "pid-status pid-status-success";
       status.textContent =
-        "Experiment bundle downloaded: Julia script, JSON manifest, and README.";
+        "Experiment bundle downloaded: Julia script, JSON manifest, README, and Pluto notebook.";
+    }
+
+    async function copyShareLink() {
+      if (!generatedManifest) return;
+      const url = new URL(window.location.href);
+      url.hash = `pid-model=${encodeShareManifest(generatedManifest)}`;
+      await copyText(
+        url.toString(), "Shareable model link copied to the clipboard.",
+      );
+    }
+
+    async function loadManifestFile() {
+      const file = manifestFile.files && manifestFile.files[0];
+      if (!file) return;
+      try {
+        if (file.size > 2 * 1024 * 1024) {
+          throw new Error("manifest too large");
+        }
+        const manifest = JSON.parse(await file.text());
+        loadManifestObject(manifest, `Loaded ${file.name}.`);
+      } catch (_) {
+        status.className = "pid-status pid-status-error";
+        status.textContent =
+          "The selected file is not a valid supported generator manifest.";
+      } finally {
+        manifestFile.value = "";
+      }
+    }
+
+    function undoModel() {
+      if (!undoManifest) return;
+      const target = undoManifest;
+      undoManifest = generatedManifest;
+      suppressHistory = true;
+      try {
+        const configuration = api.configurationFromManifest(target);
+        applyConfiguration(configuration);
+      } finally {
+        suppressHistory = false;
+      }
+      undoButton.disabled = undoManifest === null;
+      status.className = "pid-status pid-status-success";
+      status.textContent = "Restored the previous generated model.";
+    }
+
+    function resetModel() {
+      loadPreset("driven");
+      const url = new URL(window.location.href);
+      url.hash = "";
+      window.history.replaceState(null, "", url.toString());
+      status.className = "pid-status pid-status-success";
+      status.textContent = "Reset to the driven-qubit starter model.";
+    }
+
+    function restoreSession() {
+      if (window.location.hash.startsWith(SHARE_PREFIX)) {
+        try {
+          const encoded = window.location.hash.slice(SHARE_PREFIX.length);
+          if (loadManifestObject(
+            decodeShareManifest(encoded),
+            "Loaded the model from the share link.",
+          )) return true;
+        } catch (_) {
+          status.className = "pid-status pid-status-error";
+          status.textContent =
+            "The model share link is invalid or no longer supported.";
+        }
+      }
+      try {
+        const stored = window.localStorage.getItem(STORAGE_KEY);
+        if (stored) {
+          if (loadManifestObject(
+            JSON.parse(stored), "Restored the last local model.",
+          )) return true;
+        }
+      } catch (_) {
+        // Ignore unavailable or malformed local storage and use the starter.
+      }
+      return false;
     }
 
     form.addEventListener("submit", function (event) {
@@ -760,6 +1093,10 @@ g = 0.1`,
     root.querySelector("#pid-add-collective-jump").addEventListener("click", function () {
       addJump({ kind: "collective", operator: "J_-", rate: String.raw`\Gamma` });
     });
+    root.querySelector("#pid-add-scan-axis").addEventListener("click", function () {
+      addScanAxis({ parameter: "" });
+      updateVisibility();
+    });
     root.querySelector("#pid-preset").addEventListener("change", function (event) {
       loadPreset(event.target.value);
     });
@@ -768,6 +1105,7 @@ g = 0.1`,
       "#pid-steady-method",
       "#pid-architecture",
       "#pid-workflow",
+      "#pid-scan-enabled",
     ]) {
       root.querySelector(selector).addEventListener("change", function () {
         updateVisibility();
@@ -776,9 +1114,17 @@ g = 0.1`,
     }
     copyButton.addEventListener("click", copyCode);
     downloadButton.addEventListener("click", downloadCode);
+    plutoButton.addEventListener("click", downloadPluto);
     bundleButton.addEventListener("click", downloadBundle);
+    loadManifestButton.addEventListener("click", function () {
+      manifestFile.click();
+    });
+    manifestFile.addEventListener("change", loadManifestFile);
+    shareButton.addEventListener("click", copyShareLink);
+    undoButton.addEventListener("click", undoModel);
+    resetButton.addEventListener("click", resetModel);
 
-    loadPreset("driven");
+    if (!restoreSession()) loadPreset("driven");
   }
 
   if (document.readyState === "loading") {
