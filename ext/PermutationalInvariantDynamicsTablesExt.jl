@@ -35,6 +35,11 @@ Tables.rows(result::PID.ParameterScanResult)=ParameterScanTableRows(result)
 Tables.schema(::ParameterScanTableRows)=
     Tables.Schema(_SCAN_TABLE_NAMES,_SCAN_TABLE_TYPES)
 
+Tables.istable(::Type{<:PID.ResultTable})=true
+Tables.columnaccess(::Type{<:PID.ResultTable})=true
+Tables.columns(table::PID.ResultTable)=table.columns
+Tables.schema(table::PID.ResultTable)=Tables.schema(table.columns)
+
 const _COLUMN_RESULTS=Union{
     PID.ComplexSpectrum,
     PID.QuditHusimiData,

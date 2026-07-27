@@ -8,6 +8,11 @@ const REMOTE = Documenter.Remotes.GitHub(
 # source checkout without Git metadata build documentation with working links.
 const SOURCE_REVISION = get(ENV, "GITHUB_SHA", "main")
 const PACKAGE_ROOT = normpath(pkgdir(PermutationalInvariantDynamics))
+const DOCUMENTATION_CHANNEL =
+    startswith(get(ENV, "GITHUB_REF", ""), "refs/tags/v") ? "stable" : "dev"
+const DOCUMENTATION_CANONICAL =
+    "https://aenictusgithub.github.io/PermutationalInvariantDynamics.jl/" *
+    DOCUMENTATION_CHANNEL * "/"
 # Tracked Markdown is also read directly on GitHub, so `$...$` is the
 # canonical inline syntax. Keep that delimiter explicit instead of depending
 # on Documenter's default KaTeX configuration.
@@ -47,7 +52,7 @@ makedocs(sitename="PermutationalInvariantDynamics.jl",
          remotes=Dict(PACKAGE_ROOT => (REMOTE, SOURCE_REVISION)),
          format=Documenter.HTML(
              mathengine=MATH_ENGINE,
-             canonical="https://aenictusgithub.github.io/PermutationalInvariantDynamics.jl/dev/",
+             canonical=DOCUMENTATION_CANONICAL,
              edit_link="main",
              repolink=REPOSITORY,
              assets=[
@@ -65,12 +70,18 @@ makedocs(sitename="PermutationalInvariantDynamics.jl",
              ],
              size_threshold_warn=128*1024),
          pages=["Home"=>"index.md",
-                "Getting started"=>"getting_started.md",
-                "Model code generator"=>"model_code_generator.md",
+                "Start here"=>[
+                    "90-second quickstart"=>"quickstart.md",
+                    "Installation and environment checks"=>"installing.md",
+                    "Choose the right workflow"=>"choosing_workflow.md",
+                    "Build a model step by step"=>"getting_started.md",
+                    "Model code generator"=>"model_code_generator.md",
+                ],
                 "Concepts and core workflow"=>[
                     "Framework and conventions"=>"framework.md",
                     "Architecture and efficient workflows"=>"architecture.md",
                     "API tiers and prepared analysis"=>"api_tiers.md",
+                    "Results, tables, plots, and exports"=>"result_outputs.md",
                     "Reusable prepared geometry"=>"prepared_artifacts.md",
                 ],
                 "Dynamics workflows"=>[
@@ -94,6 +105,7 @@ makedocs(sitename="PermutationalInvariantDynamics.jl",
                     "Block, multi-shift, and recycled Krylov"=>"krylov_extensions.md",
                     "Optional accelerators"=>"accelerators.md",
                     "Prepared parameter scans"=>"parameter_scans.md",
+                    "Progress and cancellation"=>"progress.md",
                     "Numerical convergence reports"=>"convergence.md",
                     "Reproducible verified experiments"=>"experiments.md",
                     "Startup latency and local sysimages"=>"startup_performance.md",
@@ -109,6 +121,7 @@ makedocs(sitename="PermutationalInvariantDynamics.jl",
                     "Qudit Husimi phase space"=>"qudit_phase_space.md",
                 ],
                 "Examples and validation"=>[
+                    "Searchable example gallery"=>"example_gallery.md",
                     "Published validation"=>"published_validation.md",
                     "Research examples"=>"research_examples.md",
                     "Performance benchmarks"=>"benchmarks.md",

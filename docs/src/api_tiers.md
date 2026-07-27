@@ -22,6 +22,7 @@ live under `Models`.
 |---|---|
 | Representation | `PIBasis`, `PIState`, `PIOperator`, `PISupersite`, `GlobalPseudomodeModel`, `pseudomode_model`, `global_pseudomode_model`, `exact_binomial`, `exact_multinomial`, Schur-block constructors, spin/state conveniences, `PIModel`, and the physical term constructors |
 | Preparation | `compile`, `compile_family`, `compile_affine_family`, `specialize`, `prepare_geometry`, `isautonomous`, `freeze` |
+| Guided studies | `PIStudy`, `explain`, `check`, `solve`, `doctor`, and the uniform `result_*` accessors |
 | Dynamics | `solve_dynamics` (including observable-only streaming), `solve_populations`, `dynamics_problem`, `floquet_steady_state`, `quantum_trajectories` (including online ensemble statistics), `trajectory_steady_state`, `HOPSPlan`, `hops_trajectory`, and `hops_average` |
 | Mean-field predictions | `MeanFieldPlan`, `solve_meanfield`, `meanfield_problem`, `meanfield_stationary_state`, `meanfield_stability` |
 | Stationary and spectral analysis | `stationary_state`, `liouvillian_spectrum`, `pi_liouvillian_gap`, `diagnostics`, `recommend_solver` |
@@ -29,6 +30,7 @@ live under `Models`.
 | Visualization | `schur_block_structure`, `visualize_schur_blocks`, `spin_husimi_q`, `spin_wigner`, `qudit_husimi_q`, `visualize_spin_phase_space`, and the density/Liouvillian/Floquet spectrum data and renderers |
 | Reductions and entanglement | `one_body_rdm`, `one_body_rdm!`, `local_factor_trace`, `local_factor_trace!`, `trace_pseudomodes`, `trace_pseudomodes!`, `global_pseudomode_state`, `composite_reduced_state`, `composite_reduced_state!`, `reduced_state`, `reduced_state!`, `reduced_purity`, `negativity`, `partial_transpose_spectrum`, `ppt_mixture_test` |
 | Validation | `state_diagnostics`, `positivity_diagnostics`, `validate_state` |
+| Results and exports | `summarize`, `result_table`, `save_result`, `save_checkpoint`, `save_experiment` |
 | Reproducibility | `PIExperiment`, `plan_experiment`, `explain_experiment`, `verified_solve`, `save_experiment`, `load_experiment` |
 | Inference and counting | `fit_parameters`, `parameter_identifiability`, `TiltedLiouvillianPlan`, `counting_scgf`, `counting_cumulants` |
 
@@ -36,6 +38,32 @@ Prefer these commands in new code. In particular, `stationary_state` returns a
 package state container (`PIState`, or `CompositePIState` for a shared global
 mode), while the older low-level `steady_state` interface may return raw
 coordinates.
+
+For a guided calculation that retains the existing solver behavior while
+presenting one consistent interface, construct a study and inspect it before
+execution:
+
+```julia
+study = PIStudy(
+    Models.local_pump_decay(8);
+    task=:steady_state,
+    observables=(magnetization=spin_matrices(2).jz,),
+)
+
+report = explain(study)  # representation, route, memory, and issues
+result = solve(study)
+
+result.converged
+result.observables
+result_diagnostics(result)
+```
+
+`PIStudyResult.raw` retains the original `SteadyStateResult`,
+`DynamicsResult`/`DynamicsStreamResult`, or `SpectrumResult`. A reported
+`runnable=missing` means that preflight contains an allocation component that
+cannot be bounded from the supplied source; it is never a safety
+certification. `doctor()` performs a dependency-free environment report and a
+tiny local smoke solve.
 
 ## Advanced reusable API
 
@@ -86,6 +114,11 @@ threading contracts.
   continuation, independent threaded scans, and optional process-distributed
   scans have deliberately different ownership contracts described in the
   [scan guide](parameter_scans.md).
+- `ProgressEvent` and `CancellationToken` are dependency-free coordination
+  objects. Cancellation is cooperative at documented numerical boundaries;
+  scans return resumable prefixes, while workflows without a partial-result
+  contract raise `OperationCancelled`. See the
+  [progress guide](progress.md) for the exact supported workflow set.
 - `HEOMPlan` stores the finite hierarchy topology and physical coupling data.
   `HEOMWorkspace` and `HEOMEvolutionWorkspace` separate application scratch
   from the three hierarchy-sized arrays used by low-storage forward RK4. Hard
@@ -462,6 +495,9 @@ PermutationalInvariantDynamics.reduced_states
 
 ```@docs
 PermutationalInvariantDynamics.Models.catalog
+PermutationalInvariantDynamics.Models.find
+PermutationalInvariantDynamics.Models.describe
+PermutationalInvariantDynamics.Models.example
 PermutationalInvariantDynamics.Models.driven_qubits
 PermutationalInvariantDynamics.Models.independent_dephasing
 PermutationalInvariantDynamics.Models.local_pump_decay

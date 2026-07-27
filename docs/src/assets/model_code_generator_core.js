@@ -8,8 +8,9 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
   "use strict";
 
-  const VERSION = "1.4.0";
+  const VERSION = "1.6.0";
   const MAX_FORMULA_LENGTH = 2000;
+  const MAX_SCAN_POINTS = 100000;
   const JULIA_RESERVED = new Set([
     "baremodule", "begin", "break", "catch", "const", "continue", "do",
     "else", "elseif", "end", "export", "false", "finally", "for",
@@ -44,6 +45,12 @@
     "composite_trajectory_plan", "evolution_workspace", "current",
     "trajectory_preflight",
     "experiment", "experiment_plan", "experiment_result",
+    "scan_points", "scan_result", "scan_rows", "scan_plan",
+    "scan_workspace", "scan_model_builder", "scan_prototype",
+    "scan_preflight", "scan_family", "scan_rate_builder",
+    "scan_diagnostic", "scan_observable", "scan_observable_plan",
+    "scan_observable_geometry", "scan_terms", "scan_embedding",
+    "scan_axis_values", "scan_index", "scan_point", "rho",
     "Random", "LinearAlgebra", "index", "time", "value",
   ]);
   const GREEK = new Set([
@@ -671,6 +678,96 @@
     return { values, code, provided };
   }
 
+  function parseScanConfiguration(input, modelParameters) {
+    if (!input || input.enabled !== true) return null;
+    const rawAxes = Array.isArray(input.axes) ? input.axes : [];
+    if (!rawAxes.length) {
+      fail("scan", "Add at least one parameter axis to the scan.");
+    }
+    const axes = [];
+    const names = new Set();
+    let totalPoints = 1;
+    for (let index = 0; index < rawAxes.length; index += 1) {
+      const raw = rawAxes[index] && typeof rawAxes[index] === "object"
+        ? rawAxes[index]
+        : {};
+      const label = `scan parameter ${index + 1}`;
+      const parameter = parseFormula(String(raw.parameter || ""), label);
+      if (
+        parameter.ast.type !== "id" ||
+        OPERATOR_ATOMS[parameter.ast.name] ||
+        parameter.ast.name === "N" ||
+        parameter.ast.name === "pi"
+      ) {
+        fail(label, "A scan axis must name exactly one scalar model parameter.");
+      }
+      const name = parameter.ast.name;
+      if (!modelParameters.has(name)) {
+        fail(
+          label,
+          `Parameter ${name} does not occur in the Hamiltonian, a jump channel, or the pseudomode embedding.`,
+        );
+      }
+      if (names.has(name)) {
+        fail(label, `Parameter ${name} is selected by more than one scan axis.`);
+      }
+      names.add(name);
+      function numericAxisValue(value) {
+        if (
+          value === undefined ||
+          value === null ||
+          typeof value === "boolean" ||
+          String(value).trim() === ""
+        ) {
+          return Number.NaN;
+        }
+        return Number(value);
+      }
+      const start = numericAxisValue(raw.start);
+      const stop = numericAxisValue(raw.stop);
+      const points = numericAxisValue(raw.points);
+      if (!Number.isFinite(start)) {
+        fail(`${label} start`, "The scan start must be a finite number.");
+      }
+      if (!Number.isFinite(stop)) {
+        fail(`${label} stop`, "The scan stop must be a finite number.");
+      }
+      if (start === stop) {
+        fail(`${label} range`, "The scan start and stop must be different.");
+      }
+      if (!Number.isSafeInteger(points) || points < 2) {
+        fail(
+          `${label} points`,
+          "The number of scan points must be a safe integer of at least two.",
+        );
+      }
+      if (
+        totalPoints > Math.floor(MAX_SCAN_POINTS / points) ||
+        totalPoints * points > MAX_SCAN_POINTS
+      ) {
+        fail(
+          "scan",
+          `The Cartesian grid may contain at most ${MAX_SCAN_POINTS} points. Split a larger study into resumable scans.`,
+        );
+      }
+      totalPoints *= points;
+      axes.push({
+        parameter: name,
+        normalized: parameter.normalized,
+        start,
+        stop,
+        points,
+      });
+    }
+    return {
+      enabled: true,
+      axes,
+      names,
+      totalPoints,
+      ordering: "first-axis-fastest",
+    };
+  }
+
   function flattenAdditive(node, sign, destination) {
     if (node.type === "binary" && node.op === "+") {
       flattenAdditive(node.left, sign, destination);
@@ -1079,6 +1176,8 @@
     }
 
     const parameters = new Set();
+    const hamiltonianParameters = new Set();
+    const jumpRateParameters = new Set();
     const hamiltonianComponents = new Set();
     const observableComponents = new Set();
     const warnings = [];
@@ -1234,6 +1333,7 @@
         fail("hamiltonian", "Pauli sigma symbols require d = 2. Use spin-j symbols J_a for qudits.");
       }
       collectParameters(hamiltonian.ast, parameters);
+      collectParameters(hamiltonian.ast, hamiltonianParameters);
       const hamiltonianEntries = [];
       flattenAdditive(hamiltonian.ast, 1, hamiltonianEntries);
       for (const entry of hamiltonianEntries) {
@@ -1290,7 +1390,19 @@
       collectParameters(operator.ast, operatorParameters);
       collectParameters(operator.ast, parameters);
       collectParameters(rate.ast, parameters);
-      jumps.push({ kind, operator, rate, field, operatorParameters });
+      const rateParameters = new Set();
+      collectParameters(rate.ast, rateParameters);
+      for (const parameter of rateParameters) {
+        jumpRateParameters.add(parameter);
+      }
+      jumps.push({
+        kind,
+        operator,
+        rate,
+        field,
+        operatorParameters,
+        rateParameters,
+      });
     }
 
     if (architecture === "pi" && !hamiltonian && !jumps.length) {
@@ -1313,9 +1425,11 @@
       warnings.push("Only collective channels were selected. With the complete PI basis, Schur-sector populations are conserved and the stationary state is generally nonunique.");
     }
 
+    const modelParameters = new Set(parameters);
     let observable = null;
     let observableInfo = null;
     let observableMode = null;
+    const observableParameters = new Set();
     if (
       calculation === "steady-observable" ||
       calculation === "dynamics-observable"
@@ -1341,6 +1455,7 @@
         fail("observable", "Pauli sigma symbols require d = 2.");
       }
       collectParameters(observable.ast, parameters);
+      collectParameters(observable.ast, observableParameters);
       if (observableInfo.components.has("plus") || observableInfo.components.has("minus")) {
         if (isDynamics && steadyMethod === "trajectory") {
           fail(
@@ -1362,8 +1477,67 @@
       }
     }
 
+    const scan = parseScanConfiguration(config.scan, modelParameters);
+    if (scan) {
+      if (steadyMethod !== "deterministic") {
+        fail(
+          "scan",
+          "Generated scans use deterministic prepared solvers. Quantum-trajectory scans require explicit statistical and scheduling choices and are not emitted by this assistant.",
+        );
+      }
+      if (workflow !== "direct-api") {
+        fail(
+          "scan",
+          "Generated parameter scans use the direct prepared-scan API, not the single-model verified-experiment workflow.",
+        );
+      }
+      if (architecture === "global-pseudomode") {
+        fail(
+          "scan",
+          "The native parameter-scan backend currently accepts PIModel sources, not a factorized shared-global-pseudomode generator.",
+        );
+      }
+      if (
+        calculation !== "steady-state" &&
+        calculation !== "steady-observable" &&
+        calculation !== "liouvillian-spectrum"
+      ) {
+        fail(
+          "scan",
+          "Generated scans currently support deterministic stationary states, stationary observables, and selected Liouvillian spectra.",
+        );
+      }
+      if (
+        analysis.purity ||
+        analysis.entropy ||
+        analysis.oneBodyRDM ||
+        analysis.qfiAxis !== "none"
+      ) {
+        fail(
+          "state analysis",
+          "Optional nonlinear state analyses are not emitted inside a scan. Generate the stationary states and apply a prepared analysis plan explicitly to selected points.",
+        );
+      }
+      warnings.push(
+        `The generated Cartesian scan contains ${scan.totalPoints} points. The first selected axis varies fastest.`,
+        "Serial continuation is path dependent. Reorder scan axes deliberately and verify convergence from independent initial guesses near discontinuities or multistability.",
+      );
+    }
+
     const values = parseParameterValues(config.parameters || "");
+    const scannedNames = scan ? scan.names : new Set();
     for (const parameter of parameters) {
+      if (scannedNames.has(parameter)) {
+        const axis = scan.axes.find((entry) => entry.parameter === parameter);
+        if (values.provided.has(parameter)) {
+          warnings.push(
+            `The nominal assignment of ${parameter} is overridden by its scan range; the first scan value is used for browser validation.`,
+          );
+        }
+        values.values.set(parameter, axis.start);
+        values.code.set(parameter, floatLiteral(axis.start));
+        continue;
+      }
       if (!values.values.has(parameter)) {
         values.values.set(parameter, 1.0);
         values.code.set(parameter, "1.0");
@@ -1375,62 +1549,117 @@
         warnings.push(`Parameter ${parameter} is assigned but does not occur in the model.`);
       }
     }
-    if (hamiltonian) {
-      validateScalarSubexpressions(
-        hamiltonian.ast, values.values, particleCount, "hamiltonian");
-    }
-    for (const jump of jumps) {
-      validateScalarSubexpressions(
-        jump.operator.ast, values.values, particleCount, jump.field);
-      validateScalarSubexpressions(
-        jump.rate.ast, values.values, particleCount, `${jump.field} rate`);
-      const rate = evaluateScalar(jump.rate.ast, values.values, particleCount);
-      if (rate !== null && (!Number.isFinite(rate) || rate < 0)) {
-        fail(`${jump.field} rate`, "Jump rates in this assistant must evaluate to a finite nonnegative value.");
+    function validateModelValues(pointValues, suffix) {
+      if (hamiltonian) {
+        validateScalarSubexpressions(
+          hamiltonian.ast,
+          pointValues,
+          particleCount,
+          `hamiltonian${suffix}`,
+        );
       }
+      for (const jump of jumps) {
+        validateScalarSubexpressions(
+          jump.operator.ast,
+          pointValues,
+          particleCount,
+          `${jump.field}${suffix}`,
+        );
+        validateScalarSubexpressions(
+          jump.rate.ast,
+          pointValues,
+          particleCount,
+          `${jump.field} rate${suffix}`,
+        );
+        const rate = evaluateScalar(
+          jump.rate.ast, pointValues, particleCount,
+        );
+        if (rate !== null && (!Number.isFinite(rate) || rate < 0)) {
+          fail(
+            `${jump.field} rate`,
+            `Jump rates must be finite and nonnegative at every scan point${suffix}.`,
+          );
+        }
+      }
+      if (pseudomode) {
+        const scalarFields = [
+          ["pseudomode frequency", pseudomode.frequency, false],
+          ["pseudomode damping", pseudomode.damping, true],
+          ["pseudomode thermal occupation", pseudomode.thermalOccupation, true],
+          ["pseudomode coupling strength", pseudomode.strength, false],
+          [
+            "pseudomode counter-rotating strength",
+            pseudomode.counterrotatingStrength,
+            false,
+          ],
+        ];
+        for (const [field, parsedScalar, nonnegative] of scalarFields) {
+          validateScalarSubexpressions(
+            parsedScalar.ast,
+            pointValues,
+            particleCount,
+            `${field}${suffix}`,
+          );
+          const value = evaluateScalar(
+            parsedScalar.ast, pointValues, particleCount,
+          );
+          if (
+            value === null ||
+            !Number.isFinite(value) ||
+            (nonnegative && value < 0)
+          ) {
+            fail(
+              field,
+              nonnegative
+                ? `This setting must be finite and nonnegative at every scan point${suffix}.`
+                : `This setting must be finite at every scan point${suffix}.`,
+            );
+          }
+        }
+        validateScalarSubexpressions(
+          pseudomode.couplingOperator.ast,
+          pointValues,
+          particleCount,
+          `pseudomode coupling operator${suffix}`,
+        );
+      }
+      if (observable) {
+        validateScalarSubexpressions(
+          observable.ast,
+          pointValues,
+          particleCount,
+          `observable${suffix}`,
+        );
+      }
+    }
+    validateModelValues(values.values, "");
+    for (const jump of jumps) {
+      const rate = evaluateScalar(
+        jump.rate.ast, values.values, particleCount,
+      );
       if (jump.operatorParameters.size && rate !== 1) {
         warnings.push(`${jump.field} contains a scalar parameter inside the jump operator and also has a nonunit rate. Confirm that the dissipator should square the internal coefficient.`);
       }
     }
-    if (pseudomode) {
-      const scalarFields = [
-        ["pseudomode frequency", pseudomode.frequency, false],
-        ["pseudomode damping", pseudomode.damping, true],
-        ["pseudomode thermal occupation", pseudomode.thermalOccupation, true],
-        ["pseudomode coupling strength", pseudomode.strength, false],
-        [
-          "pseudomode counter-rotating strength",
-          pseudomode.counterrotatingStrength,
-          false,
-        ],
-      ];
-      for (const [field, parsedScalar, nonnegative] of scalarFields) {
-        validateScalarSubexpressions(
-          parsedScalar.ast, values.values, particleCount, field,
-        );
-        const value = evaluateScalar(
-          parsedScalar.ast, values.values, particleCount,
-        );
-        if (value === null || !Number.isFinite(value) ||
-            (nonnegative && value < 0)) {
-          fail(
-            field,
-            nonnegative
-              ? "This setting must evaluate to a finite nonnegative real value."
-              : "This setting must evaluate to a finite real value.",
-          );
+    if (scan) {
+      const pointValues = new Map(values.values);
+      for (let linearIndex = 0; linearIndex < scan.totalPoints; linearIndex += 1) {
+        let remaining = linearIndex;
+        for (const axis of scan.axes) {
+          const position = remaining % axis.points;
+          remaining = Math.floor(remaining / axis.points);
+          const value = position === 0
+            ? axis.start
+            : position === axis.points - 1
+              ? axis.stop
+              : axis.start +
+                ((axis.stop - axis.start) * position) / (axis.points - 1);
+          pointValues.set(axis.parameter, value);
         }
+        validateModelValues(
+          pointValues, ` at Cartesian scan point ${linearIndex + 1}`,
+        );
       }
-      validateScalarSubexpressions(
-        pseudomode.couplingOperator.ast,
-        values.values,
-        particleCount,
-        "pseudomode coupling operator",
-      );
-    }
-    if (observable) {
-      validateScalarSubexpressions(
-        observable.ast, values.values, particleCount, "observable");
     }
     if (steadyMethod === "trajectory") {
       if (architecture === "pi" && !jumps.length) {
@@ -1495,10 +1724,15 @@
       observableInfo,
       observableMode,
       parameters,
+      modelParameters,
+      observableParameters,
+      hamiltonianParameters,
+      jumpRateParameters,
       parameterValues: values,
       hamiltonianComponents,
       observableComponents,
       pseudomode,
+      scan,
       warnings,
     };
   }
@@ -1603,8 +1837,9 @@
     const workflow = parsed.workflow === "verified-experiment"
       ? "verified_"
       : "";
+    const scan = parsed.scan ? "_scan" : "";
     return `generated_${architecture}_${workflow}${method}` +
-      parsed.calculation.replace(/-/g, "_");
+      parsed.calculation.replace(/-/g, "_") + scan;
   }
 
   function manifestFor(parsed, summary, resources) {
@@ -1655,12 +1890,205 @@
         spectrum: parsed.spectrum,
         gap: parsed.gap,
         analysis: parsed.analysis,
+        scan: parsed.scan
+          ? {
+            enabled: true,
+            ordering: parsed.scan.ordering,
+            axes: parsed.scan.axes.map((axis) => ({
+              parameter: axis.parameter,
+              start: axis.start,
+              stop: axis.stop,
+              points: axis.points,
+            })),
+          }
+          : null,
       },
       representation: resources,
       route: summary.route,
       warnings: parsed.warnings.slice(),
     };
     return manifest;
+  }
+
+  function requireManifestObject(value, field) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      fail(field, "The loaded manifest must contain a JSON object.");
+    }
+    return value;
+  }
+
+  function manifestNumber(value, field) {
+    const converted = Number(value);
+    if (!Number.isFinite(converted)) {
+      fail(field, "The loaded manifest contains a non-finite numeric value.");
+    }
+    return converted;
+  }
+
+  /**
+   * Convert a normalized, descriptive generator manifest back to the typed
+   * browser configuration.  The result is still passed through `generate`,
+   * so loading a file never bypasses the parser whitelist or any physical and
+   * resource validation.
+   */
+  function configurationFromManifest(input) {
+    const manifest = requireManifestObject(input, "manifest");
+    if (
+      manifest.schema !==
+      "permutational-invariant-dynamics/model-assistant/v1"
+    ) {
+      fail(
+        "manifest",
+        "Unsupported manifest schema. Load a model-assistant/v1 JSON file.",
+      );
+    }
+    const model = requireManifestObject(manifest.model, "manifest model");
+    const calculation = requireManifestObject(
+      manifest.calculation, "manifest calculation",
+    );
+    const representation = requireManifestObject(
+      manifest.representation, "manifest representation",
+    );
+    const parameters = requireManifestObject(
+      model.parameters || {}, "manifest parameters",
+    );
+    const parameterNames = Object.keys(parameters);
+    if (parameterNames.length > 256) {
+      fail("manifest parameters", "At most 256 scalar parameters may be loaded.");
+    }
+    const parameterLines = parameterNames.map((name) => {
+      if (name.length > 128) {
+        fail("manifest parameters", "A parameter name is unreasonably long.");
+      }
+      return `${name} = ${manifestNumber(
+        parameters[name], `manifest parameter ${name}`,
+      )}`;
+    });
+    const jumps = Array.isArray(model.jumps)
+      ? model.jumps.map((jump, index) => {
+        const channel = requireManifestObject(
+          jump, `manifest jump ${index + 1}`,
+        );
+        return {
+          kind: String(channel.kind || ""),
+          operator: String(channel.operator || ""),
+          rate: String(channel.rate === undefined ? "1" : channel.rate),
+        };
+      })
+      : [];
+    const scanInput =
+      calculation.scan && typeof calculation.scan === "object"
+        ? calculation.scan
+        : null;
+    const scan = scanInput
+      ? {
+        enabled: scanInput.enabled !== false,
+        axes: Array.isArray(scanInput.axes)
+          ? scanInput.axes.map((axis, index) => {
+            const entry = requireManifestObject(
+              axis, `manifest scan axis ${index + 1}`,
+            );
+            return {
+              parameter: String(entry.parameter || ""),
+              start: manifestNumber(
+                entry.start, `manifest scan axis ${index + 1} start`,
+              ),
+              stop: manifestNumber(
+                entry.stop, `manifest scan axis ${index + 1} stop`,
+              ),
+              points: manifestNumber(
+                entry.points, `manifest scan axis ${index + 1} points`,
+              ),
+            };
+          })
+          : [],
+      }
+      : { enabled: false, axes: [] };
+    const memoryBudgetBytes = manifestNumber(
+      representation.memoryBudgetBytes, "manifest memory budget",
+    );
+    const memoryBudgetMiB = memoryBudgetBytes / (1024 * 1024);
+    if (!Number.isSafeInteger(memoryBudgetMiB) || memoryBudgetMiB < 1) {
+      fail(
+        "manifest memory budget",
+        "The manifest memory budget must be a positive whole number of MiB.",
+      );
+    }
+    const pseudomode =
+      model.pseudomode && typeof model.pseudomode === "object"
+        ? {
+          nmax: manifestNumber(
+            model.pseudomode.cutoff, "manifest pseudomode cutoff",
+          ),
+          frequency: String(model.pseudomode.frequency),
+          damping: String(model.pseudomode.damping),
+          thermalOccupation: String(
+            model.pseudomode.thermalOccupation,
+          ),
+          couplingOperator: String(model.pseudomode.couplingOperator),
+          couplingStrength: String(model.pseudomode.couplingStrength),
+          counterrotatingStrength: String(
+            model.pseudomode.counterrotatingStrength,
+          ),
+        }
+        : undefined;
+    return {
+      architecture: String(model.architecture || "pi"),
+      N: manifestNumber(model.particles, "manifest particle count"),
+      d: manifestNumber(model.localDimension, "manifest local dimension"),
+      calculation: String(calculation.task || "steady-observable"),
+      workflow: String(manifest.workflow || "direct-api"),
+      steadyMethod: String(calculation.method || "deterministic"),
+      hamiltonian: String(model.hamiltonian || ""),
+      jumps,
+      observable: String(calculation.observable || ""),
+      parameters: parameterLines.join("\n"),
+      initialState: calculation.initialState || undefined,
+      dynamics: calculation.dynamics || undefined,
+      trajectory: calculation.trajectory || undefined,
+      spectrum: calculation.spectrum || undefined,
+      gap: calculation.gap || undefined,
+      analysis: calculation.analysis || undefined,
+      scan,
+      resources: { memoryBudgetMiB },
+      pseudomode,
+    };
+  }
+
+  function plutoNotebookFor(code) {
+    if (typeof code !== "string" || !code.trim()) {
+      fail("notebook", "Generate a nonempty Julia program before exporting.");
+    }
+    return [
+      "### A Pluto.jl notebook ###",
+      "# v0.20.0",
+      "",
+      "# SPDX-FileCopyrightText: 2026 PermutationalInvariantDynamics.jl contributors",
+      "# SPDX-License-Identifier: GPL-3.0-only",
+      "",
+      "using Markdown",
+      "using InteractiveUtils",
+      "",
+      "# ╔═╡ 7c76ef5a-65fc-4f50-a8d9-e8fc87924494",
+      "md\"\"\"",
+      "# Generated PI study",
+      "",
+      "This notebook was generated locally by the",
+      "`PermutationalInvariantDynamics.jl` model assistant. Review all",
+      "symmetry, truncation, stochastic, and convergence assumptions before",
+      "using the result.",
+      "\"\"\"",
+      "",
+      "# ╔═╡ 319f59b5-bb28-47d3-8a43-e2fdbf2cbeb0",
+      "begin",
+      ...code.trimEnd().split("\n").map((line) => `    ${line}`),
+      "end",
+      "",
+      "# ╔═╡ Cell order:",
+      "# ╟─7c76ef5a-65fc-4f50-a8d9-e8fc87924494",
+      "# ╠═319f59b5-bb28-47d3-8a43-e2fdbf2cbeb0",
+      "",
+    ].join("\n");
   }
 
   function readmeFor(stem, parsed, resources) {
@@ -1678,12 +2106,16 @@
       `Representation: ${resources.representation}`,
       `Exact coordinate count: ${coordinateText}`,
       `Memory budget: ${resources.memoryBudgetBytes} bytes`,
+      parsed.scan
+        ? `Scan: ${parsed.scan.totalPoints} Cartesian points; first axis varies fastest`
+        : "Scan: disabled",
       "",
       "Files",
       "-----",
       `${stem}.jl        Commented Julia program.`,
       `${stem}.json      Machine-readable normalized model and resource manifest.`,
       `${stem}_README.txt  This file.`,
+      `${stem}_pluto.jl  Pluto notebook containing the generated program.`,
       "",
       "License",
       "-------",
@@ -1698,7 +2130,7 @@
       "The JSON file is descriptive metadata containing the normalized model",
       "and resource information. It contains no copied Julia or JavaScript",
       "program template. This README repeats the program's license so that",
-      "the three separately downloaded bundle files remain understandable.",
+      "the four separately downloaded bundle files remain understandable.",
       "",
       "Run",
       "---",
@@ -1708,8 +2140,525 @@
       "semantics, parameter values, solver diagnostics, and convergence before",
       "using a result. One-vector storage is not the solver peak; the Julia",
       "program keeps the package memory preflight enabled.",
+      parsed.scan
+        ? "The scan runs serially with continuation and one reusable task-owned workspace. Review path dependence and rerun sensitive points from independent initial guesses."
+        : "",
       "",
     ].join("\n");
+  }
+
+  function generatedResult(code, parsed, resources, summary) {
+    const manifest = manifestFor(parsed, summary, resources);
+    const stem = generatedStem(parsed);
+    const manifestText = `${JSON.stringify(manifest, null, 2)}\n`;
+    const readme = readmeFor(stem, parsed, resources);
+    const notebook = plutoNotebookFor(code);
+    return {
+      code,
+      warnings: parsed.warnings,
+      summary,
+      manifest,
+      manifestText,
+      resources,
+      bundle: {
+        stem,
+        files: [
+          {
+            name: `${stem}.jl`,
+            mediaType: "text/x-julia;charset=utf-8",
+            contents: code,
+          },
+          {
+            name: `${stem}.json`,
+            mediaType: "application/json;charset=utf-8",
+            contents: manifestText,
+          },
+          {
+            name: `${stem}_README.txt`,
+            mediaType: "text/plain;charset=utf-8",
+            contents: readme,
+          },
+          {
+            name: `${stem}_pluto.jl`,
+            mediaType: "text/x-julia;charset=utf-8",
+            contents: notebook,
+          },
+        ],
+      },
+      normalized: {
+        hamiltonian: parsed.hamiltonian ? parsed.hamiltonian.normalized : "",
+        observable: parsed.observable ? parsed.observable.normalized : "",
+        pseudomodeCoupling: parsed.pseudomode
+          ? parsed.pseudomode.couplingOperator.normalized
+          : "",
+      },
+    };
+  }
+
+  function setsIntersect(left, right) {
+    for (const value of left) {
+      if (right.has(value)) return true;
+    }
+    return false;
+  }
+
+  function generateParameterScan(parsed, resources) {
+    const lines = [];
+    const scan = parsed.scan;
+    const isLocalPseudomode =
+      parsed.architecture === "local-pseudomode";
+    const isSpectrum =
+      parsed.calculation === "liouvillian-spectrum";
+    const isObservable =
+      parsed.calculation === "steady-observable";
+    const hamiltonianEntries = [];
+    const linearHamiltonian = [];
+    const nonlinearHamiltonianEntries = [];
+    if (parsed.hamiltonian) {
+      flattenAdditive(parsed.hamiltonian.ast, 1, hamiltonianEntries);
+      for (const entry of hamiltonianEntries) {
+        const info = analyze(entry.node, "hamiltonian");
+        (info.linear ? linearHamiltonian : nonlinearHamiltonianEntries)
+          .push(entry);
+      }
+    }
+    const scanNames = scan.names;
+    const rateOnlyFamily =
+      parsed.architecture === "pi" &&
+      !isSpectrum &&
+      scan.axes.every((axis) =>
+        !parsed.hamiltonianParameters.has(axis.parameter) &&
+        parsed.jumpRateParameters.has(axis.parameter) &&
+        parsed.jumps.every(
+          (jump) => !jump.operatorParameters.has(axis.parameter),
+        ));
+    const fixedTermCount =
+      (linearHamiltonian.length ? 1 : 0) +
+      (nonlinearHamiltonianEntries.length ? 1 : 0);
+    const selectedRateJumps = parsed.jumps
+      .map((jump, index) => ({ jump, index }))
+      .filter(({ jump }) => setsIntersect(jump.rateParameters, scanNames));
+
+    // REUSE-IgnoreStart
+    lines.push("# SPDX-FileCopyrightText: 2026 PermutationalInvariantDynamics.jl contributors");
+    lines.push("#");
+    lines.push("# SPDX-License-Identifier: GPL-3.0-only");
+    lines.push("#");
+    lines.push("# This generated program contains template code from");
+    lines.push("# PermutationalInvariantDynamics.jl and is licensed under version 3");
+    lines.push("# of the GNU General Public License, with no option to use a later");
+    lines.push("# version. This program comes with ABSOLUTELY NO WARRANTY.");
+    lines.push("# See the package LICENSE file or");
+    lines.push("# https://www.gnu.org/licenses/gpl-3.0.html.");
+    lines.push("#");
+    // REUSE-IgnoreEnd
+    lines.push("# Generated by the PermutationalInvariantDynamics.jl model assistant.");
+    lines.push("# Inclusive Cartesian scan; axis 1 varies fastest.");
+    lines.push("# Serial continuation is path dependent: independently recheck sensitive points.");
+    lines.push("# Local sum_i D[l_i] and collective D[sum_i l_i] are distinct.");
+    if (isLocalPseudomode) {
+      lines.push("# Permutations act on complete system+pseudomode supersites.");
+    }
+    lines.push(`# Representation: ${resources.representation}.`);
+    lines.push(`# Cartesian grid points: ${scan.totalPoints}.`);
+    lines.push("using PermutationalInvariantDynamics");
+    lines.push("");
+    lines.push("# One budget guards preparation, solver scratch, and retained output.");
+    lines.push(
+      `const MEMORY_BUDGET = ${parsed.memoryBudgetMiB} * 1024^2`,
+    );
+    if (isSpectrum) {
+      lines.push(`const SPECTRUM_NEV = ${parsed.spectrum.nev}`);
+      lines.push(`const SPECTRUM_SEED = ${parsed.spectrum.seed}`);
+    } else {
+      lines.push("const STEADY_ATOL = 1e-11");
+      lines.push("const STEADY_RTOL = 1e-9");
+      lines.push("const STATE_VALIDATION_TOL = 1e-8");
+    }
+    lines.push(`const N = ${parsed.particleCount}`);
+    lines.push(`const d = ${parsed.localDimension}`);
+    lines.push("const spin = spin_matrices(d)");
+    if (parsed.parameters.size) {
+      lines.push("");
+      lines.push("# Fixed parameters and nominal first values for scanned axes.");
+      for (const parameter of parsed.parameters) {
+        const scanned = scanNames.has(parameter);
+        const missing =
+          !parsed.parameterValues.provided.has(parameter) && !scanned;
+        const suffix = scanned
+          ? "  # shadowed inside the point builder"
+          : missing
+            ? "  # TODO: replace this placeholder"
+            : "";
+        lines.push(
+          `const ${parameter} = ` +
+          `${parsed.parameterValues.code.get(parameter)}${suffix}`,
+        );
+      }
+    }
+
+    lines.push("");
+    lines.push("# Inclusive linear axes; descending ranges are valid.");
+    lines.push("const scan_axis_values = (");
+    for (const axis of scan.axes) {
+      lines.push(
+        "    range(" +
+        `${floatLiteral(axis.start)}, ${floatLiteral(axis.stop)}; ` +
+        `length=${axis.points}),`,
+      );
+    }
+    lines.push(")");
+    const fields = scan.axes.map((axis) => axis.parameter).join(", ");
+    const generators = scan.axes
+      .map((axis, index) =>
+        `${axis.parameter} in scan_axis_values[${index + 1}]`)
+      .join(", ");
+    lines.push("# vec follows column-major order, so the first axis is fastest.");
+    lines.push(
+      `const scan_points = vec([(; ${fields}) for ${generators}])`,
+    );
+
+    if (isLocalPseudomode) {
+      const p = parsed.pseudomode;
+      lines.push("");
+      lines.push("# This mode fixes cutoff geometry; point scalars are rebound below.");
+      lines.push("const mode = BosonicPseudomode(");
+      lines.push(`    ${p.nmax}; label=:pseudomode,`);
+      lines.push(`    frequency=${emit(p.frequency.ast, "scalar")},`);
+      lines.push(`    damping=${emit(p.damping.ast, "scalar")},`);
+      lines.push(
+        `    thermal_occupation=${emit(p.thermalOccupation.ast, "scalar")},`,
+      );
+      lines.push("    memory_budget=MEMORY_BUDGET,");
+      lines.push(")");
+      lines.push("const site = pseudomode_supersite(");
+      lines.push("    N, d, mode; memory_budget=MEMORY_BUDGET)");
+      lines.push("const basis = site.basis");
+    } else {
+      lines.push("");
+      lines.push("const basis = PIBasis(N, d)  # complete PI basis");
+    }
+
+    const components = new Set(parsed.hamiltonianComponents);
+    if (isObservable && parsed.observableMode === "pi-operator") {
+      for (const component of parsed.observableComponents) {
+        components.add(component);
+      }
+    }
+    const needsGeometry =
+      components.size > 0 ||
+      (isObservable &&
+       (parsed.observableMode === "collective-plan" ||
+        parsed.observableMode === "single-site-plan"));
+    if (needsGeometry) {
+      lines.push("");
+      lines.push("# Immutable one-body geometry is shared across every point.");
+      lines.push("const one_body_geometry = OneBodyGeometry(basis)");
+    }
+    for (const component of components) {
+      const [name, symbol] = componentDefinition(component);
+      if (isLocalPseudomode) {
+        lines.push(`const ${name} = collective_operator(`);
+        lines.push("    basis,");
+        lines.push(
+          `    lift_system_operator(site, ${componentLocalExpression(component)}; ` +
+          "memory_budget=MEMORY_BUDGET);",
+        );
+        lines.push("    cache=one_body_geometry,");
+        lines.push(")");
+      } else {
+        lines.push(
+          `const ${name} = collective_spin(` +
+          `basis, ${symbol}; cache=one_body_geometry)`,
+        );
+      }
+    }
+
+    function bindings(indent) {
+      for (const axis of scan.axes) {
+        lines.push(
+          `${indent}${axis.parameter} = scan_point.${axis.parameter}`,
+        );
+      }
+    }
+    function systemTerms(indent, name, includeHamiltonian) {
+      lines.push(`${indent}${name} = (`);
+      if (includeHamiltonian && linearHamiltonian.length) {
+        lines.push(
+          `${indent}    LocalHamiltonian(` +
+          `${signedExpression(linearHamiltonian, "local")}),`,
+        );
+      }
+      if (includeHamiltonian && nonlinearHamiltonianEntries.length) {
+        lines.push(
+          `${indent}    DirectPIHamiltonian(` +
+          `${signedExpression(nonlinearHamiltonianEntries, "collective")}),`,
+        );
+      }
+      for (const jump of parsed.jumps) {
+        const constructor =
+          jump.kind === "collective" ? "CollectiveJump" : "LocalJump";
+        lines.push(
+          `${indent}    ${constructor}(` +
+          `${emit(jump.operator.ast, "local")}; ` +
+          `rate=${emit(jump.rate.ast, "scalar")}),`,
+        );
+      }
+      lines.push(`${indent})`);
+    }
+
+    lines.push("");
+    lines.push("# Rebuild point coefficients while retaining the basis and reusable representation objects.");
+    lines.push("const scan_model_builder = function (scan_point, scan_index)");
+    bindings("    ");
+    if (!isLocalPseudomode) {
+      systemTerms("    ", "scan_terms", true);
+      lines.push("    PIModel(basis, scan_terms)");
+    } else {
+      const p = parsed.pseudomode;
+      lines.push(
+        linearHamiltonian.length
+          ? `    H_system = ${signedExpression(linearHamiltonian, "local")}`
+          : "    H_system = zeros(ComplexF64, d, d)",
+      );
+      if (nonlinearHamiltonianEntries.length) {
+        lines.push(
+          "    supersite_terms = (DirectPIHamiltonian(" +
+          `${signedExpression(nonlinearHamiltonianEntries, "collective")}),)`,
+        );
+      } else {
+        lines.push("    supersite_terms = ()");
+      }
+      systemTerms("    ", "system_terms", false);
+      lines.push("    coupling = PseudomodeCoupling(");
+      lines.push(`        ${emit(p.couplingOperator.ast, "local")};`);
+      lines.push("        mode=:pseudomode,");
+      lines.push(`        strength=${emit(p.strength.ast, "scalar")},`);
+      lines.push(
+        "        counterrotating_strength=" +
+        `${emit(p.counterrotatingStrength.ast, "scalar")},`,
+      );
+      lines.push("        memory_budget=MEMORY_BUDGET,");
+      lines.push("    )");
+      lines.push("    scan_embedding = pseudomode_model(");
+      lines.push("        site, H_system;");
+      lines.push("        couplings=(coupling,),");
+      lines.push("        system_terms=system_terms,");
+      lines.push("        supersite_terms=supersite_terms,");
+      lines.push(
+        `        frequencies=(${emit(p.frequency.ast, "scalar")},),`,
+      );
+      lines.push(
+        `        dampings=(${emit(p.damping.ast, "scalar")},),`,
+      );
+      lines.push(
+        "        thermal_occupations=(" +
+        `${emit(p.thermalOccupation.ast, "scalar")},),`,
+      );
+      lines.push("        retain_zero_terms=true,");
+      lines.push("        memory_budget=MEMORY_BUDGET,");
+      lines.push("    )");
+      lines.push("    scan_embedding.model");
+    }
+    lines.push("end");
+
+    let diagnosticName = null;
+    if (isObservable) {
+      const varyingObservable =
+        setsIntersect(parsed.observableParameters, scanNames);
+      const localObservable = emit(parsed.observable.ast, "local");
+      const planMode =
+        parsed.observableMode === "collective-plan" ||
+        parsed.observableMode === "single-site-plan";
+      const divisor =
+        parsed.observableMode === "single-site-plan" ? " / N" : "";
+      lines.push("");
+      if (planMode && !varyingObservable) {
+        const prepared = isLocalPseudomode
+          ? `lift_system_operator(site, ${localObservable}; ` +
+            "memory_budget=MEMORY_BUDGET)"
+          : localObservable;
+        lines.push("# Reuse one prepared observable plan at every point.");
+        lines.push("const scan_observable_plan = CollectiveObservablePlan(");
+        lines.push(`    basis, ${prepared}; cache=one_body_geometry)`);
+        lines.push("const scan_diagnostic = function (rho, scan_point, scan_index)");
+        lines.push("    validate_state(");
+        lines.push("        rho; atol=STATE_VALIDATION_TOL, rtol=STATE_VALIDATION_TOL)");
+        lines.push(
+          `    collective_expectation(rho, scan_observable_plan)${divisor}`,
+        );
+        lines.push("end");
+      } else if (planMode) {
+        lines.push("# Reuse geometry while rebuilding the varying observable.");
+        lines.push("const scan_diagnostic = function (rho, scan_point, scan_index)");
+        bindings("    ");
+        lines.push("    validate_state(");
+        lines.push("        rho; atol=STATE_VALIDATION_TOL, rtol=STATE_VALIDATION_TOL)");
+        const prepared = isLocalPseudomode
+          ? `lift_system_operator(site, ${localObservable}; ` +
+            "memory_budget=MEMORY_BUDGET)"
+          : localObservable;
+        lines.push("    scan_observable_plan = CollectiveObservablePlan(");
+        lines.push(`        basis, ${prepared}; cache=one_body_geometry)`);
+        lines.push(
+          `    collective_expectation(rho, scan_observable_plan)${divisor}`,
+        );
+        lines.push("end");
+      } else if (!varyingObservable) {
+        lines.push("# Keep the polynomial observable in compressed PI coordinates.");
+        lines.push(
+          `const scan_observable = ${emit(parsed.observable.ast, "collective")}`,
+        );
+        lines.push("const scan_diagnostic = function (rho, scan_point, scan_index)");
+        lines.push("    validate_state(");
+        lines.push("        rho; atol=STATE_VALIDATION_TOL, rtol=STATE_VALIDATION_TOL)");
+        lines.push("    expectation(rho, adjoint(scan_observable))");
+        lines.push("end");
+      } else {
+        lines.push("# Rebuild only the point-dependent PI polynomial.");
+        lines.push("const scan_diagnostic = function (rho, scan_point, scan_index)");
+        bindings("    ");
+        lines.push("    validate_state(");
+        lines.push("        rho; atol=STATE_VALIDATION_TOL, rtol=STATE_VALIDATION_TOL)");
+        lines.push(
+          `    scan_observable = ${emit(parsed.observable.ast, "collective")}`,
+        );
+        lines.push("    expectation(rho, adjoint(scan_observable))");
+        lines.push("end");
+      }
+      diagnosticName = "scan_diagnostic";
+    }
+
+    let planSource = "scan_model_builder";
+    if (rateOnlyFamily) {
+      const indices = selectedRateJumps
+        .map(({ index }) => fixedTermCount + index + 1);
+      lines.push("");
+      lines.push("# Scalar-rate fast path: compile immutable Schur geometry once.");
+      lines.push("const scan_prototype = scan_model_builder(first(scan_points), 1)");
+      lines.push("const scan_preflight = recommend_solver(");
+      lines.push("    scan_prototype; task=:steady_state,");
+      lines.push("    algorithm=:gmres, krylovdim=30, recycle_dim=8,");
+      lines.push("    memory_budget=MEMORY_BUDGET,");
+      lines.push(")");
+      lines.push("scan_preflight.budget_status === :exceeds && error(");
+      lines.push("    \"scan preparation exceeds MEMORY_BUDGET\")");
+      lines.push(
+        "const scan_family = compile_family(scan_prototype; " +
+        `rate_indices=(${indices.join(", ")}${indices.length === 1 ? "," : ""}))`,
+      );
+      lines.push("const scan_rate_builder = function (scan_point, scan_index)");
+      bindings("    ");
+      const rates = selectedRateJumps
+        .map(({ jump }) => emit(jump.rate.ast, "scalar"));
+      lines.push(
+        `    (${rates.join(", ")}${rates.length === 1 ? "," : ""})`,
+      );
+      lines.push("end");
+      planSource = "scan_family";
+    }
+
+    lines.push("");
+    lines.push("# One task-owned workspace reuses Krylov arrays and continuation data.");
+    lines.push("const scan_workspace = ParameterScanWorkspace()");
+    lines.push("const scan_plan = ParameterScanPlan(");
+    lines.push(`    scan_points, ${planSource};`);
+    if (rateOnlyFamily) {
+      lines.push("    rate_builder=scan_rate_builder,");
+      lines.push("    specialize_options=(backend=:matrixfree,),");
+    } else {
+      lines.push("    compile_options=(backend=:matrixfree,),");
+    }
+    if (isSpectrum) {
+      lines.push("    task=:spectrum, algorithm=:auto,");
+      lines.push(
+        `    spectrum_target=:${parsed.spectrum.target}, nev=SPECTRUM_NEV,`,
+      );
+      lines.push("    seed=SPECTRUM_SEED, save_vectors=false,");
+      lines.push("    continuation=true, save_outputs=true, save_restart=true,");
+    } else {
+      lines.push("    task=:steady_state,");
+      lines.push(
+        "    algorithm=RecycledGMRESAlgorithm(" +
+        "krylovdim=30, maxiter=500, recycle_dim=8),",
+      );
+      lines.push("    solver_options=(atol=STEADY_ATOL, rtol=STEADY_RTOL),");
+      lines.push(
+        `    continuation=true, save_outputs=${isObservable ? "false" : "true"},`,
+      );
+      lines.push("    save_restart=true,");
+      if (diagnosticName) lines.push(`    diagnostic=${diagnosticName},`);
+    }
+    lines.push("    memory_budget=MEMORY_BUDGET,");
+    lines.push(")");
+    lines.push("scan_result = parameter_scan(");
+    lines.push("    scan_plan; workspace=scan_workspace, on_error=:throw)");
+    lines.push("all(point ->");
+    lines.push("    point.status === :success && point.converged,");
+    lines.push("    scan_result.points) || error(\"one or more scan points did not converge\")");
+    lines.push(
+      isObservable || isSpectrum
+        ? "scan_rows = parameter_scan_rows(scan_result; include_output=true)"
+        : "scan_rows = parameter_scan_rows(scan_result)",
+    );
+    lines.push("");
+    if (isObservable) {
+      lines.push("# Columns: parameter named tuple, stationary observable.");
+      lines.push("for point in scan_result");
+      lines.push("    println(point.parameter, \"  \", point.diagnostics.user)");
+      lines.push("end");
+    } else if (isSpectrum) {
+      lines.push("# Each output is a selected, generally partial SpectrumResult.");
+      lines.push("for point in scan_result");
+      lines.push("    println(point.parameter, \"  \", point.output.values)");
+      lines.push("end");
+    } else {
+      lines.push("# Stationary states are retained because they are requested.");
+      lines.push("for point in scan_result");
+      lines.push("    println(point.parameter, \"  residual=\", point.residual)");
+      lines.push("end");
+    }
+
+    const userTermCount =
+      (linearHamiltonian.length ? 1 : 0) +
+      (nonlinearHamiltonianEntries.length ? 1 : 0) +
+      parsed.jumps.length;
+    const route = rateOnlyFamily
+      ? "compiled-family scalar-rate scan with recycled matrix-free GMRES"
+      : isSpectrum
+        ? "shared-basis selected-spectrum scan with serial continuation"
+        : isLocalPseudomode
+          ? "shared-supersite matrix-free scan with recycled GMRES"
+          : "shared-basis matrix-free scan with recycled GMRES";
+    const summary = {
+      terms: userTermCount,
+      jumps: parsed.jumps.length,
+      target: parsed.target,
+      calculation: parsed.calculation,
+      method: isSpectrum
+        ? "selected Liouvillian spectrum scan"
+        : isObservable
+          ? "stationary-observable parameter scan"
+          : "stationary-state parameter scan",
+      workflow: parsed.workflow,
+      architecture: parsed.architecture,
+      topology: isLocalPseudomode
+        ? "identical local pseudomodes"
+        : "ordinary PI ensemble",
+      cutoff: parsed.pseudomode ? parsed.pseudomode.nmax : null,
+      route,
+      scanAxes: scan.axes.map((axis) => axis.parameter),
+      scanPoints: scan.totalPoints,
+      scanOrdering: scan.ordering,
+      representation: resources.representation,
+      coordinates: resources.exactCoordinateCount,
+      coordinateFormula: resources.coordinateFormula,
+      oneComplexVectorBytes: resources.oneComplexVectorBytes,
+      memoryBudgetBytes: resources.memoryBudgetBytes,
+    };
+    return generatedResult(
+      `${lines.join("\n")}\n`, parsed, resources, summary,
+    );
   }
 
   function generate(config) {
@@ -1723,6 +2672,9 @@
       parsed.warnings.push(
         "The exact coordinate formula is retained in the manifest, but this unusually large combinatorial count was not expanded in the browser. Inspect pi_dimension and the Julia resource preflight before running.",
       );
+    }
+    if (parsed.scan) {
+      return generateParameterScan(parsed, resources);
     }
     const lines = [];
     const isPseudomode = parsed.architecture !== "pi";
@@ -2646,6 +3598,7 @@
     const stem = generatedStem(parsed);
     const manifestText = `${JSON.stringify(manifest, null, 2)}\n`;
     const readme = readmeFor(stem, parsed, resources);
+    const notebook = plutoNotebookFor(code);
     return {
       code,
       warnings: parsed.warnings,
@@ -2671,6 +3624,11 @@
             mediaType: "text/plain;charset=utf-8",
             contents: readme,
           },
+          {
+            name: `${stem}_pluto.jl`,
+            mediaType: "text/x-julia;charset=utf-8",
+            contents: notebook,
+          },
         ],
       },
       normalized: {
@@ -2690,5 +3648,7 @@
     parseFormula,
     analyze,
     generate,
+    configurationFromManifest,
+    plutoNotebookFor,
   };
 });

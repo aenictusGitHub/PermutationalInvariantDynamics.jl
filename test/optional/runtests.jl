@@ -45,6 +45,20 @@ using HDF5
     @test collect(points)==[1]
     @test collect(values)==data.values
 
+    output_table=ResultTable((time=[0.0,0.5],value=[1.0,0.25]))
+    result_x,result_y=Makie.convert_arguments(Makie.Lines,output_table)
+    @test result_x===output_table.columns.time
+    @test result_y===output_table.columns.value
+    @test_throws ArgumentError Makie.convert_arguments(
+        Makie.Lines,ResultTable((time=[0.0],a=[1.0],b=[2.0])))
+
+    selected_spectrum=SpectrumResult(
+        ComplexF64[0,-0.5+0.25im],nothing,(converged=true,))
+    selected_x,selected_y=Makie.convert_arguments(
+        Makie.Scatter,selected_spectrum)
+    @test collect(selected_x)==[0.0,-0.5]
+    @test collect(selected_y)==[0.0,0.25]
+
     checkpoint_basis=PIBasis(2,2)
     checkpoint_state=iid_pure_state(
         checkpoint_basis,ComplexF32[1,im]/sqrt(2.0f0))
@@ -62,6 +76,33 @@ using HDF5
             @test loaded.state.data==checkpoint_state.data
             @test loaded.time===0.25f0
             @test loaded.metadata==checkpoint.metadata
+        end
+
+        result_state=computational_product_state(checkpoint_basis,1)
+        jld2_path=joinpath(directory,"result.jld2")
+        @test save_result(jld2_path,result_state;
+            metadata=Dict("source"=>"optional result"))==jld2_path
+        @test JLD2.load(jld2_path,"schema_version")==
+            Int(PI_RESULT_ARCHIVE_VERSION)
+        restored=JLD2.load(jld2_path,"result")
+        @test restored isa PIState
+        @test restored.data==result_state.data
+        @test JLD2.load(jld2_path,"metadata")[
+            "source"]=="optional result"
+
+        hdf5_path=joinpath(directory,"result.h5")
+        @test save_result(hdf5_path,result_state;
+            metadata=Dict("source"=>"optional result"))==hdf5_path
+        HDF5.h5open(hdf5_path,"r") do file
+            @test HDF5.attributes(file)["schema_version"]==
+                Int(PI_RESULT_ARCHIVE_VERSION)
+            @test HDF5.attributes(file["metadata"])["source"]==
+                "optional result"
+            @test HDF5.read(file["columns/N"])==["1"]
+            state_group=file["states/state_000001"]
+            @test HDF5.attributes(state_group)["label"]=="state"
+            @test HDF5.read(state_group["real"])==real.(result_state.data)
+            @test HDF5.read(state_group["imag"])==imag.(result_state.data)
         end
     end
 end

@@ -2160,7 +2160,8 @@ end
 """
     heom_evolve!(destination, plan, source, tspan;
                  steps=256, parameters=nothing, workspace=nothing,
-                 pulses=nothing)
+                 pulses=nothing, progress=false, on_event=nothing,
+                 cancellation_token=nothing)
 
 Propagate a hierarchy with preallocated, three-scratch fixed-step RK4.
 `destination` may alias `source`, but it must not alias workspace scratch; one
@@ -2168,11 +2169,16 @@ Propagate a hierarchy with preallocated, three-scratch fixed-step RK4.
 `plan.max_depth` independently to check integration and hierarchy truncation
 errors. A [`HierarchyPulseSequence`](@ref) passed as `pulses` splits RK4
 steps exactly at every event in `(tspan[1], tspan[2]]`; events at the final
-time are applied before return.
+time are applied before return. Progress and cooperative cancellation are
+observed after complete nominal RK4 steps. On cancellation,
+[`OperationCancelled`](@ref) is thrown and `destination` contains the last
+fully completed step, including any pulse at its endpoint.
 """
 function heom_evolve!(destination::AbstractVector,plan::HEOMPlan,
                       source::AbstractVector,tspan;steps::Integer=256,
-                      parameters=nothing,workspace=nothing,pulses=nothing)
+                      parameters=nothing,workspace=nothing,pulses=nothing,
+                      progress=false,on_event=nothing,
+                      cancellation_token=nothing)
     length(source)==size(plan,1)&&length(destination)==size(plan,1)||
         throw(DimensionMismatch("HEOM state vector has the wrong length"))
     steps>0||throw(ArgumentError("steps must be positive"))
@@ -2212,6 +2218,11 @@ function heom_evolve!(destination::AbstractVector,plan::HEOMPlan,
                               _check_heom_evolution_workspace(workspace,plan)
     _check_heom_evolution_aliases(work,destination)
     destination===source||copyto!(destination,source)
+    progress_context=_prepare_progress(:heom_evolve;
+        progress,on_event,cancellation_token)
+    _progress_emit!(progress_context,:started,0,step_count;
+        message="HEOM evolution started")
+    _progress_throw_if_cancelled!(progress_context,0,step_count)
     events=sequence===nothing ? nothing :
         _hierarchy_pulse_event_range(sequence,t0,t1)
     if events===nothing||isempty(events)
@@ -2234,7 +2245,17 @@ function heom_evolve!(destination::AbstractVector,plan::HEOMPlan,
             apply!(work.k1,plan,work.temporary,endpoint,parameters,work.application)
             @. work.k2=work.k2+work.k1
             @. destination=destination+(step/6)*work.k2
+            completed=step_index+1
+            if progress_context!==nothing
+                _progress_emit!(progress_context,:advanced,completed,step_count;
+                    message="completed HEOM RK4 step $completed",
+                    metadata=(time=endpoint,))
+                _progress_throw_if_cancelled!(
+                    progress_context,completed,step_count)
+            end
         end
+        _progress_emit!(progress_context,:completed,step_count,step_count;
+            message="HEOM evolution completed",metadata=(time=t1,))
         return destination
     end
     event_index=first(events)
@@ -2255,7 +2276,17 @@ function heom_evolve!(destination::AbstractVector,plan::HEOMPlan,
         end
         segment_start<endpoint&&_heom_rk4_step!(
             destination,plan,segment_start,endpoint,parameters,work)
+        completed=step_index+1
+        if progress_context!==nothing
+            _progress_emit!(progress_context,:advanced,completed,step_count;
+                message="completed HEOM RK4 step $completed",
+                metadata=(time=endpoint,))
+            _progress_throw_if_cancelled!(
+                progress_context,completed,step_count)
+        end
     end
+    _progress_emit!(progress_context,:completed,step_count,step_count;
+        message="HEOM evolution completed",metadata=(time=t1,))
     destination
 end
 

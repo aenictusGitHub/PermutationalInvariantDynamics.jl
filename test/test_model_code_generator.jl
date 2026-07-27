@@ -51,6 +51,15 @@
         "model_code_generator_global_pseudomode_gap_fixture.js")
     analysis_fixture=joinpath(
         root,"docs","test","model_code_generator_analysis_fixture.js")
+    scan_fixture=joinpath(
+        root,"docs","test","model_code_generator_scan_fixture.js")
+    local_pseudomode_scan_fixture=joinpath(
+        root,"docs","test",
+        "model_code_generator_local_pseudomode_scan_fixture.js")
+    spectrum_scan_fixture=joinpath(
+        root,"docs","test","model_code_generator_spectrum_scan_fixture.js")
+    pluto_fixture=joinpath(
+        root,"docs","test","model_code_generator_pluto_fixture.js")
     local_pseudomode_analysis_fixture=joinpath(
         root,"docs","test",
         "model_code_generator_local_pseudomode_analysis_fixture.js")
@@ -68,7 +77,9 @@
             global_pseudomode_trajectory_dynamics_fixture,
             spectrum_fixture,global_pseudomode_spectrum_fixture,
             gap_fixture,global_pseudomode_gap_fixture,
-            analysis_fixture,local_pseudomode_analysis_fixture,
+            analysis_fixture,scan_fixture,local_pseudomode_scan_fixture,
+            spectrum_scan_fixture,pluto_fixture,
+            local_pseudomode_analysis_fixture,
             global_pseudomode_analysis_fixture)
         @test isfile(path)
     end
@@ -123,7 +134,11 @@
             "pid-gap-section","pid-gap-nev","pid-gap-krylovdim",
             "pid-analysis-section","pid-analysis-purity",
             "pid-analysis-entropy","pid-analysis-one-body-rdm",
-            "pid-analysis-qfi-axis","pid-memory-budget")
+            "pid-analysis-qfi-axis","pid-scan-enabled",
+            "pid-scan-section","pid-scan-axes","pid-add-scan-axis",
+            "pid-memory-budget","pid-load-manifest","pid-manifest-file",
+            "pid-copy-share-link","pid-undo-model","pid-reset-model",
+            "pid-download-pluto")
         @test occursin("id=\"$id\"",page_source)
     end
     @test occursin("id=\"pid-pseudomode-section\"",page_source)
@@ -141,16 +156,35 @@
     @test occursin("steadyMethod",ui_source)
     @test occursin("initialState",ui_source)
     @test occursin("maxJumpProbability",ui_source)
+    @test occursin("scanAxes",ui_source)
+    @test occursin("scan:",ui_source)
+    @test occursin(".pid-scan-axis-row",stylesheet_source)
+    @test occursin("pid-remove-scan-axis",ui_source)
     @test occursin("function updateVisibility()",ui_source)
     @test occursin("function readConfiguration()",ui_source)
+    @test occursin("configurationFromManifest",core_source)
+    @test occursin("plutoNotebookFor",core_source)
+    @test occursin("window.localStorage",ui_source)
+    @test occursin("function restoreSession()",ui_source)
+    @test occursin("function loadManifestObject(manifest, message)",ui_source)
+    @test occursin(")) return true;",ui_source)
     page_ids=[
         match.captures[1]
         for match in eachmatch(r"id=\"([^\"]+)\"",page_source)
     ]
     @test length(page_ids)==length(unique(page_ids))
-    ui_id_selectors=unique(
-        match.match[2:end]
-        for match in eachmatch(r"#pid-[A-Za-z0-9_-]+",ui_source))
+    ui_id_selectors=unique(vcat(
+        [
+            match.captures[1]
+            for match in eachmatch(
+                r"querySelector\(\"#(pid-[A-Za-z0-9_-]+)\"",ui_source)
+        ],
+        [
+            match.captures[1]
+            for match in eachmatch(
+                r"getElementById\(\"(pid-[A-Za-z0-9_-]+)\"",ui_source)
+        ],
+    ))
     @test all(selector->selector in page_ids,ui_id_selectors)
     @test occursin(
         "html.pid-generator-page #documenter .docs-main",
@@ -211,6 +245,16 @@
         @test occursin("CollectiveJump",generated)
         @test occursin("CollectiveObservablePlan",generated)
         @test !occursin("kron(",generated)
+
+        pluto_command=node===nothing ?
+            `$runner $core $pluto_fixture` :
+            `$runner $pluto_fixture`
+        pluto_generated=read(pluto_command,String)
+        @test startswith(pluto_generated,"### A Pluto.jl notebook ###")
+        @test occursin("# ╔═╡ Cell order:",pluto_generated)
+        pluto_parsed=Meta.parseall(
+            pluto_generated;filename="generated_pi_study_pluto.jl")
+        @test !has_parse_error(pluto_parsed)
 
         trajectory_command=node===nothing ?
             `$runner $core $trajectory_fixture` :
@@ -410,6 +454,42 @@
                 ),
             ),
             (
+                key=:scan,
+                path=scan_fixture,
+                filename="generated_pi_parameter_scan.jl",
+                fragments=(
+                    "ParameterScanPlan(",
+                    "ParameterScanWorkspace()",
+                    "parameter_scan(",
+                    "scan_result",
+                    "scan_rows",
+                ),
+            ),
+            (
+                key=:local_scan,
+                path=local_pseudomode_scan_fixture,
+                filename="generated_local_pseudomode_parameter_scan.jl",
+                fragments=(
+                    "pseudomode_supersite(",
+                    "pseudomode_model(",
+                    "retain_zero_terms=true",
+                    "ParameterScanPlan(",
+                    "parameter_scan(",
+                ),
+            ),
+            (
+                key=:spectrum_scan,
+                path=spectrum_scan_fixture,
+                filename="generated_pi_spectrum_parameter_scan.jl",
+                fragments=(
+                    "ParameterScanPlan(",
+                    "task=:spectrum",
+                    "spectrum_target=:largest_real",
+                    "save_vectors=false",
+                    "parameter_scan(",
+                ),
+            ),
+            (
                 key=:local_analysis,
                 path=local_pseudomode_analysis_fixture,
                 filename="generated_local_pseudomode_analysis.jl",
@@ -495,6 +575,42 @@
         spectrum_values=Core.eval(spectrum_module,:spectrum_values)
         @test length(spectrum_values)>=2
         @test all(isfinite,spectrum_values)
+
+        scan_module=execute_generated(
+            expanded_generated[:scan],"runtime_pi_parameter_scan.jl")
+        scan_result=Core.eval(scan_module,:scan_result)
+        scan_rows=Core.eval(scan_module,:scan_rows)
+        @test scan_result isa ParameterScanResult
+        @test length(scan_result)==4
+        @test length(scan_rows)==4
+        @test all(point->point.status===:success,scan_result)
+        @test all(point->point.converged,scan_result)
+        @test all(point->isfinite(point.residual),scan_result)
+        @test [
+            (
+                point.parameter.gamma_down,
+                point.parameter.gamma_up,
+            )
+            for point in scan_result
+        ]==[
+            (0.2,0.1),
+            (0.4,0.1),
+            (0.2,0.3),
+            (0.4,0.3),
+        ]
+        for point in scan_result
+            parameter=point.parameter
+            gamma_down=parameter.gamma_down
+            gamma_up=parameter.gamma_up
+            expected=(gamma_up-gamma_down)/(2*(gamma_up+gamma_down))
+            diagnostic=point.diagnostics.user
+            observed = diagnostic isa Number ? diagnostic :
+                hasproperty(diagnostic,:observable) ?
+                    diagnostic.observable :
+                    getproperty(diagnostic,:expectation)
+            @test isapprox(real(observed),expected;atol=2e-8,rtol=2e-8)
+            @test abs(imag(observed))<=2e-8
+        end
 
         gap_module=execute_generated(
             expanded_generated[:gap],"runtime_pi_gap.jl")

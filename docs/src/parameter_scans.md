@@ -169,6 +169,11 @@ prefix = parameter_scan(plan; callback, max_points=25)
 result = resume_parameter_scan(plan, prefix; callback)
 ```
 
+For structured `ProgressEvent`s and cancellation from another task, see
+[Progress, cancellation, and resumable work](progress.md). A cancelled scan
+uses this same prefix/restart contract and reports
+`result.metadata.cancelled == true`.
+
 A callback must return `nothing` to continue or `:stop` to produce a resumable
 prefix. With
 `save_restart=true`, the result retains at most one state or Ritz seed. Restart

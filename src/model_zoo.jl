@@ -17,7 +17,8 @@ import ..PermutationalInvariantDynamics:
     qubit_ensemble_model,spin_matrices,collective_operator,OneBodyGeometry,
     _checked_mul_exact_ratio
 
-export catalog,driven_qubits,independent_dephasing,local_pump_decay,
+export catalog,find,describe,example,driven_qubits,
+       independent_dephasing,local_pump_decay,
        one_axis_twisting,steady_superradiance,boundary_time_crystal
 
 const _CATALOG=(
@@ -27,6 +28,8 @@ const _CATALOG=(
         difficulty=:beginner,
         sectors=:complete,
         tasks=(:dynamics,:steady_state,:trajectories),
+        script="driven_qubits.jl",
+        guide="driven_qubits.md",
         constructor=:driven_qubits),
     independent_dephasing=(
         title="Independent Markovian qubit dephasing",
@@ -34,6 +37,8 @@ const _CATALOG=(
         difficulty=:beginner,
         sectors=:complete,
         tasks=(:dynamics,:qfi),
+        script="independent_dephasing_coherence.jl",
+        guide="independent_dephasing_coherence.md",
         constructor=:independent_dephasing),
     local_pump_decay=(
         title="Independent incoherent pumping and emission",
@@ -41,6 +46,8 @@ const _CATALOG=(
         difficulty=:beginner,
         sectors=:complete,
         tasks=(:steady_state,:populations),
+        script="local_pumping.jl",
+        guide="local_pumping.md",
         constructor=:local_pump_decay),
     one_axis_twisting=(
         title="One-axis twisting",
@@ -48,6 +55,8 @@ const _CATALOG=(
         difficulty=:intermediate,
         sectors=:complete,
         tasks=(:dynamics,:squeezing,:entanglement),
+        script="one_axis_twisting.jl",
+        guide="one_axis_twisting.md",
         constructor=:one_axis_twisting),
     steady_superradiance=(
         title="Steady-state superradiance",
@@ -55,6 +64,8 @@ const _CATALOG=(
         difficulty=:intermediate,
         sectors=:complete,
         tasks=(:steady_state,:observables,:trajectories),
+        script="steady_superradiance.jl",
+        guide="steady_superradiance.md",
         constructor=:steady_superradiance),
     boundary_time_crystal=(
         title="Boundary time crystal",
@@ -62,11 +73,74 @@ const _CATALOG=(
         difficulty=:advanced,
         sectors=:symmetric,
         tasks=(:spectrum,:gap,:dynamics),
+        script="boundary_time_crystal.jl",
+        guide="boundary_time_crystal.md",
         constructor=:boundary_time_crystal),
 )
 
 """Return detached metadata for the curated built-in model recipes."""
 catalog()=deepcopy(_CATALOG)
+
+"""
+    find(; task=nothing, difficulty=nothing, sectors=nothing)
+
+Return detached metadata for built-in model recipes matching the requested
+discovery filters. Filters may be symbols or strings. `task` matches one of a
+recipe's documented tasks; `difficulty` and `sectors` match their corresponding
+metadata exactly. With no filters this is equivalent to [`catalog`](@ref).
+"""
+function find(;task=nothing,difficulty=nothing,sectors=nothing)
+    normalize(value)=value===nothing ? nothing : Symbol(value)
+    selected_task=normalize(task)
+    selected_difficulty=normalize(difficulty)
+    selected_sectors=normalize(sectors)
+    entries=Pair{Symbol,Any}[]
+    for name in keys(_CATALOG)
+        metadata=getproperty(_CATALOG,name)
+        selected_task===nothing||selected_task in metadata.tasks||continue
+        selected_difficulty===nothing||
+            selected_difficulty===metadata.difficulty||continue
+        selected_sectors===nothing||selected_sectors===metadata.sectors||continue
+        push!(entries,name=>deepcopy(metadata))
+    end
+    (;entries...)
+end
+
+"""
+    describe(name)
+
+Return detached convention, task, citation, and example metadata for one
+built-in recipe. `name` may be a symbol or string. Unknown names raise and list
+the available recipes instead of silently returning an empty result.
+"""
+function describe(name)
+    key=Symbol(name)
+    hasproperty(_CATALOG,key)||throw(ArgumentError(
+        "unknown model recipe $name; choose one of "*
+        join(string.(keys(_CATALOG)),", ")))
+    deepcopy(getproperty(_CATALOG,key))
+end
+
+"""
+    example(name)
+
+Return the installed runnable-example paths and exact root-environment command
+for a built-in model recipe. This function is read-only: it never starts a
+process, opens an editor, or changes the active project.
+"""
+function example(name)
+    metadata=describe(name)
+    root=normpath(joinpath(@__DIR__,".."))
+    script=joinpath(root,"examples",metadata.script)
+    guide=joinpath(root,"examples",metadata.guide)
+    isfile(script)||throw(ArgumentError(
+        "the installed example script is missing: $script"))
+    isfile(guide)||throw(ArgumentError(
+        "the installed example guide is missing: $guide"))
+    (;name=Symbol(name),script,guide,
+      command=`$(Base.julia_cmd()) --project=$root $script`,
+      metadata)
+end
 
 function _recipe_scalar(value,::Type{T},name::AbstractString;
         nonnegative::Bool=false,positive::Bool=false) where

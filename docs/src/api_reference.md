@@ -37,12 +37,14 @@ PermutationalInvariantDynamics
 | [Local pseudomodes and PI supersites](pseudomodes.md) | Identical finite-cutoff local modes, system-term lifting, matrix-free dynamics, cutoff checks, and prepared mode tracing |
 | [Reusable prepared geometry](prepared_artifacts.md) | Immutable representation bundles and an explicit user-owned preparation cache |
 | [Prepared parameter scans](parameter_scans.md) | Continuation, resumable point records, deterministic threaded scans, and tabular exports |
+| [Progress and cancellation](progress.md) | Structured events, cooperative cancellation, and resumable scan boundaries |
 | [Block, multi-shift, and recycled Krylov](krylov_extensions.md) | Thick-restarted block spectra, multiple-right-hand-side solves, shifted families, recycled subspaces, and exponential actions |
 | [Optional accelerators](accelerators.md) | Device capability reports, sparse-upload resource preflight, and guarded extension contracts |
 | [PI--HEOM non-Markovian dynamics](heom.md) | PI auxiliary-density hierarchies, matrix-free propagation, and stationary states |
 | [PI--HOPS stochastic non-Markovian dynamics](hops.md) | Direct-sum Schur-irrep pure-state hierarchies, colored-noise trajectories, and Monte Carlo density reconstruction |
 | [Numerical convergence reports](convergence.md) | Time-step, Krylov, HEOM-depth, and sector-cutoff refinement evidence |
 | [Reproducible verified experiments](experiments.md) | Typed calculations, resource explanations, physical/solver/refinement evidence, and portable result archives |
+| [Results, tables, plots, and exports](result_outputs.md) | Compact summaries, dependency-free result tables, common text/native exports, and optional Tables/Makie/JLD2/HDF5 integration |
 | [Counting statistics and rare events](counting_statistics.md) | Matrix-free tilted generators, finite-time MGFs, SCGFs, cumulants, and discrete rate functions |
 | [Bath-correlation fitting](bath_fitting.md) | Spectral quadrature, finite exponential fits, rank diagnostics, and guarded HEOM/HOPS bath construction |
 | [Parameter inference](inference.md) | Bounded weighted fitting, implicit stationary sensitivities, Fisher matrices, and identifiability diagnostics |
@@ -55,6 +57,6 @@ Modules = [
     PermutationalInvariantDynamics,
     PermutationalInvariantDynamics.Models,
 ]
-Pages = ["api/representation.md", "api/dynamics.md", "api/analysis.md", "api/solvers.md", "api/visualization.md", "api_tiers.md", "streaming_output.md", "batched_trajectories.md", "diffusive_monitoring.md", "weak_pi_trajectories.md", "correlations.md", "cumulant_bridge.md", "research_utilities.md", "composite_systems.md", "global_pseudomodes.md", "prepared_artifacts.md", "parameter_scans.md", "krylov_extensions.md", "accelerators.md", "heom.md", "hops.md", "bath_fitting.md", "counting_statistics.md", "experiments.md", "inference.md", "convergence.md", "qudit_phase_space.md", "nonstabilizerness.md", "genuine_entanglement.md", "interoperability.md"]
+Pages = ["api/representation.md", "api/dynamics.md", "api/analysis.md", "api/solvers.md", "api/visualization.md", "api_tiers.md", "result_outputs.md", "streaming_output.md", "progress.md", "batched_trajectories.md", "diffusive_monitoring.md", "weak_pi_trajectories.md", "correlations.md", "cumulant_bridge.md", "research_utilities.md", "composite_systems.md", "global_pseudomodes.md", "prepared_artifacts.md", "parameter_scans.md", "krylov_extensions.md", "accelerators.md", "heom.md", "hops.md", "bath_fitting.md", "counting_statistics.md", "experiments.md", "inference.md", "convergence.md", "qudit_phase_space.md", "nonstabilizerness.md", "genuine_entanglement.md", "interoperability.md"]
 Order = [:type, :function, :constant, :macro]
 ```

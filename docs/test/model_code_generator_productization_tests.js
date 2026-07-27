@@ -64,13 +64,14 @@
     "manifest is valid JSON with normalized parameters",
   );
   assert(
-    direct.bundle.files.length === 3,
-    "bundle contains Julia, manifest, and README files",
+    direct.bundle.files.length === 4,
+    "bundle contains Julia, manifest, README, and Pluto files",
   );
   assert(
     direct.bundle.files[0].name.endsWith(".jl") &&
       direct.bundle.files[1].name.endsWith(".json") &&
-      direct.bundle.files[2].name.endsWith("_README.txt"),
+      direct.bundle.files[2].name.endsWith("_README.txt") &&
+      direct.bundle.files[3].name.endsWith("_pluto.jl"),
     "bundle file extensions",
   );
   assertIncludes(

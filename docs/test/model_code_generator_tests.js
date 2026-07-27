@@ -26,6 +26,20 @@
     assert(caught.field === field, `${message}: expected field ${field}, got ${caught.field}`);
   }
 
+  function assertRejectsScan(action, message) {
+    let caught = null;
+    try {
+      action();
+    } catch (error) {
+      caught = error;
+    }
+    assert(caught instanceof api.GeneratorError, `${message}: expected GeneratorError`);
+    assert(
+      typeof caught.field === "string" && caught.field.includes("scan"),
+      `${message}: expected a scan field, got ${caught.field}`,
+    );
+  }
+
   const driven = api.generate({
     N: 8,
     d: 2,
@@ -70,6 +84,45 @@
     driven.bundle.files[2].contents,
     "The JSON file is descriptive metadata",
     "bundle README distinguishes the descriptive manifest",
+  );
+  assert(
+    driven.bundle.files.length === 4,
+    "the generated bundle includes a Pluto notebook",
+  );
+  assertIncludes(
+    driven.bundle.files[3].contents,
+    "### A Pluto.jl notebook ###",
+    "Pluto notebook header",
+  );
+  assertIncludes(
+    driven.bundle.files[3].contents,
+    "using PermutationalInvariantDynamics",
+    "Pluto notebook contains the generated calculation",
+  );
+  const restoredDrivenConfiguration =
+    api.configurationFromManifest(driven.manifest);
+  assert(
+    restoredDrivenConfiguration.N === 8 &&
+      restoredDrivenConfiguration.d === 2,
+    "manifest round trip restores representation sizes",
+  );
+  assert(
+    restoredDrivenConfiguration.jumps.length === 3 &&
+      restoredDrivenConfiguration.scan.enabled === false,
+    "manifest round trip restores channels and disabled scan state",
+  );
+  const restoredDriven = api.generate(restoredDrivenConfiguration);
+  assert(
+    restoredDriven.normalized.hamiltonian.trim() ===
+      driven.normalized.hamiltonian.trim() &&
+      restoredDriven.normalized.observable.trim() ===
+        driven.normalized.observable.trim(),
+    "manifest round trip preserves normalized formulas",
+  );
+  assertRejects(
+    () => api.configurationFromManifest({ schema: "unknown/v1" }),
+    "manifest",
+    "unsupported manifest schema",
   );
   assertIncludes(driven.code, "LocalHamiltonian(", "one-body Hamiltonian lowering");
   assertIncludes(driven.code, "2 * spin.jx", "Pauli normalization");
@@ -545,6 +598,212 @@ g=0.1`,
   assertIncludes(selectedSpectrum.code, "return_info=true", "spectrum metadata");
   assert(selectedSpectrum.summary.calculation === "liouvillian-spectrum", "spectrum alias normalization");
 
+  const twoAxisScan = api.generate({
+    architecture: "pi",
+    N: 1,
+    d: 2,
+    calculation: "steady-observable",
+    steadyMethod: "deterministic",
+    hamiltonian: "",
+    jumps: [
+      {
+        kind: "local",
+        operator: String.raw`\sigma_-`,
+        rate: String.raw`\gamma_{\downarrow}`,
+      },
+      {
+        kind: "local",
+        operator: String.raw`\sigma_+`,
+        rate: String.raw`\gamma_{\uparrow}`,
+      },
+    ],
+    observable: "J_z",
+    parameters: "",
+    scan: {
+      enabled: true,
+      axes: [
+        {
+          parameter: String.raw`\gamma_{\downarrow}`,
+          start: 0.2,
+          stop: 0.4,
+          points: 2,
+        },
+        {
+          parameter: String.raw`\gamma_{\uparrow}`,
+          start: 0.1,
+          stop: 0.3,
+          points: 3,
+        },
+      ],
+    },
+  });
+  assertIncludes(twoAxisScan.code, "ParameterScanPlan(", "typed parameter-scan plan");
+  assertIncludes(twoAxisScan.code, "ParameterScanWorkspace()", "task-owned scan workspace");
+  assertIncludes(twoAxisScan.code, "parameter_scan(", "native parameter-scan execution");
+  assertIncludes(twoAxisScan.code, "scan_result", "named scan result");
+  assertIncludes(twoAxisScan.code, "scan_rows", "tabular scan rows");
+  assert(
+    twoAxisScan.summary.scanPoints === 6,
+    "Cartesian scan point count is reported",
+  );
+  assert(
+    Array.isArray(twoAxisScan.summary.scanAxes) &&
+      twoAxisScan.summary.scanAxes.join(",") === "gamma_down,gamma_up",
+    "normalized scan axes are reported in order",
+  );
+  assert(
+    twoAxisScan.manifest.calculation.scan.enabled === true,
+    "scan manifest records enabled state",
+  );
+  assert(
+    twoAxisScan.manifest.calculation.scan.ordering === "first-axis-fastest",
+    "scan manifest records Cartesian ordering",
+  );
+  assert(
+    twoAxisScan.manifest.calculation.scan.axes.length === 2,
+    "scan manifest records both axes",
+  );
+  assert(
+    twoAxisScan.manifest.calculation.scan.axes[0].parameter === "gamma_down" &&
+      twoAxisScan.manifest.calculation.scan.axes[1].parameter === "gamma_up",
+    "scan manifest preserves normalized axis order",
+  );
+  assert(
+    twoAxisScan.manifest.calculation.scan.axes[1].points === 3,
+    "scan manifest records axis resolution",
+  );
+  assert(
+    !twoAxisScan.code.includes("TODO"),
+    "scanned parameters use their first grid values as nominal values",
+  );
+  assert(
+    twoAxisScan.bundle.stem.endsWith("_scan"),
+    "scan bundle has an unambiguous filename",
+  );
+
+  const localPseudomodeScan = api.generate({
+    architecture: "local-pseudomode",
+    N: 1,
+    d: 2,
+    calculation: "steady-state",
+    steadyMethod: "deterministic",
+    hamiltonian: String.raw`\Omega J_z`,
+    jumps: [],
+    pseudomode: {
+      nmax: 1,
+      frequency: String.raw`\omega_c`,
+      damping: String.raw`\kappa`,
+      thermalOccupation: "0",
+      couplingOperator: String.raw`\sigma_-`,
+      couplingStrength: "g",
+      counterrotatingStrength: "0",
+    },
+    parameters: String.raw`\Omega=0.2
+\omega_c=1
+\kappa=0.3
+g=0.1`,
+    scan: {
+      enabled: true,
+      axes: [
+        { parameter: String.raw`\kappa`, start: 0.5, stop: 0.1, points: 3 },
+      ],
+    },
+  });
+  assertIncludes(
+    localPseudomodeScan.code,
+    "pseudomode_supersite(",
+    "local-pseudomode scan prepares supersite geometry",
+  );
+  assertIncludes(
+    localPseudomodeScan.code,
+    "pseudomode_model(",
+    "local-pseudomode scan rebuilds only model coefficients",
+  );
+  assertIncludes(
+    localPseudomodeScan.code,
+    "ParameterScanPlan(",
+    "local-pseudomode scan uses native scan infrastructure",
+  );
+  assert(
+    localPseudomodeScan.summary.scanPoints === 3,
+    "descending local-pseudomode scan range is accepted",
+  );
+  assert(
+    localPseudomodeScan.manifest.model.parameters.kappa === 0.5,
+    "the first scan point overrides the nominal browser-validation value",
+  );
+  assert(
+    localPseudomodeScan.warnings.some(
+      (warning) => warning.includes("kappa") && warning.includes("overridden"),
+    ),
+    "overridden nominal parameter assignments are reported",
+  );
+  const restoredLocalScanConfiguration =
+    api.configurationFromManifest(localPseudomodeScan.manifest);
+  assert(
+    restoredLocalScanConfiguration.architecture === "local-pseudomode" &&
+      restoredLocalScanConfiguration.pseudomode.nmax === 1,
+    "manifest round trip restores the local-pseudomode topology",
+  );
+  assert(
+    restoredLocalScanConfiguration.scan.enabled === true &&
+      restoredLocalScanConfiguration.scan.axes.length === 1 &&
+      restoredLocalScanConfiguration.scan.axes[0].parameter === "kappa",
+    "manifest round trip restores a normalized scan axis",
+  );
+  const restoredLocalScan = api.generate(restoredLocalScanConfiguration);
+  assert(
+    restoredLocalScan.summary.scanPoints === 3,
+    "restored local-pseudomode scan preserves its Cartesian point count",
+  );
+  assert(
+    restoredLocalScan.manifest.model.pseudomode.couplingOperator.trim() ===
+      localPseudomodeScan.manifest.model.pseudomode.couplingOperator.trim(),
+    "restored local-pseudomode scan preserves its coupling operator",
+  );
+
+  const spectralScan = api.generate({
+    architecture: "pi",
+    N: 1,
+    d: 2,
+    calculation: "liouvillian-spectrum",
+    hamiltonian: String.raw`\Omega J_z`,
+    jumps: [{ kind: "local", operator: String.raw`\sigma_-`, rate: "0.2" }],
+    parameters: String.raw`\Omega=0.1`,
+    spectrum: { target: "largest-real", nev: 2, seed: 61 },
+    scan: {
+      enabled: true,
+      axes: [
+        { parameter: String.raw`\Omega`, start: 0.1, stop: 0.3, points: 3 },
+      ],
+    },
+  });
+  assertIncludes(spectralScan.code, "task=:spectrum", "spectral scan task");
+  assertIncludes(
+    spectralScan.code,
+    "spectrum_target=:largest_real",
+    "spectral scan target",
+  );
+  assertIncludes(spectralScan.code, "save_vectors=false", "spectral scan omits Ritz vectors");
+
+  const disabledScan = api.generate({
+    architecture: "pi",
+    N: 1,
+    d: 2,
+    calculation: "steady-state",
+    hamiltonian: "0.1 J_z",
+    jumps: [{ kind: "local", operator: String.raw`\sigma_-`, rate: "0.2" }],
+    scan: { enabled: false, axes: [] },
+  });
+  assert(
+    !disabledScan.code.includes("ParameterScanPlan("),
+    "a disabled scan preserves the single-model workflow",
+  );
+  assert(
+    disabledScan.manifest.calculation.scan === null,
+    "a disabled scan is explicit in the normalized manifest",
+  );
+
   const globalSelectedSpectrum = api.generate({
     architecture: "global-pseudomode",
     N: 2,
@@ -791,6 +1050,313 @@ g=0.1`,
   assert(
     doubledRate.warnings.some((warning) => warning.includes("square")),
     "internal jump coefficient plus external rate warns about double counting",
+  );
+
+  assertRejectsScan(
+    () => api.generate({
+      N: 1,
+      d: 2,
+      calculation: "steady-state",
+      hamiltonian: String.raw`\Omega J_z`,
+      jumps: [{ kind: "local", operator: String.raw`\sigma_-`, rate: "0.2" }],
+      parameters: String.raw`\Omega=0.1`,
+      scan: { enabled: true, axes: [] },
+    }),
+    "an enabled scan requires at least one axis",
+  );
+  assertRejectsScan(
+    () => api.generate({
+      N: 1,
+      d: 2,
+      calculation: "steady-state",
+      hamiltonian: String.raw`\Omega J_z`,
+      jumps: [{ kind: "local", operator: String.raw`\sigma_-`, rate: "0.2" }],
+      parameters: String.raw`\Omega=0.1`,
+      scan: {
+        enabled: true,
+        axes: [{ parameter: String.raw`\gamma`, start: 0.1, stop: 0.2, points: 2 }],
+      },
+    }),
+    "a scan axis must select a model parameter",
+  );
+  assertRejectsScan(
+    () => api.generate({
+      N: 1,
+      d: 2,
+      calculation: "steady-observable",
+      hamiltonian: String.raw`\Omega J_z`,
+      jumps: [{ kind: "local", operator: String.raw`\sigma_-`, rate: "0.2" }],
+      observable: "a J_z",
+      scan: {
+        enabled: true,
+        axes: [{ parameter: "a", start: 0.1, stop: 0.2, points: 2 }],
+      },
+    }),
+    "observable-only scalars are not mistaken for model parameters",
+  );
+  assertRejectsScan(
+    () => api.generate({
+      N: 1,
+      d: 2,
+      calculation: "steady-state",
+      hamiltonian: "",
+      jumps: [{
+        kind: "local",
+        operator: String.raw`\sigma_-`,
+        rate: String.raw`\gamma_{\downarrow}`,
+      }],
+      scan: {
+        enabled: true,
+        axes: [
+          {
+            parameter: String.raw`\gamma_{\downarrow}`,
+            start: 0.1,
+            stop: 0.2,
+            points: 2,
+          },
+          {
+            parameter: "gamma_down",
+            start: 0.2,
+            stop: 0.3,
+            points: 2,
+          },
+        ],
+      },
+    }),
+    "duplicate normalized scan axes are rejected",
+  );
+  assertRejectsScan(
+    () => api.generate({
+      N: 1,
+      d: 2,
+      calculation: "steady-state",
+      hamiltonian: String.raw`\Omega J_z`,
+      jumps: [{ kind: "local", operator: String.raw`\sigma_-`, rate: "0.2" }],
+      scan: {
+        enabled: true,
+        axes: [{ parameter: String.raw`\Omega`, start: 0.1, stop: 0.2, points: 1 }],
+      },
+    }),
+    "each scan axis requires at least two points",
+  );
+  assertRejectsScan(
+    () => api.generate({
+      N: 1,
+      d: 2,
+      calculation: "steady-state",
+      hamiltonian: String.raw`\Omega J_z`,
+      jumps: [{ kind: "local", operator: String.raw`\sigma_-`, rate: "0.2" }],
+      scan: {
+        enabled: true,
+        axes: [{ parameter: String.raw`\Omega`, start: "", stop: 0.2, points: 2 }],
+      },
+    }),
+    "blank scan endpoints are not coerced to zero",
+  );
+  assertRejectsScan(
+    () => api.generate({
+      N: 1,
+      d: 2,
+      calculation: "steady-state",
+      hamiltonian: String.raw`\Omega J_z`,
+      jumps: [{ kind: "local", operator: String.raw`\sigma_-`, rate: "0.2" }],
+      scan: {
+        enabled: true,
+        axes: [{
+          parameter: String.raw`\Omega`,
+          start: Number.POSITIVE_INFINITY,
+          stop: 0.2,
+          points: 2,
+        }],
+      },
+    }),
+    "scan endpoints must be finite",
+  );
+  assertRejectsScan(
+    () => api.generate({
+      N: 1,
+      d: 2,
+      calculation: "steady-state",
+      hamiltonian: String.raw`\Omega J_z`,
+      jumps: [{ kind: "local", operator: String.raw`\sigma_-`, rate: "0.2" }],
+      scan: {
+        enabled: true,
+        axes: [{ parameter: String.raw`\Omega`, start: 0.1, stop: 0.1, points: 2 }],
+      },
+    }),
+    "a scan axis must span a nonzero interval",
+  );
+  assertRejectsScan(
+    () => api.generate({
+      N: 1,
+      d: 2,
+      calculation: "steady-state",
+      hamiltonian: String.raw`\Omega J_z`,
+      jumps: [{
+        kind: "local",
+        operator: String.raw`\sigma_-`,
+        rate: String.raw`\gamma`,
+      }],
+      scan: {
+        enabled: true,
+        axes: [
+          { parameter: String.raw`\Omega`, start: 0.1, stop: 0.2, points: 1001 },
+          { parameter: String.raw`\gamma`, start: 0.1, stop: 0.2, points: 101 },
+        ],
+      },
+    }),
+    "the browser rejects an unbounded Cartesian grid",
+  );
+  assertRejectsScan(
+    () => api.generate({
+      N: 1,
+      d: 2,
+      calculation: "steady-state",
+      steadyMethod: "trajectory",
+      hamiltonian: String.raw`\Omega J_z`,
+      jumps: [{ kind: "local", operator: String.raw`\sigma_-`, rate: "0.2" }],
+      scan: {
+        enabled: true,
+        axes: [{ parameter: String.raw`\Omega`, start: 0.1, stop: 0.2, points: 2 }],
+      },
+    }),
+    "trajectory stationary estimation is not silently scanned",
+  );
+  assertRejectsScan(
+    () => api.generate({
+      N: 1,
+      d: 2,
+      calculation: "dynamics-observable",
+      hamiltonian: String.raw`\Omega J_z`,
+      jumps: [{ kind: "local", operator: String.raw`\sigma_-`, rate: "0.2" }],
+      observable: "J_z",
+      initialState: { level: 1 },
+      dynamics: { startTime: 0, finalTime: 1, samples: 2, stepsPerInterval: 1 },
+      scan: {
+        enabled: true,
+        axes: [{ parameter: String.raw`\Omega`, start: 0.1, stop: 0.2, points: 2 }],
+      },
+    }),
+    "dynamics scans are rejected until they have a typed native route",
+  );
+  assertRejectsScan(
+    () => api.generate({
+      N: 1,
+      d: 2,
+      calculation: "liouvillian-gap",
+      hamiltonian: String.raw`\Omega J_z`,
+      jumps: [{ kind: "local", operator: String.raw`\sigma_-`, rate: "0.2" }],
+      gap: { nev: 2, krylovdim: 4 },
+      scan: {
+        enabled: true,
+        axes: [{ parameter: String.raw`\Omega`, start: 0.1, stop: 0.2, points: 2 }],
+      },
+    }),
+    "gap scans are rejected rather than losing certification semantics",
+  );
+  assertRejectsScan(
+    () => api.generate({
+      architecture: "global-pseudomode",
+      N: 1,
+      d: 2,
+      calculation: "steady-state",
+      hamiltonian: String.raw`\Omega J_z`,
+      jumps: [{ kind: "local", operator: String.raw`\sigma_-`, rate: "0.2" }],
+      pseudomode: {
+        nmax: 1,
+        frequency: "1",
+        damping: "0.2",
+        thermalOccupation: "0",
+        couplingOperator: String.raw`\sigma_-`,
+        couplingStrength: "0.1",
+      },
+      scan: {
+        enabled: true,
+        axes: [{ parameter: String.raw`\Omega`, start: 0.1, stop: 0.2, points: 2 }],
+      },
+    }),
+    "shared-pseudomode scans are rejected explicitly",
+  );
+  assertRejectsScan(
+    () => api.generate({
+      workflow: "verified-experiment",
+      architecture: "pi",
+      N: 1,
+      d: 2,
+      calculation: "steady-state",
+      hamiltonian: String.raw`\Omega J_z`,
+      jumps: [{ kind: "local", operator: String.raw`\sigma_-`, rate: "0.2" }],
+      scan: {
+        enabled: true,
+        axes: [{ parameter: String.raw`\Omega`, start: 0.1, stop: 0.2, points: 2 }],
+      },
+    }),
+    "verified-experiment scans are rejected until archives describe the grid",
+  );
+  assertRejects(
+    () => api.generate({
+      architecture: "pi",
+      N: 1,
+      d: 2,
+      calculation: "steady-state",
+      hamiltonian: String.raw`\Omega J_z`,
+      jumps: [{ kind: "local", operator: String.raw`\sigma_-`, rate: "0.2" }],
+      analysis: { purity: true },
+      scan: {
+        enabled: true,
+        axes: [{ parameter: String.raw`\Omega`, start: 0.1, stop: 0.2, points: 2 }],
+      },
+    }),
+    "state analysis",
+    "post-stationary state analyses require an explicit scan diagnostic",
+  );
+  assertRejects(
+    () => api.generate({
+      architecture: "pi",
+      N: 1,
+      d: 2,
+      calculation: "steady-state",
+      hamiltonian: "",
+      jumps: [{
+        kind: "local",
+        operator: String.raw`\sigma_-`,
+        rate: String.raw`\gamma`,
+      }],
+      scan: {
+        enabled: true,
+        axes: [
+          { parameter: String.raw`\gamma`, start: 0.1, stop: -0.1, points: 3 },
+        ],
+      },
+    }),
+    "jump 1 rate",
+    "jump rates are validated at every Cartesian scan point",
+  );
+  assertRejects(
+    () => api.generate({
+      architecture: "local-pseudomode",
+      N: 1,
+      d: 2,
+      calculation: "steady-state",
+      hamiltonian: "",
+      jumps: [],
+      pseudomode: {
+        nmax: 1,
+        frequency: "1",
+        damping: String.raw`\kappa`,
+        thermalOccupation: "0",
+        couplingOperator: String.raw`\sigma_-`,
+        couplingStrength: "0.1",
+      },
+      scan: {
+        enabled: true,
+        axes: [
+          { parameter: String.raw`\kappa`, start: 0.1, stop: -0.1, points: 3 },
+        ],
+      },
+    }),
+    "pseudomode damping",
+    "pseudomode damping is validated at every Cartesian scan point",
   );
 
   assertRejects(

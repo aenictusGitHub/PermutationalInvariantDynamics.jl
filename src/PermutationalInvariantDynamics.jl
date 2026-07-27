@@ -19,6 +19,7 @@ using LinearAlgebra
 using SparseArrays
 using Random
 import SciMLBase
+import SciMLBase: solve
 import LinearAlgebra: mul!, ldiv!, ishermitian
 import Base: *, +, -, adjoint, copy, eltype, getindex, length, size, show
 
@@ -45,6 +46,7 @@ include("threaded_operator.jl")
 include("accelerators.jl")
 include("result_protocol.jl")
 include("solver_algorithms.jl")
+include("progress.jl")
 
 # Iterative solvers, spectra, symmetries, and state analysis.
 include("krylov.jl")
@@ -103,11 +105,13 @@ include("experiments.jl")
 include("control.jl")
 include("inference.jl")
 include("model_zoo.jl")
+include("guided_studies.jl")
 
 # Dependency-free visualization data and SVG renderers.
 include("visualization.jl")
 include("spectral_visualization.jl")
 include("phase_space_visualization.jl")
+include("result_outputs.jl")
 include("workflow_namespace.jl")
 
 export Partition, partitions, weight, length_nonzero, removable_corners,
@@ -332,6 +336,14 @@ export Partition, partitions, weight, length_nonzero, removable_corners,
        HarmonicArnoldiAlgorithm, SteadyStateResult, DynamicsResult,
        SpectrumResult, stationary_state, solve_dynamics,
        liouvillian_spectrum, diagnostics, pi_dimension,
+       PIStudy, PIStudyResult, PIDiagnosticIssue, PIStudyReport,
+       PIDoctorReport, solve, check, explain, explain_failure, doctor,
+       result_state, result_final_state, result_times, result_states,
+       result_values, result_observables, result_converged,
+       result_residual, result_selected_algorithm, result_stats,
+       result_diagnostics,
+       ProgressEvent, CancellationToken, OperationCancelled,
+       cancel!, iscancelled, reset_cancellation!,
        estimate_state_bytes, estimate_basis_bytes,
        estimate_liouvillian_bytes, estimate_geometry_bytes,
        estimate_solver_bytes, recommend_solver,
@@ -380,6 +392,8 @@ export Partition, partitions, weight, length_nonzero, removable_corners,
        LeastSquaresInferenceProblem, ParameterIdentifiabilityReport,
        ParameterInferenceResult, steady_state_inference_problem,
        parameter_identifiability, fit_parameters,
+       ResultTable, summarize, result_table,
+       PI_RESULT_ARCHIVE_VERSION, save_result,
        Models, Workflow,
        SchurBlockStructure, SchurBlockVisualization,
        schur_block_structure, visualize_schur_blocks,

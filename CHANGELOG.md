@@ -20,6 +20,14 @@ Initial public release candidate.
 - A curated `Workflow` namespace, convention-tested `Models` recipes, named
   affine generator families, and strict one-site operator bridges for
   QuantumOptics.jl and QuantumToolbox.jl.
+- A guided `PIStudy` front door with explain/check preflight,
+  machine-readable diagnostics, a bounded `doctor()` smoke test, uniform
+  result accessors, and preservation of the underlying expert result.
+- Dependency-free progress events and cooperative cancellation for scans,
+  fixed-step dynamics, HEOM, and individual HOPS paths, including resumable
+  ordered scan prefixes.
+- Compact result summaries and tables, common CSV/TSV and staged `.pidrun`
+  exports, and optional Tables, Makie, JLD2, and HDF5 result integrations.
 - Reproducible `PIExperiment` planning and verified deterministic solves with
   separate physical, solver, and refinement evidence plus a versioned,
   non-executable result archive.
@@ -52,8 +60,10 @@ Initial public release candidate.
   damping, deterministic and trajectory generators, matrix-free
   GMRES/Arnoldi workflows, and direct reduced states.
 - The browser-only typed model-code generator now emits ordinary PI,
-  identical-local-pseudomode, and shared-global-pseudomode stationary
-  workflows, including memory guards and oscillator-cutoff diagnostics.
+  identical-local-pseudomode, and shared-global-pseudomode workflows,
+  including memory guards, oscillator-cutoff diagnostics, deterministic
+  parameter scans, manifest round trips, browser-local autosave/share/undo,
+  and auditable Pluto notebooks.
 - Density-valued composite quantum-jump systems with explicit cross-factor
   channels, factorized gain/loss application, reproducible threaded batches,
   and online trajectory statistics.
@@ -69,6 +79,9 @@ Initial public release candidate.
 - Literature validation examples, same-basename guides, package documentation,
   curated expected-output figures for every example guide, release automation,
   and a Pluto research-workflow notebook.
+- A complete machine-readable example inventory, read-only model-recipe
+  discovery, a searchable expected-output gallery, an architecture chooser,
+  and short task-oriented installation and quickstart pages.
 - Machine-readable example discovery, verified browser-generator bundles,
   fresh-process cold-start and complete time-to-solution harnesses, an optional
   PackageCompiler workload, and guarded accelerator capability/resource

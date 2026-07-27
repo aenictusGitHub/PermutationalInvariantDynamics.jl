@@ -1,7 +1,7 @@
 schema_version = 1
 
-# Curated, user-facing examples. This is intentionally not an inventory of
-# every script in examples/: README.md remains the exhaustive index.
+# Complete user-facing example inventory. Documentation galleries and
+# consistency tests consume this file; every runnable script has one record.
 #
 # Runtime classes describe a default root-environment run after package
 # precompilation:
@@ -216,3 +216,370 @@ expected_outputs = [
     "docs/src/assets/example_figures/spectral_visualization_floquet_multipliers.svg",
     "docs/src/assets/example_figures/spectral_visualization_floquet_exponents.svg",
 ]
+
+[[example]]
+id = "boundary-time-crystal"
+title = "Boundary time-crystal slow modes"
+script = "examples/boundary_time_crystal.jl"
+guide = "examples/boundary_time_crystal.md"
+difficulty = "advanced"
+tasks = ["liouvillian-spectrum", "gap", "dynamics"]
+runtime_class = "medium"
+stochastic = false
+optional_dependencies = ["CairoMakie"]
+citation = "Iemini et al., Phys. Rev. Lett. 121, 035301 (2018)"
+model_recipe = "Models.boundary_time_crystal"
+expected_outputs = ["docs/src/assets/example_figures/boundary_time_crystal.png"]
+
+[[example]]
+id = "composite-quantum-trajectories"
+title = "Density-valued trajectories of composite PI systems"
+script = "examples/composite_quantum_trajectories.jl"
+guide = "examples/composite_quantum_trajectories.md"
+difficulty = "advanced"
+tasks = ["composite-systems", "quantum-trajectories", "online-statistics"]
+runtime_class = "medium"
+stochastic = true
+optional_dependencies = ["CairoMakie"]
+citation = "PermutationalInvariantDynamics.jl composite-trajectory workflow"
+expected_outputs = ["docs/src/assets/example_figures/composite_quantum_trajectories.png"]
+
+[[example]]
+id = "cooperative-fluorescence"
+title = "Driven cooperative fluorescence"
+script = "examples/cooperative_fluorescence.jl"
+guide = "examples/cooperative_fluorescence.md"
+difficulty = "intermediate"
+tasks = ["steady-state", "observables", "literature-validation"]
+runtime_class = "medium"
+stochastic = false
+optional_dependencies = ["CairoMakie"]
+citation = "Drummond and Carmichael, Opt. Commun. 27, 160 (1978)"
+expected_outputs = ["docs/src/assets/example_figures/cooperative_fluorescence.png"]
+
+[[example]]
+id = "correlated-reservoirs"
+title = "Correlated local and collective reservoirs"
+script = "examples/correlated_reservoirs.jl"
+guide = "examples/correlated_reservoirs.md"
+difficulty = "advanced"
+tasks = ["correlated-noise", "dynamics", "kossakowski-matrix"]
+runtime_class = "short"
+stochastic = false
+optional_dependencies = ["CairoMakie"]
+citation = "PermutationalInvariantDynamics.jl correlated-reservoir workflow"
+expected_outputs = ["docs/src/assets/example_figures/correlated_reservoirs.png"]
+
+[[example]]
+id = "correlated-superradiance"
+title = "Correlated superradiant pulse and Schur blocks"
+script = "examples/correlated_superradiance.jl"
+guide = "examples/correlated_superradiance.md"
+difficulty = "intermediate"
+tasks = ["superradiance", "dynamics", "schur-visualization"]
+runtime_class = "medium"
+stochastic = false
+optional_dependencies = ["CairoMakie"]
+citation = "Damanet et al., Phys. Rev. A 94, 033838 (2016)"
+expected_outputs = ["docs/src/assets/example_figures/correlated_superradiance.png"]
+
+[[example]]
+id = "cumulant-bridge"
+title = "Exact PI moments for cumulant closures"
+script = "examples/cumulant_bridge.jl"
+guide = "examples/cumulant_bridge.md"
+difficulty = "advanced"
+tasks = ["cumulants", "moments", "interoperability"]
+runtime_class = "short"
+stochastic = false
+optional_dependencies = ["CairoMakie", "QuantumCumulants"]
+citation = "PermutationalInvariantDynamics.jl cumulant-validation bridge"
+expected_outputs = ["docs/src/assets/example_figures/cumulant_bridge.png"]
+
+[[example]]
+id = "dissipative-collective-spin-pairing"
+title = "Dissipative collective-spin pairing"
+script = "examples/dissipative_collective_spin_pairing.jl"
+guide = "examples/dissipative_collective_spin_pairing.md"
+difficulty = "advanced"
+tasks = ["steady-state", "mean-field", "finite-size-scaling"]
+runtime_class = "long"
+stochastic = false
+optional_dependencies = ["CairoMakie"]
+citation = "Passarelli et al., Phys. Rev. A 110, 062208 (2024)"
+expected_outputs = ["docs/src/assets/example_figures/dissipative_collective_spin_pairing_meanfield.png"]
+
+[[example]]
+id = "dissipative-discrete-time-crystal"
+title = "Dissipative discrete time crystal"
+script = "examples/dissipative_discrete_time_crystal.jl"
+guide = "examples/dissipative_discrete_time_crystal.md"
+difficulty = "advanced"
+tasks = ["floquet", "time-crystal", "dynamics"]
+runtime_class = "medium"
+stochastic = false
+optional_dependencies = ["CairoMakie"]
+citation = "Gong et al., Phys. Rev. Lett. 120, 040404 (2018)"
+expected_outputs = ["docs/src/assets/example_figures/dissipative_discrete_time_crystal.png"]
+
+[[example]]
+id = "homodyne-pi-trajectories"
+title = "Homodyne PI trajectories"
+script = "examples/homodyne_pi_trajectories.jl"
+guide = "examples/homodyne_pi_trajectories.md"
+difficulty = "advanced"
+tasks = ["diffusive-trajectories", "homodyne", "conditional-dynamics"]
+runtime_class = "medium"
+stochastic = true
+optional_dependencies = ["CairoMakie"]
+citation = "Wiseman and Milburn, Quantum Measurement and Control (2010)"
+expected_outputs = ["docs/src/assets/example_figures/homodyne_pi_trajectories.png"]
+
+[[example]]
+id = "independent-dephasing-coherence"
+title = "Independent dephasing and Ramsey coherence"
+script = "examples/independent_dephasing_coherence.jl"
+guide = "examples/independent_dephasing_coherence.md"
+difficulty = "beginner"
+tasks = ["dynamics", "dephasing", "qfi"]
+runtime_class = "short"
+stochastic = false
+optional_dependencies = ["CairoMakie"]
+citation = "Huelga et al., Phys. Rev. Lett. 79, 3865 (1997)"
+model_recipe = "Models.independent_dephasing"
+expected_outputs = ["docs/src/assets/example_figures/independent_dephasing_coherence.png"]
+
+[[example]]
+id = "interacting-boundary-time-crystal"
+title = "Interacting boundary time crystal"
+script = "examples/interacting_boundary_time_crystal.jl"
+guide = "examples/interacting_boundary_time_crystal.md"
+difficulty = "advanced"
+tasks = ["liouvillian-spectrum", "time-crystal", "interactions"]
+runtime_class = "long"
+stochastic = false
+optional_dependencies = ["CairoMakie"]
+citation = "Piccitto et al., Phys. Rev. B 104, 014307 (2021)"
+expected_outputs = ["docs/src/assets/example_figures/interacting_boundary_time_crystal.png"]
+
+[[example]]
+id = "irrep-block-visualization"
+title = "Schur-block and Young-diagram visualization"
+script = "examples/irrep_block_visualization.jl"
+guide = "examples/irrep_block_visualization.md"
+difficulty = "intermediate"
+tasks = ["schur-visualization", "density-spectrum", "liouvillian-structure"]
+runtime_class = "short"
+stochastic = false
+optional_dependencies = []
+citation = "PermutationalInvariantDynamics.jl Schur-block visualization workflow"
+expected_outputs = [
+    "docs/src/assets/example_figures/irrep_block_visualization_state.svg",
+    "docs/src/assets/example_figures/irrep_block_visualization_density_spectrum.svg",
+    "docs/src/assets/example_figures/irrep_block_visualization_collective_liouvillian.svg",
+    "docs/src/assets/example_figures/irrep_block_visualization_local_liouvillian.svg",
+]
+
+[[example]]
+id = "local-pumping"
+title = "Independent pumping and the thermal product state"
+script = "examples/local_pumping.jl"
+guide = "examples/local_pumping.md"
+difficulty = "beginner"
+tasks = ["steady-state", "populations", "analytical-validation"]
+runtime_class = "instant"
+stochastic = false
+optional_dependencies = ["CairoMakie"]
+citation = "Shammah et al., Phys. Rev. A 98, 063815 (2018)"
+model_recipe = "Models.local_pump_decay"
+expected_outputs = ["docs/src/assets/example_figures/local_pumping.png"]
+
+[[example]]
+id = "meanfield-time-crystal"
+title = "Mean-field time-crystal predictions"
+script = "examples/meanfield_time_crystal.jl"
+guide = "examples/meanfield_time_crystal.md"
+difficulty = "intermediate"
+tasks = ["mean-field", "dynamics", "finite-size-comparison"]
+runtime_class = "medium"
+stochastic = false
+optional_dependencies = ["CairoMakie"]
+citation = "Iemini et al., Phys. Rev. Lett. 121, 035301 (2018)"
+expected_outputs = ["docs/src/assets/example_figures/meanfield_time_crystal.png"]
+
+[[example]]
+id = "paper-models"
+title = "Reusable literature-model constructors"
+script = "examples/paper_models.jl"
+guide = "examples/paper_models.md"
+difficulty = "intermediate"
+tasks = ["model-construction", "literature-validation", "reproducibility"]
+runtime_class = "short"
+stochastic = false
+optional_dependencies = ["CairoMakie"]
+citation = "Published validations collected by PermutationalInvariantDynamics.jl"
+expected_outputs = [
+    "docs/src/assets/example_figures/correlated_superradiance.png",
+    "docs/src/assets/example_figures/dissipative_collective_spin_pairing_meanfield.png",
+    "docs/src/assets/example_figures/all_to_all_xx_spin_local_pseudomodes.png",
+]
+
+[[example]]
+id = "pbody-pair-processes"
+title = "Permutation-symmetric pair processes"
+script = "examples/pbody_pair_processes.jl"
+guide = "examples/pbody_pair_processes.md"
+difficulty = "intermediate"
+tasks = ["p-body", "dynamics", "appendix-d"]
+runtime_class = "short"
+stochastic = false
+optional_dependencies = ["CairoMakie"]
+citation = "Bastin and Martin, J. Phys. A 58, 275301 (2025), Appendix D"
+expected_outputs = ["docs/src/assets/example_figures/pbody_pair_processes.png"]
+
+[[example]]
+id = "periodic-decay-channel"
+title = "Periodic decay and Floquet spectra"
+script = "examples/periodic_decay_channel.jl"
+guide = "examples/periodic_decay_channel.md"
+difficulty = "advanced"
+tasks = ["floquet", "periodic-steady-state", "spectrum"]
+runtime_class = "medium"
+stochastic = false
+optional_dependencies = ["CairoMakie"]
+citation = "PermutationalInvariantDynamics.jl Floquet workflow"
+expected_outputs = ["docs/src/assets/example_figures/periodic_decay_channel.png"]
+
+[[example]]
+id = "pi-hops-collective-emission"
+title = "PI-HOPS with collective emission"
+script = "examples/pi_hops_collective_emission.jl"
+guide = "examples/pi_hops_collective_emission.md"
+difficulty = "advanced"
+tasks = ["hops", "collective-emission", "non-markovian-dynamics"]
+runtime_class = "medium"
+stochastic = true
+optional_dependencies = ["CairoMakie"]
+citation = "Suess, Eisfeld, and Strunz, Phys. Rev. Lett. 113, 150403 (2014)"
+expected_outputs = ["docs/src/assets/example_figures/pi_hops_collective_emission.png"]
+
+[[example]]
+id = "pi-hops-mixed-multibath"
+title = "Mixed-state multi-bath PI-HOPS"
+script = "examples/pi_hops_mixed_multibath.jl"
+guide = "examples/pi_hops_mixed_multibath.md"
+difficulty = "advanced"
+tasks = ["hops", "multiple-baths", "mixed-states", "importance-pruning"]
+runtime_class = "long"
+stochastic = true
+optional_dependencies = ["CairoMakie"]
+citation = "Suess, Eisfeld, and Strunz, Phys. Rev. Lett. 113, 150403 (2014)"
+expected_outputs = ["docs/src/assets/example_figures/pi_hops_mixed_multibath.png"]
+
+[[example]]
+id = "pt-symmetric-time-crystal"
+title = "PT-symmetric dissipative time crystal"
+script = "examples/pt_symmetric_time_crystal.jl"
+guide = "examples/pt_symmetric_time_crystal.md"
+difficulty = "advanced"
+tasks = ["pt-symmetry", "liouvillian-spectrum", "dynamics"]
+runtime_class = "medium"
+stochastic = false
+optional_dependencies = ["CairoMakie"]
+citation = "Nakanishi and Sasamoto, Phys. Rev. A 105, 022219 (2022)"
+expected_outputs = ["docs/src/assets/example_figures/pt_symmetric_time_crystal.png"]
+
+[[example]]
+id = "quantum-regression"
+title = "Quantum regression and optical spectra"
+script = "examples/quantum_regression.jl"
+guide = "examples/quantum_regression.md"
+difficulty = "intermediate"
+tasks = ["correlations", "quantum-regression", "optical-spectrum"]
+runtime_class = "medium"
+stochastic = false
+optional_dependencies = ["CairoMakie"]
+citation = "Lax, Phys. Rev. 129, 2342 (1963)"
+expected_outputs = ["docs/src/assets/example_figures/quantum_regression.png"]
+
+[[example]]
+id = "qubit-population-dynamics"
+title = "Certified qubit population dynamics"
+script = "examples/qubit_population_dynamics.jl"
+guide = "examples/qubit_population_dynamics.md"
+difficulty = "beginner"
+tasks = ["populations", "dynamics", "steady-state", "certification"]
+runtime_class = "short"
+stochastic = false
+optional_dependencies = ["CairoMakie"]
+citation = "Shammah et al., Phys. Rev. A 98, 063815 (2018)"
+expected_outputs = ["docs/src/assets/example_figures/qubit_population_dynamics.png"]
+
+[[example]]
+id = "qudit-coherent-state-q"
+title = "Qudit coherent-state Husimi Q data"
+script = "examples/qudit_coherent_state_q_distribution.jl"
+guide = "examples/qudit_coherent_state_q_distribution.md"
+difficulty = "advanced"
+tasks = ["qudit", "phase-space", "husimi-q"]
+runtime_class = "medium"
+stochastic = false
+optional_dependencies = ["CairoMakie"]
+citation = "Perelomov, Generalized Coherent States and Their Applications (1986)"
+expected_outputs = ["docs/src/assets/example_figures/qudit_coherent_state_q_distribution.png"]
+
+[[example]]
+id = "research-utilities"
+title = "Research utilities and interoperability"
+script = "examples/research_utilities.jl"
+guide = "examples/research_utilities.md"
+difficulty = "advanced"
+tasks = ["channels", "tomography", "checkpoints", "symmetries"]
+runtime_class = "short"
+stochastic = false
+optional_dependencies = ["CairoMakie"]
+citation = "PermutationalInvariantDynamics.jl research-utility workflow"
+expected_outputs = ["docs/src/assets/example_figures/research_utilities.png"]
+
+[[example]]
+id = "spin-phase-space"
+title = "Sector-resolved spin phase space"
+script = "examples/spin_phase_space.jl"
+guide = "examples/spin_phase_space.md"
+difficulty = "intermediate"
+tasks = ["phase-space", "husimi-q", "spin-wigner", "schur-sectors"]
+runtime_class = "short"
+stochastic = false
+optional_dependencies = []
+citation = "Agarwal, Phys. Rev. A 24, 2889 (1981)"
+expected_outputs = [
+    "docs/src/assets/example_figures/spin_phase_space_husimi_q.svg",
+    "docs/src/assets/example_figures/spin_phase_space_wigner_marginal.svg",
+    "docs/src/assets/example_figures/spin_phase_space_wigner_symmetric_sector.svg",
+]
+
+[[example]]
+id = "streaming-output"
+title = "Memory-bounded observable streaming"
+script = "examples/streaming_output.jl"
+guide = "examples/streaming_output.md"
+difficulty = "beginner"
+tasks = ["dynamics", "streaming", "online-statistics"]
+runtime_class = "short"
+stochastic = false
+optional_dependencies = ["CairoMakie"]
+citation = "PermutationalInvariantDynamics.jl streaming-output workflow"
+expected_outputs = ["docs/src/assets/example_figures/streaming_output.png"]
+
+[[example]]
+id = "superradiant-quantum-trajectories"
+title = "Superradiant quantum trajectories"
+script = "examples/superradiant_quantum_trajectories.jl"
+guide = "examples/superradiant_quantum_trajectories.md"
+difficulty = "advanced"
+tasks = ["quantum-trajectories", "superradiance", "population-comparison"]
+runtime_class = "long"
+stochastic = true
+optional_dependencies = ["CairoMakie"]
+citation = "Mølmer, Castin, and Dalibard, J. Opt. Soc. Am. B 10, 524 (1993)"
+expected_outputs = ["docs/src/assets/example_figures/superradiant_quantum_trajectories.png"]

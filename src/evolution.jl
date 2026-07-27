@@ -61,14 +61,20 @@ function _check_evolution_scratch_aliases(w::EvolutionWorkspace,destination)
 end
 
 """
-    evolve!(dest, L, src, tspan; steps=256, parameters=nothing, workspace=nothing)
+    evolve!(dest, L, src, tspan; steps=256, parameters=nothing,
+            workspace=nothing, progress=false, on_event=nothing,
+            cancellation_token=nothing)
 
 Propagate PI coordinates using a preallocated three-scratch fixed-step RK4
 kernel. `L` may be a matrix, `MatrixFreeLiouvillian`, or `PIModel`. `dest` may
-alias `src`, but it must not alias active workspace scratch.
+alias `src`, but it must not alias active workspace scratch. Progress and
+cooperative cancellation are observed after each complete RK4 step. On
+cancel, [`OperationCancelled`](@ref) is thrown and `dest` contains the last
+fully completed step.
 """
 function evolve!(dest::AbstractVector,L0,src::AbstractVector,tspan;
-                 steps::Integer=256,parameters=nothing,workspace=nothing)
+                 steps::Integer=256,parameters=nothing,workspace=nothing,
+                 progress=false,on_event=nothing,cancellation_token=nothing)
     L=_evolution_liouvillian(L0);n=length(src)
     length(dest)==n||throw(DimensionMismatch("source and destination dimensions differ"))
     size(L)==(n,n)||throw(DimensionMismatch("Liouvillian and state dimensions differ"))
@@ -80,7 +86,12 @@ function evolve!(dest::AbstractVector,L0,src::AbstractVector,tspan;
     _check_evolution_workspace(w,n)
     _check_evolution_scratch_aliases(w,dest)
     dest===src||copyto!(dest,src);t=t0
-    for _ in 1:steps
+    progress_context=_prepare_progress(:evolve;
+        progress,on_event,cancellation_token)
+    _progress_emit!(progress_context,:started,0,steps;
+        message="RK4 evolution started")
+    _progress_throw_if_cancelled!(progress_context,0,steps)
+    for step_index in 1:steps
         _evolution_action!(w.k1,L,dest,t,parameters,w)
         copyto!(w.k2,w.k1)
         @. w.tmp=dest+(h/2)*w.k1
@@ -94,7 +105,15 @@ function evolve!(dest::AbstractVector,L0,src::AbstractVector,tspan;
         @. w.k2=w.k2+w.k1
         @. dest=dest+(h/6)*w.k2
         t+=h
+        if progress_context!==nothing
+            _progress_emit!(progress_context,:advanced,step_index,steps;
+                message="completed RK4 step $step_index",
+                metadata=(time=t,))
+            _progress_throw_if_cancelled!(progress_context,step_index,steps)
+        end
     end
+    _progress_emit!(progress_context,:completed,steps,steps;
+        message="RK4 evolution completed",metadata=(time=t,))
     dest
 end
 

@@ -93,6 +93,27 @@ value_at
 ## High-level algorithms and results
 
 ```@docs
+PIStudy
+PIStudyResult
+PIStudyReport
+PIDiagnosticIssue
+PIDoctorReport
+solve
+check
+explain
+explain_failure
+doctor
+result_state
+result_final_state
+result_times
+result_states
+result_values
+result_observables
+result_converged
+result_residual
+result_selected_algorithm
+result_stats
+result_diagnostics
 AbstractPIAlgorithm
 AutoAlgorithm
 DirectAlgorithm

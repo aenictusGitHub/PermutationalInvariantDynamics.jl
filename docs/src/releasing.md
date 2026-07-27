@@ -150,6 +150,11 @@ the release-metadata gate with
 name, dated package metadata, and that the workflow checkout is the commit
 targeted by the tag. The same tag then builds versioned documentation.
 
+The documentation build uses `/dev/` as the canonical URL on `main` and
+`/stable/` for a version-tag build. After TagBot and the documentation
+workflow finish, verify the version selector, the `stable` alias, and the
+canonical link in the deployed HTML before announcing the release.
+
 If General does not merge on the assigned date, stop the release, close or
 supersede the pending registration, update both date fields, and rerun the
 strict gate and hosted checks on the new commit. Never move a published tag.

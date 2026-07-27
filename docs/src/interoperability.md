@@ -55,7 +55,18 @@ memory controls.
 
 ## Tables.jl
 
-After `using Tables`, `ParameterScanResult` is a lazy row table. Large states,
+The dependency-free `result_table(result)` command supplies one common,
+column-oriented view of supported package results. After `using Tables`, its
+`ResultTable` output is a Tables-compatible column table:
+
+```julia
+using Tables
+table = result_table(solution)
+columns = Tables.columntable(table)
+```
+
+The existing direct adapters remain available. `ParameterScanResult` is a
+lazy row table. Large states,
 eigenvectors, and nested diagnostics are excluded from its implicit schema.
 `ComplexSpectrum`, `QuditHusimiData`, and `ConvergenceStudyResult` expose
 dependency-free numerical columns (including HEOM depth reports):
@@ -91,6 +102,8 @@ heatmap(spin_phase_space_data)  # theta, phi, density
 heatmap(schur_structure)        # input/output sector weights
 lines(convergence_report)       # refinement versus pairwise error
 lines(qudit_husimi_data)        # supplied point index versus Q
+lines(two_column_result_table)  # stored x/y columns
+scatter(spectrum_result)        # Re(lambda), Im(lambda)
 ```
 
 Conversions never run a solver or phase-space transform. Axis labels,
@@ -136,8 +149,13 @@ only inside the extension. Direct PI/nonmicroscopic terms and unevaluated
 schedules are rejected, and the resulting selected-order closure remains an
 approximation to check against exact PI moments.
 JLD2 and HDF5 activate portable checkpoint writers described in the
-[research utilities](research_utilities.md). All optional methods validate
-their schema and reject ambiguous or narrowing conversions.
+[research utilities](research_utilities.md), as well as optional
+`save_result` backends described in [Results, tables, plots, and
+exports](result_outputs.md). JLD2 retains the Julia-native result and detached
+columns. HDF5 stores normalized text columns plus exact PI-state checkpoint
+payloads, so heterogeneous scan metadata is not narrowed during export. The
+dependency-free reconstructing checkpoint and verified-experiment schemas
+remain the recommended long-lived formats.
 
 The repository's isolated optional-extension CI environment smoke-tests the
 Clarabel PPT-mixture solve, Makie conversions, QuantumOptics and

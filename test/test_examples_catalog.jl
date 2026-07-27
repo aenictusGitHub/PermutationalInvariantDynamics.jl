@@ -10,7 +10,7 @@ using PermutationalInvariantDynamics
 
     @test catalog["schema_version"] == 1
     entries = catalog["example"]
-    @test length(entries) >= 12
+    @test length(entries) == 42
 
     allowed_difficulties = Set(("beginner", "intermediate", "advanced"))
     allowed_runtime_classes = Set(("instant", "short", "medium", "long"))
@@ -103,9 +103,34 @@ using PermutationalInvariantDynamics
     @test length(ids) == length(unique(ids))
     @test length(scripts) == length(unique(scripts))
     @test length(guides) == length(unique(guides))
+    all_example_scripts=Set(
+        "examples/"*basename(path)
+        for path in readdir(joinpath(root,"examples");join=true)
+        if splitext(path)[2]==".jl")
+    @test Set(scripts)==all_example_scripts
     @test covered_difficulties == allowed_difficulties
     @test Set(("short", "medium", "long")) ⊆ covered_runtime_classes
     @test any(entry -> entry["stochastic"], entries)
     @test any(entry -> !entry["stochastic"], entries)
     @test any(entry -> haskey(entry, "model_recipe"), entries)
+
+    @test hasproperty(Models.find(task=:steady_state),:driven_qubits)
+    @test !hasproperty(Models.find(difficulty=:advanced),:driven_qubits)
+    @test Models.describe("driven_qubits").constructor===:driven_qubits
+    recipe_example=Models.example(:driven_qubits)
+    @test isfile(recipe_example.script)
+    @test isfile(recipe_example.guide)
+    @test occursin("--project=",string(recipe_example.command))
+    @test_throws ArgumentError Models.describe(:not_a_recipe)
+
+    gallery_builder=joinpath(root,"scripts","generate_example_gallery.jl")
+    gallery=joinpath(root,"docs","src","example_gallery.md")
+    @test isfile(gallery_builder)
+    @test isfile(gallery)
+    include(gallery_builder)
+    @test read(gallery,String)==
+          ExampleGalleryBuilder.render(catalog_path)
+    gallery_text=read(gallery,String)
+    @test occursin("pid-example-search",gallery_text)
+    @test count("class=\"pid-example-card\"",gallery_text)==length(entries)
 end

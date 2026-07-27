@@ -1128,6 +1128,7 @@ end
 
 function _scan_result(plan,points,restart_index,restart_seed,started;
                       execution,requested_indices,stopped=false,
+                      cancelled=false,
                       restart_signature=nothing,restart_eltype=nothing)
     saved_seed=plan.save_restart&&plan.continuation ?
         _copy_scan_seed(restart_seed) : nothing
@@ -1142,7 +1143,7 @@ function _scan_result(plan,points,restart_index,restart_seed,started;
         requested_indices=copy(requested_indices),continuation=plan.continuation,
         save_outputs=plan.save_outputs,save_vectors=plan.save_vectors,
         save_restart=plan.save_restart,memory_budget=plan.memory_budget,
-        budget_disabled=plan.budget_disabled,stopped,
+        budget_disabled=plan.budget_disabled,stopped,cancelled,
         successful=count(point->point.status===:success,points),
         failed=count(point->point.status===:failed,points),
         restart_signature,restart_eltype)
@@ -1150,11 +1151,18 @@ function _scan_result(plan,points,restart_index,restart_seed,started;
                         saved_seed,metadata)
 end
 
-function _serial_parameter_scan(plan,indices,workspace,callback,on_error)
+function _serial_parameter_scan(plan,indices,workspace,callback,on_error,
+                                progress_context)
     points=ParameterScanPoint[];started=time_ns();restart_index=0
     restart_seed=nothing;restart_signature=nothing;restart_eltype=nothing
-    stopped=false
+    stopped=false;cancelled=false;total=length(indices)
+    _progress_emit!(progress_context,:started,0,total;
+        message="parameter scan started",metadata=(execution=:serial,))
     for index in indices
+        if _progress_cancelled(progress_context)
+            stopped=true;cancelled=true
+            break
+        end
         parameter=plan.parameters[index];point_started=time_ns()
         point=nothing;seed=nothing;caught=nothing
         try
@@ -1173,6 +1181,11 @@ function _serial_parameter_scan(plan,indices,workspace,callback,on_error)
             restart_eltype=workspace.continuation_eltype
         end
         callback_stop=_scan_callback(callback,point)
+        event_cancelled=_progress_emit!(
+            progress_context,:advanced,length(points),total;
+            message="completed parameter index $index",
+            metadata=(index,parameter,status=point.status,
+                      converged=point.converged))
         if caught!==nothing
             on_error===:throw&&throw(caught)
             if on_error===:stop
@@ -1184,18 +1197,42 @@ function _serial_parameter_scan(plan,indices,workspace,callback,on_error)
             stopped=true
             break
         end
+        if event_cancelled
+            stopped=true;cancelled=true
+            break
+        end
+    end
+    if cancelled||_progress_cancelled(progress_context)
+        cancelled=true;stopped=true
+        _progress_cancel!(progress_context,length(points),total)
+    elseif stopped
+        _progress_emit!(progress_context,:stopped,length(points),total;
+            message="parameter scan stopped")
+    else
+        _progress_emit!(progress_context,:completed,length(points),total;
+            message="parameter scan completed")
     end
     _scan_result(plan,points,restart_index,restart_seed,started;
         execution=:serial,requested_indices=indices,stopped,
-        restart_signature,restart_eltype)
+        cancelled,restart_signature,restart_eltype)
 end
 
-function _threaded_parameter_scan(plan,indices,callback,on_error)
+function _threaded_parameter_scan(plan,indices,callback,on_error,
+                                  progress_context)
     plan.continuation&&throw(ArgumentError(
         "threaded scans cannot use path-dependent continuation; construct the plan with continuation=false"))
-    started=time_ns()
-    isempty(indices)&&return _scan_result(plan,ParameterScanPoint[],0,nothing,
-        started;execution=:threads,requested_indices=indices,stopped=false)
+    started=time_ns();total=length(indices)
+    _progress_emit!(progress_context,:started,0,total;
+        message="parameter scan started",metadata=(execution=:threads,))
+    if isempty(indices)||_progress_cancelled(progress_context)
+        cancelled=_progress_cancelled(progress_context)
+        cancelled ? _progress_cancel!(progress_context,0,total) :
+            _progress_emit!(progress_context,:completed,0,total;
+                message="parameter scan completed")
+        return _scan_result(plan,ParameterScanPoint[],0,nothing,
+            started;execution=:threads,requested_indices=indices,
+            stopped=cancelled,cancelled)
+    end
 
     # A fixed worker pool bounds live, unsaved outputs by O(nthreads) rather
     # than O(number of scan points). Each worker reuses its own Krylov scratch.
@@ -1239,7 +1276,7 @@ function _threaded_parameter_scan(plan,indices,callback,on_error)
 
     pending=Dict{Int,Tuple{ParameterScanPoint,Int}}()
     points=ParameterScanPoint[];next_position=1;finished_workers=0
-    accepting=true;stopped=false;deferred_error=nothing
+    accepting=true;stopped=false;cancelled=false;deferred_error=nothing
     while finished_workers<workers
         item=take!(results)
         if first(item)===:done
@@ -1260,6 +1297,14 @@ function _threaded_parameter_scan(plan,indices,callback,on_error)
             continue
         end
         _,position,point,worker_index=item
+        if accepting&&_progress_cancelled(progress_context)
+            accepting=false;stopped=true;cancelled=true
+            stop_requested[]=true
+            for (_,(_,pending_worker)) in pending
+                put!(acknowledgements[pending_worker],nothing)
+            end
+            empty!(pending)
+        end
         if !accepting
             put!(acknowledgements[worker_index],nothing)
             continue
@@ -1275,6 +1320,20 @@ function _threaded_parameter_scan(plan,indices,callback,on_error)
             end
             push!(points,plan.save_outputs ? ordered_point :
                 _scan_without_output(ordered_point))
+            event_cancelled=false
+            if accepting
+                try
+                    event_cancelled=_progress_emit!(
+                        progress_context,:advanced,length(points),total;
+                        message="completed parameter index $(ordered_point.index)",
+                        metadata=(index=ordered_point.index,
+                                  parameter=ordered_point.parameter,
+                                  status=ordered_point.status,
+                                  converged=ordered_point.converged))
+                catch error
+                    deferred_error=error;accepting=false;stopped=true
+                end
+            end
             if accepting&&ordered_point.status===:failed&&on_error!==:record
                 accepting=false;stopped=true
                 if on_error===:throw
@@ -1283,6 +1342,8 @@ function _threaded_parameter_scan(plan,indices,callback,on_error)
                 end
             elseif accepting&&callback_stop
                 accepting=false;stopped=true
+            elseif accepting&&event_cancelled
+                accepting=false;stopped=true;cancelled=true
             end
             put!(acknowledgements[ordered_worker],nothing)
             next_position+=1
@@ -1300,14 +1361,25 @@ function _threaded_parameter_scan(plan,indices,callback,on_error)
     end
     foreach(fetch,tasks)
     deferred_error===nothing||throw(deferred_error)
+    if cancelled||_progress_cancelled(progress_context)
+        cancelled=true;stopped=true
+        _progress_cancel!(progress_context,length(points),total)
+    elseif stopped
+        _progress_emit!(progress_context,:stopped,length(points),total;
+            message="parameter scan stopped")
+    else
+        _progress_emit!(progress_context,:completed,length(points),total;
+            message="parameter scan completed")
+    end
     _scan_result(plan,points,0,nothing,started;
-        execution=:threads,requested_indices=indices,stopped)
+        execution=:threads,requested_indices=indices,stopped,cancelled)
 end
 
 """
     parameter_scan(plan; workspace=ParameterScanWorkspace(), callback=nothing,
                    indices=nothing, execution=:serial, on_error=:stop,
-                   max_points=nothing)
+                   max_points=nothing, progress=false, on_event=nothing,
+                   cancellation_token=nothing)
 
 Execute a prepared parameter scan. Serial continuation warm-starts compatible
 neighbouring points and reuses Krylov storage. `callback(point)` is invoked in
@@ -1332,11 +1404,19 @@ remaker, and diagnostic must themselves be thread safe. Ordered callbacks are
 delivered after the parallel calculations. For multi-process execution, run
 disjoint `indices` on workers and combine their checkpoint-neutral results
 with [`merge_parameter_scan_results`](@ref).
+
+Set `progress=true` for textual updates, pass an `IO` to `progress` to
+redirect them, or use `on_event(event)` for structured [`ProgressEvent`](@ref)
+records. The event callback may return `:cancel`, and a shared
+[`CancellationToken`](@ref) may be cancelled from another task. Cancellation
+is observed between parameter points and returns a resumable partial result
+with `result.metadata.cancelled == true`.
 """
 function _parameter_scan(plan::ParameterScanPlan;
         workspace::ParameterScanWorkspace=ParameterScanWorkspace(),
         callback=nothing,indices=nothing,execution::Symbol=:serial,
         on_error::Symbol=:stop,max_points=nothing,
+        progress=false,on_event=nothing,cancellation_token=nothing,
         preserve_continuation_seed::Bool=false)
     execution in _SCAN_EXECUTIONS||throw(ArgumentError(
         "execution must be :serial or :threads"))
@@ -1348,15 +1428,20 @@ function _parameter_scan(plan::ParameterScanPlan;
             "continuation requires a consecutive increasing index range"))
     end
     preserve_continuation_seed||_scan_clear_seed!(workspace)
+    progress_context=_prepare_progress(:parameter_scan;
+        progress,on_event,cancellation_token)
     execution===:serial ?
-        _serial_parameter_scan(plan,selected,workspace,callback,on_error) :
-        _threaded_parameter_scan(plan,selected,callback,on_error)
+        _serial_parameter_scan(plan,selected,workspace,callback,on_error,
+            progress_context) :
+        _threaded_parameter_scan(plan,selected,callback,on_error,
+            progress_context)
 end
 
 """
     parameter_scan(plan; workspace=ParameterScanWorkspace(), callback=nothing,
                    indices=nothing, execution=:serial, on_error=:stop,
-                   max_points=nothing)
+                   max_points=nothing, progress=false, on_event=nothing,
+                   cancellation_token=nothing)
 
 Execute a prepared parameter scan. Serial execution reuses compatible Krylov
 storage and, within this invocation, warm-starts each continuation point from
@@ -1372,9 +1457,11 @@ restart retention controls.
 function parameter_scan(plan::ParameterScanPlan;
         workspace::ParameterScanWorkspace=ParameterScanWorkspace(),
         callback=nothing,indices=nothing,execution::Symbol=:serial,
-        on_error::Symbol=:stop,max_points=nothing)
+        on_error::Symbol=:stop,max_points=nothing,
+        progress=false,on_event=nothing,cancellation_token=nothing)
     _parameter_scan(plan;workspace,callback,indices,execution,on_error,
-        max_points,preserve_continuation_seed=false)
+        max_points,progress,on_event,cancellation_token,
+        preserve_continuation_seed=false)
 end
 
 function _scan_validate_previous(plan,previous)
@@ -1457,10 +1544,16 @@ function resume_parameter_scan(plan::ParameterScanPlan,
             prior_restart_eltype=previous.metadata.restart_eltype
         end
     end
-    isempty(missing)&&return ParameterScanResult(plan.task,copy(plan.parameters),
-        sort(retained;by=point->point.index),prior_restart_index,
-        _copy_scan_seed(prior_restart_seed),
-        merge(previous.metadata,(resumed=true,)))
+    if isempty(missing)
+        completed_points=sort(retained;by=point->point.index)
+        completed_metadata=merge(previous.metadata,(
+            resumed=true,stopped=false,cancelled=false,
+            successful=count(point->point.status===:success,completed_points),
+            failed=count(point->point.status===:failed,completed_points)))
+        return ParameterScanResult(plan.task,copy(plan.parameters),
+            completed_points,prior_restart_index,
+            _copy_scan_seed(prior_restart_seed),completed_metadata)
+    end
     extension=_parameter_scan(plan;workspace,indices=missing,kwargs...,
         preserve_continuation_seed=true)
     base=ParameterScanResult(plan.task,copy(plan.parameters),retained,
@@ -1469,7 +1562,8 @@ function resume_parameter_scan(plan::ParameterScanPlan,
          continuation=plan.continuation,save_outputs=plan.save_outputs,
          save_vectors=plan.save_vectors,save_restart=plan.save_restart,
          memory_budget=plan.memory_budget,budget_disabled=plan.budget_disabled,
-         stopped=false,successful=count(point->point.status===:success,retained),
+         stopped=false,cancelled=false,
+         successful=count(point->point.status===:success,retained),
          failed=count(point->point.status===:failed,retained),
          restart_signature=prior_restart_signature,
          restart_eltype=prior_restart_eltype))
@@ -1522,6 +1616,8 @@ function _merge_parameter_scan_results(plan::ParameterScanPlan,results;
         save_vectors=plan.save_vectors,save_restart=plan.save_restart,
         memory_budget=plan.memory_budget,budget_disabled=plan.budget_disabled,
         stopped=length(points)<length(plan.parameters),
+        cancelled=any(result->hasproperty(result.metadata,:cancelled)&&
+                              result.metadata.cancelled,results),
         successful=count(point->point.status===:success,points),
         failed=count(point->point.status===:failed,points),
         restart_signature,restart_eltype)

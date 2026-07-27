@@ -3,7 +3,10 @@
 This browser-only assistant turns a small, explicit subset of LaTeX model
 notation into a commented Julia program for PI stationary states, streamed
 observable dynamics, selected Liouvillian spectra, or certification-aware gap
-estimation. It supports an ordinary PI ensemble and two finite-cutoff
+estimation. Selected deterministic stationary and spectral calculations for
+ordinary PI or identical-local-pseudomode models can also be generated as a
+typed one- or multi-parameter scan. The assistant supports an ordinary PI
+ensemble and two finite-cutoff
 Markovian embeddings: one identical pseudomode per constituent or one
 pseudomode shared by the whole ensemble. It uses physical package terms,
 complete PI bases, prepared observable geometry, factorized composite
@@ -14,8 +17,8 @@ The assistant deliberately does **not** send formulas to a server or a
 language model. Translation is deterministic and restricted: unsupported or
 ambiguous notation produces an error instead of guessed physics.
 Besides a single Julia file, it can download a dependency-free experiment
-bundle containing the program, a normalized JSON manifest, and a plain-text
-run guide.
+bundle containing the program, a normalized JSON manifest, a plain-text run
+guide, and a Pluto notebook.
 
 ```@raw html
 <div id="pid-code-generator">
@@ -453,6 +456,30 @@ run guide.
         </span>
       </label>
 
+      <label class="pid-check-field pid-scan-toggle">
+        <input id="pid-scan-enabled" type="checkbox">
+        <span>Generate a parameter scan</span>
+      </label>
+
+      <fieldset id="pid-scan-section"
+                class="pid-subpanel" hidden>
+        <legend>Parameter scan axes</legend>
+        <div id="pid-scan-axes" class="pid-scan-axis-list"></div>
+        <div class="pid-button-row">
+          <button id="pid-add-scan-axis" type="button"
+                  class="pid-button pid-button-quiet">
+            + Scan axis
+          </button>
+        </div>
+        <span class="pid-hint">
+          Each axis names one model parameter and uses an inclusive linear
+          range. Multiple axes form a Cartesian grid; the first listed axis
+          changes fastest in the generated result. Scans currently cover the
+          direct deterministic stationary and selected-spectrum routes for
+          ordinary PI and identical-local-pseudomode models.
+        </span>
+      </fieldset>
+
       <label class="pid-field">
         <span class="pid-label">Memory budget, MiB</span>
         <input id="pid-memory-budget" type="number"
@@ -473,10 +500,22 @@ run guide.
       <div class="pid-panel-heading">
         <h2 id="pid-output-heading">2. Review and run</h2>
         <div class="pid-output-actions">
+          <button id="pid-load-manifest" type="button"
+                  class="pid-button pid-button-quiet">Load manifest</button>
+          <input id="pid-manifest-file" type="file"
+                 accept=".json,application/json" hidden>
+          <button id="pid-copy-share-link" type="button"
+                  class="pid-button pid-button-quiet">Copy share link</button>
+          <button id="pid-undo-model" type="button"
+                  class="pid-button pid-button-quiet" disabled>Undo</button>
+          <button id="pid-reset-model" type="button"
+                  class="pid-button pid-button-quiet">Reset</button>
           <button id="pid-copy-code" type="button"
                   class="pid-button pid-button-quiet">Copy</button>
           <button id="pid-download-code" type="button"
                   class="pid-button pid-button-quiet">Download .jl</button>
+          <button id="pid-download-pluto" type="button"
+                  class="pid-button pid-button-quiet">Download Pluto</button>
           <button id="pid-download-bundle" type="button"
                   class="pid-button pid-button-quiet">
             Download experiment bundle
@@ -618,6 +657,76 @@ before constructing the channel-resolved plan and pass the same budget to
 predictable seed, sampling, accumulator, and result arrays. Allocator metadata
 and RNG implementation storage remain documented exclusions.
 
+## Parameter scans
+
+The scan checkbox adds a parameter grid to a supported calculation; it does
+not create an untyped loop around the generated program. Every axis must name
+one scalar that already occurs in the model. Its start and stop are finite,
+distinct endpoints of an **inclusive linear range**, and its point count is an
+integer of at least two. Descending ranges are allowed. Axis names are parsed
+by the same restricted LaTeX grammar as the model, so for example
+`\gamma_{\downarrow}` resolves to the same normalized parameter in both
+places. Duplicate axes and a Cartesian grid above 100,000 points are rejected
+before code generation. The scalar formulas are evaluated at every grid point
+in the browser to catch nonfinite expressions, negative jump rates, negative
+mode damping, or a negative thermal occupation before Julia is run.
+
+Several axes produce their Cartesian product. Ordering is explicit and stable:
+the **first listed axis changes fastest**, followed by the second, and so on.
+This convention is recorded in the downloaded JSON manifest together with
+each normalized parameter name, range, and point count. A numerical assignment
+for a scanned parameter supplies no hidden extra point: the generated scan
+overrides it with the axis value at every grid point. All other assignments
+remain fixed.
+
+For example, axes `\Omega: 0 → 1` with 21 points and
+`\gamma: 0.01 → 0.2` with 11 points generate 231 points. Consecutive rows vary
+`\Omega`; after its 21 values, `\gamma` advances once.
+
+Generated scan programs use the package's `ParameterScanPlan` and one
+`ParameterScanWorkspace`, with serial continuation and a matrix-free Krylov
+route where applicable. For an ordinary PI model whose scanned parameters
+occur only in scalar jump rates, the assistant emits the
+`CompiledPIModelFamily` fast path: Schur geometry and channel kernels are
+lowered once, then only the selected rates are specialized. Other supported
+scans emit a shared-basis model builder, and the identical-local-pseudomode
+route also prepares its `PISupersite` once. Thus a converged stationary state
+seeds the next grid point instead of restarting blindly. The Julia-side plan
+accounts for its workspace, continuation seed, diagnostics, and retained
+output against the same explicit memory budget used elsewhere by the
+assistant. It never reduces the requested grid or silently changes the
+calculation to fit.
+
+The currently generated combinations are deliberately narrower than the
+single-point table above:
+
+| Scanned calculation | Ordinary PI | Identical local modes | One shared mode |
+|:--|:--|:--|:--|
+| Deterministic stationary state | Supported | Supported | Not supported |
+| Deterministic stationary observable | Supported | Supported | Not supported |
+| Selected Liouvillian spectrum | Supported | Supported | Not supported |
+
+For stationary-observable maps, the generated diagnostic stores the requested
+scalar without retaining every density operator. A stationary-state scan
+retains the requested states, and a spectral scan retains the selected
+eigenvalues but not Ritz vectors. The program exposes the complete
+`scan_result` and tabular `scan_rows`. Every row carries the normalized
+parameter point, convergence status, and residual metadata. Observable and
+spectrum rows also include their compact diagnostic/output payload; stationary
+density operators remain in `scan_result` only so the tabular adapter does not
+implicitly expose a large state field. Use
+[`parameter_scan_rows`](parameter_scans.md) and the documented table/streaming
+helpers to persist or post-process larger studies.
+
+Scans currently reject quantum trajectories, verified-experiment workflows,
+time dynamics, gap certification, optional post-stationary analyses, and the
+shared-global-pseudomode architecture. These are explicit validation errors:
+the assistant neither emits an ad hoc loop nor approximates them with a
+different route. For those studies, start from the generated single-point
+program and build a deliberate package-level
+[`ParameterScanPlan`](parameter_scans.md) once the required source and output
+contracts are known.
+
 ## Stationary states and optional analyses
 
 For a deterministic stationary calculation, ordinary and local-pseudomode
@@ -750,15 +859,43 @@ julia --threads=auto --project=. generated_pi_trajectory_dynamics_observable.jl
 
 The generated filename records the architecture, method where applicable, and
 calculation. For example, a selected spectrum uses
-`generated_pi_liouvillian_spectrum.jl`.
+`generated_pi_liouvillian_spectrum.jl`; enabling its parameter grid produces
+`generated_pi_liouvillian_spectrum_scan.jl`.
 
-“Download experiment bundle” creates three local files with a common stem:
+“Download experiment bundle” creates four local files with a common stem:
 
 - the executable `.jl` program;
 - a machine-readable `.json` manifest containing the normalized typed model,
-  calculation, parameters, representation, resource lower bound, and
-  warnings;
-- a `_README.txt` with the exact run command and interpretation caveats.
+  calculation, parameters, optional ordered scan axes, representation,
+  resource lower bound, and warnings;
+- a `_README.txt` with the exact run command and interpretation caveats;
+- a `_pluto.jl` notebook containing the same generated program in one
+  auditable Pluto cell.
+
+## Reopen, share, and edit a generated model
+
+Every successful generation is saved in browser-local storage. Returning to
+the page on the same browser restores that normalized manifest; no formula is
+sent over the network. **Reset** returns to the starter preset and **Undo**
+restores the preceding successfully generated model.
+
+Use **Load manifest** to reopen a downloaded model-assistant JSON file. The
+loaded data is converted back to the typed form and passed through the same
+whitelist parser and physical validation as hand-entered input. Loading never
+evaluates JavaScript, Julia, or arbitrary expressions from the JSON file.
+
+**Copy share link** puts the normalized manifest in the URL fragment. URL
+fragments are not part of the HTTP request, so the documentation server does
+not receive that model from normal browser navigation. The complete fragment
+can nevertheless be read by browser extensions, screenshots, copied logs, or
+anyone receiving the link; do not use it for confidential model parameters.
+Large configurations may also exceed browser or messaging-service URL limits,
+in which case share the JSON manifest instead.
+
+**Download Pluto** emits a dependency-free Pluto notebook with a short
+explanatory Markdown cell and the same commented Julia program in one code
+cell. The notebook deliberately contains no hidden execution, remote service,
+or interactive widget dependency.
 
 ## License of generated artifacts
 
@@ -774,11 +911,11 @@ The JSON manifest is descriptive metadata: it records normalized user model
 inputs and generated resource information, but embeds no Julia or JavaScript
 program template. It does not receive a source-code header. The downloaded
 `_README.txt` repeats both points so the licensing status remains explicit
-when browsers save the three bundle files separately. Users remain responsible
+when browsers save the four bundle files separately. Users remain responsible
 for rights in formulas, comments, data, or other material they supply to the
 assistant.
 
 No archive library or remote service is used. Some browsers ask once for
 permission to download multiple files from the page; allow it to receive all
-three artifacts. The JSON manifest is descriptive and contains no executable
+four artifacts. The JSON manifest is descriptive and contains no executable
 JavaScript or Julia expression beyond the separately reviewed program.

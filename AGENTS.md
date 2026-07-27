@@ -194,6 +194,8 @@ The ordinary prepared workflow is:
 
 Related workflows are:
 
+- Guided high-level study:
+  `source + task -> PIStudy -> explain/check -> solve -> PIStudyResult`.
 - Mean field:
   `(N,d,terms) -> MeanFieldPlan -> MeanFieldWorkspace -> one-site solver`.
 - Certified populations:
@@ -226,13 +228,17 @@ Related workflows are:
 - Ideal hierarchy control:
   `local/PI unitary or Platonic constructor -> HierarchyPulseSequence -> HEOM/HOPS`.
 
-Prefer `compile`, `solve_dynamics`, `stationary_state`,
+Prefer `PIStudy`/`solve`, `compile`, `solve_dynamics`, `stationary_state`,
 `liouvillian_spectrum`, `diagnostics`, and `recommend_solver` in research
 scripts. Lower-level `liouvillian`, `steady_state`, `apply!`, and Krylov APIs
 are advanced interfaces. `docs/src/api_tiers.md` defines the intended stability
 tier. `Workflow` is the curated stable namespace and must alias parent-module
 bindings rather than wrap them. `Models` owns convention-tested recipes and
 detached catalog metadata; examples should not fork their normalizations.
+Guided checks never solve or materialize a source. Treat `PIDiagnosticIssue`
+codes as the machine-readable contract; user interfaces must not parse their
+human messages. `PIStudyResult.raw` always retains the original high-level
+result, and `result_*` accessors never reconstruct missing output.
 
 The static GitHub Pages model assistant lives in
 `docs/src/model_code_generator.md` with dependency-free parser/emitter and UI
@@ -245,7 +251,11 @@ generated Julia syntax in `test/test_model_code_generator.jl`. The direct and
 verified-experiment workflow selectors must reject unsupported combinations;
 verified output lowers through `PIExperiment`, `explain_experiment`, and
 `verified_solve`. Browser downloads contain Julia source, a normalized JSON
-manifest, and a README, with no executable deserialization. Its structured
+manifest, a README, and a Pluto notebook, with no executable deserialization.
+Loading a manifest or URL fragment must reconstruct the typed configuration
+and pass it through the same parser, physical checks, and resource checks as
+manual input. Local autosave and share links remain browser-only and must not
+contact a service. Its structured
 architecture selector covers an ordinary PI ensemble, identical local
 pseudomodes through `PISupersite`, and one shared pseudomode through
 `GlobalPseudomodeModel`. Its typed calculation selector covers stationary
@@ -264,6 +274,18 @@ values are not a certified global gap, and generated gap code must expose its
 certification flags. Arbitrary composite tensor LaTeX remains unsupported
 until it has a typed factor-and-cross-term schema; never approximate it with
 free-form `kron` parsing.
+
+The assistant's typed scan overlay supports direct deterministic stationary
+states, stationary observables, and selected spectra for ordinary PI and
+identical-local-pseudomode models. Axes are inclusive linear ranges over
+existing model parameters; their Cartesian product is stored with the first
+axis varying fastest. Generated scans use `ParameterScanPlan`, one task-owned
+workspace, serial continuation, and a scalar-rate `CompiledPIModelFamily` fast
+path when its stricter contract applies. Validate every finite grid point
+before emission. Reject trajectories, dynamics, certified gaps, verified
+experiments, optional post-stationary analyses, and shared-global-pseudomode
+scans until each has a native typed source/output contract; never emit an ad
+hoc loop or silently change the calculation.
 
 `PIModel.terms` is a concrete immutable tuple. `LiouvillianPlan` owns prepared
 read-only blocks, contractions, and rate descriptions. `LiouvillianWorkspace`
@@ -310,7 +332,10 @@ pattern.
   those traits instead of adding consumer-local `isa` cascades.
   `solver_algorithms.jl` owns
   canonical solver symbols and compatibility aliases. `result_protocol.jl`
-  owns explicit physical-time result lookup.
+  owns explicit physical-time result lookup. `progress.jl` owns dependency-
+  free progress events and cooperative cancellation. `result_outputs.jl` owns
+  compact summaries, dependency-free result tables, and the common export dispatch;
+  optional storage and plotting methods remain in extensions.
 - Krylov, spectra, and symmetries: `krylov.jl`, `krylov_extensions.jl`,
   `spectra.jl`, `evans.jl`, `symmetries.jl`, and
   `restricted_symmetries.jl`, and `automatic_symmetries.jl`.
@@ -321,8 +346,9 @@ pattern.
   `research_utilities.jl`.
 - Deterministic dynamics and studies: `sciml.jl`, `evolution.jl`,
   `meanfield.jl`, `floquet.jl`, `response.jl`, `correlations.jl`,
-  `highlevel.jl`, `scans.jl`, `convergence.jl`, `experiments.jl`,
-  `inference.jl`, `model_zoo.jl`, and `workflow_namespace.jl`.
+  `highlevel.jl`, `guided_studies.jl`, `scans.jl`, `convergence.jl`,
+  `experiments.jl`, `inference.jl`, `model_zoo.jl`, and
+  `workflow_namespace.jl`.
 - Non-Markovian and stochastic systems: `pseudomodes.jl`,
   `global_pseudomodes.jl`, `composite.jl`, `heom.jl`, `hops.jl`,
   `hierarchy_pulses.jl`, `bath_fitting.jl`, `trajectories.jl`,
@@ -426,6 +452,12 @@ BLAS threading. The workspace is guarded against concurrent reuse.
 
 ### Resource safeguards
 
+- Long-running high-level workflows use dependency-free `ProgressEvent`
+  records and cooperative `CancellationToken`s. Observe cancellation only at
+  a documented safe unit boundary; never asynchronously interrupt a kernel
+  while it owns mutable scratch. A workflow that cannot return a complete
+  partial-result type raises `OperationCancelled` and documents the state of
+  any caller-owned destination.
 - Commands that can hide quadratic workspaces or histories use one 512 MiB
   default `memory_budget`; `Inf` is the only explicit opt-out.
 - Validate before the guarded allocation. An explicit request must fail rather
@@ -629,12 +661,29 @@ Numerical extraction and rendering are separate layers. Rendering an existing
 result must not trigger a solve, matrix-free probe, phase-space transform, or
 full-Hilbert expansion.
 
+`summarize` and `result_table` likewise inspect retained output only. Compact
+tables exclude states, population vectors, eigenvectors, and nested
+trajectory histories unless explicitly requested; an intrinsically
+multiaxis output must raise instead of being flattened ambiguously.
+Dependency-free `.pidrun` records are published from a same-filesystem staging
+directory and retain exact PI states through the checkpoint schema. Optional
+JLD2/HDF5 exports must state their portability limits and never narrow
+heterogeneous numerical output silently. User metadata must not shadow schema,
+package, result-type, or summary fields.
+
 Every paired example guide embeds a curated expected-output PNG or SVG from
 `docs/src/assets/example_figures/`. The source script's numerical assertions
 are the regression; snapshots are illustrative and are never regenerated by
 CI or Documenter. Update a snapshot only from a successful default run,
 review it visually, keep stochastic seeds and convergence caveats explicit,
 and commit no generated PDF.
+
+`examples/catalog.toml` is the complete machine-readable inventory of paired
+scripts and guides. `scripts/generate_example_gallery.jl` deterministically
+renders the tracked browser-side gallery from that catalog; the catalog test
+must fail when a runnable script is missing, duplicated, or points to an
+absent reviewed output. `Models.find`, `Models.describe`, and `Models.example`
+are read-only discovery helpers and never run or mutate an example.
 
 ### Schur blocks
 

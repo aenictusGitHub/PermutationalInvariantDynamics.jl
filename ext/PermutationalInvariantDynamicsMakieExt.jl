@@ -87,4 +87,24 @@ function Makie.convert_arguments(::Type{<:Makie.Lines},
     (x,y)
 end
 
+Makie.plottype(::PID.ResultTable)=Makie.Lines
+function Makie.convert_arguments(::Type{<:Makie.Lines},
+                                 table::PID.ResultTable)
+    names=propertynames(table.columns)
+    length(names)==2||throw(ArgumentError(
+        "lines(result_table) requires exactly two columns; select the " *
+        "desired x and y columns explicitly for a wider table"))
+    x=getproperty(table.columns,names[1])
+    y=getproperty(table.columns,names[2])
+    eltype(x)<:Number&&eltype(y)<:Number||throw(ArgumentError(
+        "lines(result_table) requires two numeric columns"))
+    (x,y)
+end
+
+Makie.plottype(::PID.SpectrumResult)=Makie.Scatter
+function Makie.convert_arguments(::Type{<:Makie.Scatter},
+                                 spectrum::PID.SpectrumResult)
+    _spectrum_coordinates(spectrum.values)
+end
+
 end

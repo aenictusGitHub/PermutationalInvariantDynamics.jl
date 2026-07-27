@@ -23,6 +23,11 @@ does not construct the full `d^N` Hilbert space in production algorithms.
 General PI density operators may occupy **all** Schur sectors; they are not
 restricted to the fully symmetric subspace.
 
+!!! tip "New here?"
+    Run the [90-second quickstart](quickstart.md). If you are deciding between
+    a PI ensemble, composite factors, local or shared pseudomodes, HEOM, and
+    HOPS, use the [architecture chooser](choosing_workflow.md) first.
+
 ## Installation
 
 Until registration, install the package directly from its
@@ -58,8 +63,19 @@ The package supports Julia 1.10 and later.
 
 ## Start here
 
-For a first calculation, follow [Getting started: from a model to a
-solution](getting_started.md). It explains, line by line, how to:
+Choose the shortest path that matches the task:
+
+- [90-second quickstart](quickstart.md): explain and solve a tested model
+  through `PIStudy`.
+- [Model code generator](model_code_generator.md): enter supported LaTeX
+  ingredients and download a commented Julia script, manifest, README, and
+  Pluto notebook.
+- [Searchable example gallery](example_gallery.md): filter every runnable
+  example by task, difficulty, runtime, and stochastic/deterministic method.
+- [Getting started: from a model to a solution](getting_started.md): translate
+  a custom equation term by term and learn the representation conventions.
+
+The detailed getting-started chapter explains, line by line, how to:
 
 1. decide whether PI symmetry applies;
 2. choose a basis and local-state convention;
@@ -81,7 +97,8 @@ free-form tensor code. Compatible state and dynamics calculations can use
 deterministic prepared solvers or streaming quantum-trajectory statistics.
 For supported deterministic PI calculations it can instead emit a typed
 `PIExperiment`, show the resource/representation plan, verify the result, and
-download the Julia program with a normalized JSON manifest and README.
+download the Julia program with a normalized JSON manifest, README, and Pluto
+notebook.
 
 ## Five-minute preview
 

@@ -528,7 +528,8 @@ end
     solve_dynamics(x, rho0, tspan; algorithm=:auto, saveat=nothing,
                    steps_per_interval=64, parameters=nothing,
                    observables=nothing, save_states=true,
-                   memory_budget=512*1024^2)
+                   memory_budget=512*1024^2, progress=false,
+                   on_event=nothing, cancellation_token=nothing)
 
 Compile a model once when needed and propagate with the allocation-conscious
 fixed-step RK4 path by default. `algorithm=:expv` (or
@@ -551,16 +552,27 @@ the selected RK4 or Krylov exponential workspace, task-owned source-action
 scratch, saved states, sampled times, prepared observables, and scalar
 observable series. It throws when the known peak exceeds `memory_budget`; use
 `save_states=false` to stream output or `memory_budget=Inf` to opt out.
+Progress and cooperative cancellation are observed at saved-time boundaries.
+Cancellation raises [`OperationCancelled`](@ref), and no partially initialized
+result is returned.
 """
 function solve_dynamics(x,rho0::PIState,tspan;saveat=nothing,
                         algorithm=:auto,
                         steps_per_interval::Integer=64,parameters=nothing,
                         observables=nothing,save_states::Bool=true,
-                        memory_budget=_DEFAULT_HIGHLEVEL_MEMORY_BUDGET)
+                        memory_budget=_DEFAULT_HIGHLEVEL_MEMORY_BUDGET,
+                        progress=false,on_event=nothing,
+                        cancellation_token=nothing)
     steps_per_interval>0||throw(ArgumentError("steps_per_interval must be positive"))
     requested_algorithm,algorithm_options=
         _dynamics_algorithm_options(algorithm)
     ts=_saved_times(tspan,saveat;memory_budget)
+    progress_context=_prepare_progress(:solve_dynamics;
+        progress,on_event,cancellation_token)
+    progress_total=max(length(ts)-1,0)
+    _progress_emit!(progress_context,:started,0,progress_total;
+        message="dynamics solve started")
+    _progress_throw_if_cancelled!(progress_context,0,progress_total)
     named_observables=observables===nothing ? Pair[] :
         _named_observables(observables)
     observable_series=length(named_observables)
@@ -596,29 +608,57 @@ function solve_dynamics(x,rho0::PIState,tspan;saveat=nothing,
     end
     _solve_dynamics_output(observables,source,rho0,ts;
         steps_per_interval,parameters,save_states,
-        algorithm=selected_algorithm,algorithm_options)
+        algorithm=selected_algorithm,algorithm_options,progress_context)
 end
 
 function _solve_dynamics_output(::Nothing,source,rho0,ts;
                                 steps_per_interval,parameters,save_states,
-                                algorithm,algorithm_options)
+                                algorithm,algorithm_options,progress_context)
     save_states||throw(ArgumentError(
         "save_states=false requires at least one observable"))
-    if algorithm===:rk4
-        states=time_evolution(source,rho0,ts;
-            steps_per_interval=steps_per_interval,parameters=parameters)
-        return DynamicsResult(ts,states,:rk4)
-    end
-    current,operator,workspace=_highlevel_expv_setup(
-        source,rho0,algorithm_options)
+    total=max(length(ts)-1,0)
+    current=copy(rho0)
     states=Vector{typeof(current)}(undef,length(ts))
     states[1]=copy(current)
-    for time_index in 2:length(ts)
-        _highlevel_expv_interval!(current,operator,workspace,
-            ts[time_index]-ts[time_index-1],algorithm_options)
-        states[time_index]=copy(current)
+    if algorithm===:rk4
+        prepared=_evolution_liouvillian(source)
+        workspace=EvolutionWorkspace(prepared,current)
+        for time_index in 2:length(ts)
+            ts[time_index]==ts[time_index-1]||evolve!(
+                current,prepared,current,
+                (ts[time_index-1],ts[time_index]);
+                steps=steps_per_interval,parameters,workspace)
+            states[time_index]=copy(current)
+            completed=time_index-1
+            if progress_context!==nothing
+                _progress_emit!(progress_context,:advanced,completed,total;
+                    message="saved dynamics output $time_index",
+                    metadata=(time=ts[time_index],output_index=time_index))
+                _progress_throw_if_cancelled!(
+                    progress_context,completed,total)
+            end
+        end
+    else
+        current,operator,workspace=_highlevel_expv_setup(
+            source,rho0,algorithm_options)
+        states[1]=copy(current)
+        for time_index in 2:length(ts)
+            _highlevel_expv_interval!(current,operator,workspace,
+                ts[time_index]-ts[time_index-1],algorithm_options)
+            states[time_index]=copy(current)
+            completed=time_index-1
+            if progress_context!==nothing
+                _progress_emit!(progress_context,:advanced,completed,total;
+                    message="saved dynamics output $time_index",
+                    metadata=(time=ts[time_index],output_index=time_index))
+                _progress_throw_if_cancelled!(
+                    progress_context,completed,total)
+            end
+        end
     end
-    DynamicsResult(ts,states,:expv)
+    _progress_emit!(progress_context,:completed,total,total;
+        message="dynamics solve completed",metadata=(time=last(ts),))
+    DynamicsResult(ts,states,algorithm)
 end
 
 _dynamics_observable_buffers(::Tuple{},current,nsamples)=()
@@ -646,7 +686,7 @@ end
 
 function _solve_dynamics_output(observables,source,rho0,ts;
                                 steps_per_interval,parameters,save_states,
-                                algorithm,algorithm_options)
+                                algorithm,algorithm_options,progress_context)
     ops=_prepare_streaming_observables(rho0.basis,observables;
                                        require_hermitian=false)
     prepared=_evolution_liouvillian(source)
@@ -662,6 +702,7 @@ function _solve_dynamics_output(observables,source,rho0,ts;
     save_states&&(states[1]=copy(current))
     buffers=_dynamics_observable_buffers(ops,current,length(ts))
     _record_dynamics_observables!(buffers,ops,current,1)
+    total=max(length(ts)-1,0)
     for time_index in 2:length(ts)
         if algorithm===:rk4
             ts[time_index]==ts[time_index-1]||evolve!(
@@ -675,7 +716,16 @@ function _solve_dynamics_output(observables,source,rho0,ts;
         end
         save_states&&(states[time_index]=copy(current))
         _record_dynamics_observables!(buffers,ops,current,time_index)
+        completed=time_index-1
+        if progress_context!==nothing
+            _progress_emit!(progress_context,:advanced,completed,total;
+                message="saved dynamics output $time_index",
+                metadata=(time=ts[time_index],output_index=time_index))
+            _progress_throw_if_cancelled!(progress_context,completed,total)
+        end
     end
+    _progress_emit!(progress_context,:completed,total,total;
+        message="dynamics solve completed",metadata=(time=last(ts),))
     values=_dynamics_observable_dictionary(ops,buffers)
     S=Union{Nothing,Vector{typeof(current)}}
     DynamicsStreamResult{eltype(ts),S,typeof(values),Symbol}(

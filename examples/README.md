@@ -25,8 +25,13 @@ and convergence check beside any parameter changes.
 `recommend_solver`, reuse a compiled model or family, retain only requested
 observables, and create one task-owned workspace per concurrent solve.
 
-`catalog.toml` is a curated navigation layer, not the exhaustive inventory;
-the table below remains the complete script-and-guide index.
+`catalog.toml` is the canonical complete machine-readable inventory; its test
+fails if any runnable `.jl` script is omitted. The
+[searchable online gallery](../docs/src/example_gallery.md) is generated from
+it. The table below is the corresponding human-readable script-and-guide
+index. For built-in convention-tested recipes, `Models.find`,
+`Models.describe`, and `Models.example` provide the same discovery workflow
+from Julia without running a script.
 
 ## Recommended workflow
 

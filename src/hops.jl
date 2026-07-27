@@ -1401,7 +1401,8 @@ end
 """
     hops_trajectory(plan, initial, times; dt, rng=Random.default_rng(),
                     noise=nothing, workspace=nothing, pulses=nothing,
-                    memory_budget=512MiB)
+                    memory_budget=512MiB, progress=false, on_event=nothing,
+                    cancellation_token=nothing)
 
 Integrate one fixed-step linear PI-HOPS path. `initial` is a normalized
 [`WeakPIPseudoKet`](@ref); all auxiliary hierarchy nodes start at zero. The
@@ -1417,13 +1418,16 @@ must return the same value whenever queried at the same time. Adaptive
 integration is intentionally absent because rejected stochastic steps need a
 consistent OU/Brownian bridge. A [`HierarchyPulseSequence`](@ref) passed as
 `pulses` splits steps exactly at every event; roots saved at a pulse time are
-post-pulse.
+post-pulse. Progress and cooperative cancellation are observed at saved-output
+boundaries. Cancellation raises [`OperationCancelled`](@ref); no partially
+initialized trajectory is returned.
 """
 function hops_trajectory(plan::HOPSPlan,
         initial::WeakPIPseudoKet{R},times;dt::Real,
         rng::AbstractRNG=Random.default_rng(),noise=nothing,
         workspace=nothing,pulses=nothing,
-        memory_budget=_DEFAULT_HIGHLEVEL_MEMORY_BUDGET) where
+        memory_budget=_DEFAULT_HIGHLEVEL_MEMORY_BUDGET,
+        progress=false,on_event=nothing,cancellation_token=nothing) where
         R<:AbstractFloat
     if R===BigFloat&&
             (precision(BigFloat)!=plan.precision_bits||
@@ -1431,7 +1435,8 @@ function hops_trajectory(plan::HOPSPlan,
         return _hops_with_precision(plan) do
             hops_trajectory(
                 plan,initial,times;
-                dt,rng,noise,workspace,pulses,memory_budget)
+                dt,rng,noise,workspace,pulses,memory_budget,
+                progress,on_event,cancellation_token)
         end
     end
     ts,step=_hops_times(times,R,dt)
@@ -1456,6 +1461,12 @@ function hops_trajectory(plan::HOPSPlan,
             length(ts),R;bigfloat_precision=plan.precision_bits)
     _require_performance_budget("HOPS trajectory",estimate,memory_budget;
         guidance="Reuse a workspace and request fewer saved output times.")
+    progress_context=_prepare_progress(:hops_trajectory;
+        progress,on_event,cancellation_token)
+    progress_total=max(length(ts)-1,0)
+    _progress_emit!(progress_context,:started,0,progress_total;
+        message="HOPS trajectory started")
+    _progress_throw_if_cancelled!(progress_context,0,progress_total)
     work=if workspace===nothing
         HOPSWorkspace(plan;memory_budget=Inf)
     else
@@ -1470,10 +1481,22 @@ function hops_trajectory(plan::HOPSPlan,
     function record!(root,current_noise,index)
         states[index]=HOPSRootKet(plan.basis,root)
         copyto!(view(noise_history,:,index),current_noise)
+        if index>1&&progress_context!==nothing
+            completed=index-1
+            _progress_emit!(progress_context,:advanced,completed,
+                progress_total;
+                message="saved HOPS output $index",
+                metadata=(time=ts[index],output_index=index))
+            _progress_throw_if_cancelled!(
+                progress_context,completed,progress_total)
+        end
         nothing
     end
     _hops_integrate!(
         record!,plan,initial,ts,step,work,rng,noise,sequence)
+    _progress_emit!(progress_context,:completed,progress_total,progress_total;
+        message="HOPS trajectory completed",
+        metadata=(time=last(ts),))
     HOPSTrajectory(ts,states,noise_history)
 end
 

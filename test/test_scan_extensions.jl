@@ -3,6 +3,14 @@ using Distributed
 
 @testset "optional parameter-scan extensions" begin
     @testset "Tables interface" begin
+        unified=ResultTable((time=[0.0,1.0],value=[2.0,3.0]))
+        @test Tables.istable(typeof(unified))
+        @test Tables.columnaccess(typeof(unified))
+        @test Tables.columns(unified)===unified.columns
+        @test Tables.columntable(unified)==unified.columns
+        @test Tables.rowtable(unified)==[
+            (time=0.0,value=2.0),(time=1.0,value=3.0)]
+
         point=ParameterScanPoint(1,0.25,:success,nothing,1.0e-12,2.0e-14,
             true,7,0.01,0.02,0.03,true,true,
             (solver=(method=:krylov,),user=(value=0.2,)),nothing,nothing)
