@@ -182,6 +182,11 @@ Negative time-dependent rates are accepted for deterministic time-local
 models. Such a generator need not define a completely positive evolution;
 quantum-jump trajectories require nonnegative stochastic rates.
 
+## Funding
+
+This project has received funding from the FWO and F.R.S.-FNRS under the
+Excellence of Science (EOS) programme (EOS 40007526).
+
 ## License and development disclosure
 
 The package is distributed under the

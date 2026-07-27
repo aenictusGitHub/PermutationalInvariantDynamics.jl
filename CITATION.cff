@@ -23,3 +23,9 @@ references:
     volume: 58
     year: 2025
     doi: "10.1088/1751-8121/addfc1"
+  - type: grant
+    title: "Excellence of Science (EOS) programme"
+    authors:
+      - name: "FWO"
+      - name: "F.R.S.-FNRS"
+    number: "40007526"

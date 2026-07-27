@@ -5,7 +5,9 @@ Source: [`weak_pi_trajectories.jl`](weak_pi_trajectories.jl)
 ## Literature model
 
 Zhang, Zhang, and Mølmer,
-[*New J. Phys.* **20**, 112001 (2018)](https://doi.org/10.1088/1367-2630/aaec36),
+[*Monte-Carlo simulations of superradiant lasing*,
+New J. Phys. **20**, 112001
+(2018)](https://doi.org/10.1088/1367-2630/aaec36),
 studied collective cavity decay together with independent free-space decay,
 
 ```math

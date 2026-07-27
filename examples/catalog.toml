@@ -112,7 +112,7 @@ tasks = ["weak-pi", "quantum-trajectories", "steady-state", "method-comparison"]
 runtime_class = "medium"
 stochastic = true
 optional_dependencies = ["CairoMakie"]
-citation = "Lloyd, Ziolkowska, and Keeling, Permutation-symmetric quantum trajectories, arXiv:2605.11103 (2026)"
+citation = "Zhang, Zhang, and Mølmer, New J. Phys. 20, 112001 (2018); Lloyd, Ziolkowska, and Keeling, Permutation-symmetric quantum trajectories, arXiv:2605.11103 (2026)"
 expected_outputs = [
     "docs/src/assets/example_figures/weak_pi_decay_trajectory_comparison.png",
     "docs/src/assets/example_figures/weak_pi_trajectories_method_comparison.png",

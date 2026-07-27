@@ -14,8 +14,14 @@ both the PI density-coordinate dimension $\sum_\nu(\dim U_\nu)^2$ and the
 full labeled-particle dimension $d^N$. Production code constructs neither a
 $d^N$ ket nor a $d^N\times d^N$ operator.
 
-Related literature includes Elliot W. Lloyd, Aleksandra A. Ziolkowska, and
-Jonathan Keeling,
+The starting literature includes Yuan Zhang, Yu-Xiang Zhang, and Klaus
+Mølmer,
+[*Monte-Carlo simulations of superradiant lasing*,
+New J. Phys. **20**, 112001
+(2018)](https://doi.org/10.1088/1367-2630/aaec36), whose reduced-Dicke
+quantum-jump construction resolves collective and local decay through
+total-spin-sector changes. Related weak-symmetry work by Elliot W. Lloyd,
+Aleksandra A. Ziolkowska, and Jonathan Keeling,
 [*Permutation-symmetric quantum trajectories*,
 arXiv:2605.11103 (2026)](https://arxiv.org/abs/2605.11103), which develops
 weak-permutation-symmetric stochastic unravelings for emitters coupled to a
@@ -334,8 +340,7 @@ equation but can alter finite-sample variance.
 
 The runnable
 [`weak_pi_trajectories.jl`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/weak_pi_trajectories.jl) example
-uses the decay model of Zhang, Zhang, and Mølmer,
-[*New J. Phys.* **20**, 112001 (2018)](https://doi.org/10.1088/1367-2630/aaec36).
+uses the Zhang--Zhang--Mølmer decay model cited above.
 For the paper's $\gamma_l/\Gamma_c=1$ case it compares four routes:
 certified population dynamics, general matrix-free PI master evolution,
 density-valued PI trajectories, and weak-PI pseudo-kets. The stochastic

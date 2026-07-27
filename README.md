@@ -359,6 +359,11 @@ Please cite both the software and the underlying framework paper. Machine-
 readable metadata are provided in [`CITATION.cff`](CITATION.cff); the paper's
 BibTeX entry is in [`CITATION.bib`](CITATION.bib).
 
+## Funding
+
+This project has received funding from the FWO and F.R.S.-FNRS under the
+Excellence of Science (EOS) programme (EOS 40007526).
+
 ## License
 
 PermutationalInvariantDynamics.jl is distributed under the
