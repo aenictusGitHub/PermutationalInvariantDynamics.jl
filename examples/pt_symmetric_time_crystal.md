@@ -69,7 +69,7 @@ $\rho_{\rm ss}=I_{N+1}/(N+1)$ inside the symmetric spin irrep.
 ## Matrix-free dynamics
 
 The complete spectrum is a small-system validation, not the scalable route.
-For $N=24$, the example recompiles with `backend=:matrixfree` and evolves a
+For $N=40$, the default example recompiles with `backend=:matrixfree` and evolves a
 state initially polarized along $+z$. The exact $q=\pm1,\ l=0$ modes imply
 
 ```math
@@ -90,9 +90,9 @@ $p\ne0$.
 
 With CairoMakie available, the script generates a two-panel comparison. The
 complex-plane panel overlays the complete `N=6` PI spectrum with every value
-of Eq. (14), retaining exact degeneracies. The dynamics panel overlays the
-matrix-free `N=24` magnetization with its exponentially damped analytical
-curve. The visible damping is essential: persistent oscillations are not
+of Eq. (14), retaining exact degeneracies. The dynamics panel overlays 61
+saved values of the matrix-free `N=40` magnetization with its exponentially
+damped analytical curve. The visible damping is essential: persistent oscillations are not
 claimed at either finite size.
 
 The vector and raster outputs are saved as
@@ -105,6 +105,9 @@ directory.
 ```sh
 julia --project=examples examples/pt_symmetric_time_crystal.jl
 ```
+
+Set `PID_EXAMPLE_QUICK=1` for the original `N = 24`, 13-time dynamics smoke
+run. It retains the complete `N = 6` spectrum and all accuracy assertions.
 
 Running under the root package environment still performs the numerical
 validation; without CairoMakie, it logs that the optional figure was skipped.

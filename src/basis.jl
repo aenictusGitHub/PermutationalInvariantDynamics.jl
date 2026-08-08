@@ -311,7 +311,19 @@ function trace(a::AbstractPIOperator)
     end
     total+correction
 end
-"""Return the density-operator purity `tr(rho^2)` in orthonormal PI coordinates."""
+"""
+    purity(rho)
+
+Return the density-operator purity `tr(rho^2)` as the squared norm of its
+orthonormal PI-coordinate vector. This is an allocation-light
+`O(length(rho.data))`
+contraction: it performs no Schur-block matrix multiplication and never
+constructs a `d^N` density matrix.
+
+This low-level fast path does not validate `rho`. Use [`validate_state`](@ref)
+first, or call [`trace_power`](@ref) with `order=2`, when a checked density
+operator result is required.
+"""
 function purity(a::PIState)
     result=real(dot(a.data,a.data))
     isfinite(result)&&(!iszero(result)||all(iszero,a.data))&&return result
@@ -385,13 +397,14 @@ end
 # Averaging then removes roundoff-level skew-Hermitian noise before `eigvals`;
 # it is not used to repair an invalid input.
 function _spectral_positivity_metrics(a::AbstractPIOperator)
-    minimum_eigenvalue=nothing;scale=nothing
+    R=_real_float_type(eltype(a.data))
+    minimum_eigenvalue=R(Inf);scale=zero(R)
     for p in a.basis.sectors
         C=Matrix(coefficient_block(a,p));vals=_hermitian_eigvals(Hermitian((C+C')/2);
             operation="positivity eigenvalue diagnostics")
         pmin=minimum(vals);pscale=maximum(abs,vals)
-        minimum_eigenvalue=minimum_eigenvalue===nothing ? pmin : min(minimum_eigenvalue,pmin)
-        scale=scale===nothing ? pscale : max(scale,pscale)
+        minimum_eigenvalue=min(minimum_eigenvalue,pmin)
+        scale=max(scale,pscale)
     end
     (;minimum_eigenvalue,scale)
 end
@@ -722,6 +735,109 @@ function _schur_block_partition(b::PIBasis{D},label) where D
     end
     _sidx(b,partition)
     partition
+end
+
+function _concrete_pi_real_type(T)
+    T isa Type&&T<:AbstractFloat&&isconcretetype(T)||throw(ArgumentError(
+        "T must be a concrete AbstractFloat type"))
+    T
+end
+
+_fully_symmetric_partition(b::PIBasis{D}) where D=
+    Partition(ntuple(index->index==1 ? b.N : 0,Val(D)))
+
+"""
+    schur_sector_projector(basis, sector; T=Float64)
+
+Construct the orthogonal Hilbert-space projector onto one retained Schur
+isotypic sector. `sector` may be a [`Partition`](@ref), integer tuple, or
+integer vector. For a sector `nu`, the only nonzero stored coefficient block
+is ``C_nu=sqrt(f^nu) I``; consequently the physical block is the identity and
+the projector's trace is the exact sector rank
+``f^nu dim(U_nu)`` (represented in `T`). The result is not trace-normalized.
+
+This is a Hilbert-space sector projector, not the Hilbert--Schmidt projector
+from arbitrary operators onto the PI operator algebra. The latter is the
+permutation twirl. Every [`PIState`](@ref) and [`PIOperator`](@ref) is already
+in its range, while an arbitrary non-PI input requires an ambient
+exponentially large or separately structured representation. No ``d^N``
+object is constructed here. For a state `rho`, [`sector_population`](@ref) is
+the allocation-free way to evaluate ``tr(P_nu rho)`` without constructing
+`P_nu`.
+"""
+function schur_sector_projector(b::PIBasis,sector;T=Float64)
+    scalar_type=_concrete_pi_real_type(T)
+    partition=_schur_block_partition(b,sector)
+    projector=PIOperator(b;T=scalar_type)
+    block=coefficient_block(projector,partition)
+    block[diagind(block)].=_schur_multiplicity_scale(scalar_type,partition)
+    projector
+end
+
+"""
+    fully_symmetric_projector(basis; T=Float64)
+
+Construct the orthogonal projector onto the fully permutation-symmetric
+Hilbert-space sector ``nu=(N,0,...,0)``:
+
+```math
+P_{\\mathrm{sym}}=\\frac{1}{N!}\\sum_{\\pi\\in S_N}P_\\pi.
+```
+
+The projector is returned directly in compact PI coordinates and no
+permutation sum or full ``d^N`` matrix is formed. Its trace is
+``binomial(N+d-1,N)`` and it is not trace-normalized. A restricted `basis`
+that omits the fully symmetric sector raises rather than adding the sector or
+silently changing the basis. See [`schur_sector_projector`](@ref) for the
+distinction between this Hilbert-space projector and permutation twirling of
+operators.
+"""
+function fully_symmetric_projector(b::PIBasis{D};T=Float64) where D
+    schur_sector_projector(b,_fully_symmetric_partition(b);T=T)
+end
+
+"""
+    sector_maximally_mixed_state(basis, sector; T=Float64)
+
+Construct the trace-one maximally mixed state supported on one retained Schur
+isotypic sector. If `sector=nu` has symmetric-group multiplicity `f` and
+unitary-group block dimension `g`, the physical block is ``I/(f*g)`` and the
+stored diagonal coefficient is ``1/(g*sqrt(f))``. The state's purity is
+``1/(f*g)``.
+
+`sector` may be a [`Partition`](@ref), integer tuple, or integer vector. The
+requested sector must already belong to `basis`; the function never adds a
+sector or changes the basis. The coefficient is formed as one checked exact
+square-root ratio, so no full multiplicity space or ``d^N`` matrix is
+constructed.
+"""
+function sector_maximally_mixed_state(b::PIBasis,sector;T=Float64)
+    scalar_type=_concrete_pi_real_type(T)
+    partition=_schur_block_partition(b,sector)
+    sector_index=b.index[partition]
+    block_dimension=big(length(b.patterns[sector_index]))
+    multiplicity=symmetric_group_dimension(partition)
+    denominator=multiplicity*block_dimension^2
+    coefficient=_checked_sqrt_exact_ratio(
+        scalar_type,one(BigInt),denominator;
+        context="maximally mixed coefficient in sector $partition")
+    state=PIState(b;T=scalar_type)
+    block=coefficient_block(state,partition)
+    block[diagind(block)].=coefficient
+    state
+end
+
+"""
+    symmetric_maximally_mixed_state(basis; T=Float64)
+
+Construct the trace-one maximally mixed state on the fully symmetric
+Hilbert-space sector ``(N,0,...,0)`` while retaining the caller's exact
+`basis`. This differs from [`maximally_mixed_state`](@ref), which distributes
+weight over every retained sector. A restricted basis that omits the
+symmetric sector raises rather than being changed silently.
+"""
+function symmetric_maximally_mixed_state(b::PIBasis;T=Float64)
+    sector_maximally_mixed_state(b,_fully_symmetric_partition(b);T=T)
 end
 
 function _collect_schur_block_entries(b::PIBasis,blocks,requested_type)

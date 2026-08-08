@@ -14,6 +14,11 @@ both the PI density-coordinate dimension $\sum_\nu(\dim U_\nu)^2$ and the
 full labeled-particle dimension $d^N$. Production code constructs neither a
 $d^N$ ket nor a $d^N\times d^N$ operator.
 
+For a genuine physical pure ket confined to the sole fully symmetric irrep,
+use [`SymmetricKet`](@ref) instead. The distinctions are summarized in
+[Symmetric pure kets and block-resolved
+entropy](symmetric_kets_and_block_entropy.md).
+
 The starting literature includes Yuan Zhang, Yu-Xiang Zhang, and Klaus
 Mølmer,
 [*Monte-Carlo simulations of superradiant lasing*,

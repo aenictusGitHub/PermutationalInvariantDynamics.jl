@@ -56,9 +56,11 @@ include("hierarchy_pulses.jl")
 include("spectra.jl")
 include("evans.jl")
 include("local_factor_trace.jl")
+include("symmetric_kets.jl")
 include("pseudomodes.jl")
 include("entanglement.jl")
 include("reduction_sets.jl")
+include("density_moments.jl")
 include("prepared_artifacts.jl")
 include("genuine_entanglement.jl")
 include("observables.jl")
@@ -76,6 +78,7 @@ include("composite.jl")
 include("evolution.jl")
 include("restricted_symmetries.jl")
 include("automatic_symmetries.jl")
+include("block_entropy.jl")
 include("heom.jl")
 include("trajectories.jl")
 include("batched_trajectories.jl")
@@ -124,7 +127,10 @@ export Partition, partitions, weight, length_nonzero, removable_corners,
        PIBasis, PIOperator, PIState, coefficient_block, physical_block,
        each_schur_block, operator_from_schur_blocks,
        state_from_schur_blocks, sector_metadata,
-       sector_view, identity_operator, maximally_mixed_state, trace, purity,
+       sector_view, identity_operator, schur_sector_projector,
+       fully_symmetric_projector, maximally_mixed_state,
+       sector_maximally_mixed_state, symmetric_maximally_mixed_state,
+       trace, purity, DensityPowerWorkspace, trace_power,
        normalize!, ispositive, isphysical, positivity_diagnostics,
        state_diagnostics, validate_state,
        FiniteOperatorBasis, CompositePIBasis, CompositePIOperator,
@@ -134,9 +140,9 @@ export Partition, partitions, weight, length_nonzero, removable_corners,
        composite_reduced_state!,
        sector_population,
        sector_populations, basis_state, sector_density_matrix, iid_pure_state,
-       iid_state, thermal_state, computational_product_state, dicke_state,
-       dicke_operator,
-       ghz_state, spin_coherent_state, spin_matrices, collective_spin,
+       iid_state, thermal_state, computational_product_state,
+       symmetric_occupation_state, dicke_state, dicke_operator, w_state,
+       cat_state, ghz_state, spin_coherent_state, spin_matrices, collective_spin,
        collective_block, collective_operator,
        mean_local_operator, local_kernel_element, local_kernel_operator,
        OneBodyGeometry,
@@ -266,6 +272,13 @@ export Partition, partitions, weight, length_nonzero, removable_corners,
        hermiticity_error, minimum_sector_eigenvalue, check_generator,
        LocalFactorTracePlan, LocalFactorTraceWorkspace,
        local_factor_trace, local_factor_trace!,
+       SymmetricKet, symmetric_ket_dimension, validate_symmetric_ket,
+       symmetric_occupation_ket, symmetric_product_ket,
+       symmetric_ket_density, symmetric_ket_density!, symmetric_ket,
+       SymmetricKetHamiltonianPlan, SymmetricKetWorkspace,
+       apply_symmetric_hamiltonian!, evolve_symmetric_ket!,
+       time_evolve_symmetric_ket, krylov_evolve_symmetric_ket!,
+       krylov_time_evolve_symmetric_ket, symmetric_ket_expectation,
        PISupersite, supersite_tensor_operator, lift_supersite_operator,
        lift_system_operator, lift_system_pbody_operator, lift_system_term,
        supersite_iid_state, supersite_product_state,
@@ -278,7 +291,7 @@ export Partition, partitions, weight, length_nonzero, removable_corners,
        ReductionPlanSet, ReductionWorkspaceSet, reduction_plan,
        PPTMixturePlan, PPTMixtureResult, ppt_mixture_test,
        reduced_state, reduced_state!, reduced_states, reduced_purity,
-       reduced_purities,
+       reduced_purities, reduced_trace_power, reduced_trace_powers,
        partial_transpose_spectrum, minimum_partial_transpose_eigenvalue,
        bipartition_negativities,
        charge_resolved_negativity, number_resolved_negativity,
@@ -313,6 +326,9 @@ export Partition, partitions, weight, length_nonzero, removable_corners,
        StrongSymmetryReport, StrongSymmetryReduction,
        strong_symmetry_report, strong_symmetry_reduction,
        strong_symmetry_steady_states, strong_symmetry_spectra,
+       HilbertBlockEntropyPlan, HilbertBlockEntropyWorkspace,
+       HilbertBlockEntropyDiagnostics,
+       block_entropy_diagnostics, block_von_neumann_entropy,
        FloquetMap, FloquetWorkspace, FloquetBatchWorkspace,
        floquet_map, restricted_floquet_map,
        selected_floquet_multipliers,

@@ -225,6 +225,10 @@ Related workflows are:
   `PI system + HEOMBaths -> HEOMPlan -> HEOMWorkspace -> solve`.
 - Bosonic PI--HOPS:
   `PI Hamiltonian + HOPSBaths -> HOPSPlan -> HOPSWorkspace -> trajectories`.
+- Fully symmetric pure unitary dynamics:
+  `sole symmetric PIBasis -> SymmetricKet -> SymmetricKetHamiltonianPlan -> RK4/Krylov`.
+- Symmetry-blocked total entropy:
+  `PIBasis/StrongSymmetryReduction -> HilbertBlockEntropyPlan -> workspace -> entropy`.
 - Ideal hierarchy control:
   `local/PI unitary or Platonic constructor -> HierarchyPulseSequence -> HEOM/HOPS`.
 
@@ -340,8 +344,10 @@ pattern.
   `spectra.jl`, `evans.jl`, `symmetries.jl`, and
   `restricted_symmetries.jl`, and `automatic_symmetries.jl`.
 - State analysis: `observables.jl`, `entanglement.jl`,
-  `reduction_sets.jl`, `prepared_artifacts.jl`, `local_factor_trace.jl`,
-  `genuine_entanglement.jl`, `information.jl`, `nonstabilizerness.jl`,
+  `reduction_sets.jl`, `density_moments.jl`, `prepared_artifacts.jl`,
+  `local_factor_trace.jl`,
+  `symmetric_kets.jl`, `block_entropy.jl`, `genuine_entanglement.jl`,
+  `information.jl`, `nonstabilizerness.jl`,
   `symmetry_information.jl`, `populations.jl`, and
   `research_utilities.jl`.
 - Deterministic dynamics and studies: `sciml.jl`, `evolution.jl`,
@@ -512,11 +518,37 @@ scripts; do not copy machine-specific timings or allocation snapshots here.
 
 - `each_schur_block(A; representation=:physical)` returns detached physical
   blocks. `representation=:coefficient` returns mutable stored views.
+- `schur_sector_projector` is the Hilbert-space isotypic projector with stored
+  block `sqrt(f^nu) * I`; `fully_symmetric_projector` selects
+  `(N,0,...,0)`. Neither is the operator-space permutation twirl. Every
+  `PIState` and `PIOperator` is already in the range of that twirl.
+- `sector_maximally_mixed_state` uses stored diagonal
+  `1/(g_nu*sqrt(f^nu))`; `symmetric_maximally_mixed_state` selects
+  `(N,0,...,0)`. Both are trace one, retain the caller's exact basis, and
+  differ from a white state over all retained sectors.
 - `operator_from_schur_blocks` and `state_from_schur_blocks` copy supplied
   blocks, accept arbitrary sector order, zero omitted sectors, and reject
   duplicates or wrong sizes. Optional output `T` must not narrow.
 - `sector_metadata` retains exact `BigInt` multiplicities and Hilbert
   dimensions; qubit spin labels are exact rationals.
+
+### Density moments
+
+- `purity` and `reduced_purity` remain the dedicated second-moment shortcuts.
+  Higher positive integer powers use `trace_power` and
+  `reduced_trace_power`; order zero and negative orders are intentionally not
+  given implicit rank or inverse semantics.
+- For stable evaluation, power the multiplicity-weighted block
+  `M_nu=sqrt(f^nu)*C_nu` and accumulate
+  `sum_nu (f^nu)^(1-q)*tr(M_nu^q)` with exact checked multiplicity scaling.
+  Do not power a physical block or reconstruct a `d^N` density matrix.
+- `DensityPowerWorkspace` is task-owned, tied to one exact basis/scalar/
+  `BigFloat` context, and owns three largest-block square buffers. A prepared
+  reduced route accumulates directly into `ReductionWorkspace.reduced_blocks`
+  and uses a separate density-power workspace; do not materialize a reduced
+  `PIState` on that path. Preflight exact multiplicity-table construction,
+  combine every live reduction/power workspace in the memory peak, and count
+  all simultaneously retained entries of a multi-`k` batch.
 
 ### Population backend
 
@@ -547,6 +579,13 @@ so `sum(p) == trace(rho)`.
 `(|g>,|e>)`. `dicke_state`, `dicke_operator`, `ghz_state`, and
 `spin_coherent_state` must validate labels and infer precision without
 narrowing.
+
+`symmetric_occupation_state` uses one-based local-level counts and an exact
+`O(d)` rank in the caller's retained fully symmetric sector. The integer
+`dicke_state(basis,k)` overload uses qubit occupations `(N-k,k)`, and
+`w_state` fixes `k=1`. `cat_state` uses two distinct one-based qudit levels;
+`ghz_state` delegates to its qubit `(1,2)` specialization. None may scan a
+complete symmetric block or construct a `d^N` vector.
 
 `qubit_ensemble_model` implements the six PIQS channels with
 `D[L]=L*rho*L' - {L'L,rho}/2`. Emission uses `j_-`, pumping uses `j_+`, and
@@ -599,6 +638,27 @@ prototype precision used by compiled parameter families.
   sparse columns and linear scratch; never retain a quadratic Gram matrix.
   Enforce its sparse-transform setup budget and never replace it with
   local-string or full-Hilbert reconstruction.
+- `SymmetricKet` is a genuine physical ket only for a basis containing the
+  sole fully symmetric sector. It must never be conflated with the multi-sector
+  auxiliary `WeakPIPseudoKet` or an unnormalized `HOPSRootKet`. The ket stores
+  `g=binomial(N+d-1,d-1)` amplitudes; explicit density conversion stores
+  `g^2` PI coordinates and is memory guarded. Fixed one-body Hamiltonians keep
+  exact sparse occupation support, while a caller-supplied dense Schur block
+  remains dense. Ket-native `local_factor_trace` must stream the requested
+  entries of `psi*psi'` through the prepared CSC map and never allocate that
+  source outer product. Evolution and analysis validate the mutable ket norm
+  by default, never renormalize it, and preserve plan-owned BigFloat precision.
+- `HilbertBlockEntropyPlan` partitions every retained Schur Hilbert block
+  exhaustively, either explicitly, from a diagonal local unitary, or from a
+  certified `StrongSymmetryReduction`. Exact off-block support is required by
+  default. Explicit tolerance-based projection must be reported and separately
+  certify positivity of the unmodified state. Entropy evaluation validates in
+  the same blockwise pass and must not call the generic full-sector state
+  eigensolver first. `HilbertBlockEntropyWorkspace` owns one largest-block
+  eigensolver scratch matrix and is task-owned. Diagonal-charge preparation
+  uses deterministic angle sorting and plan-owned read-only arrays; do not
+  restore an all-pairs charge search or encode thousands of groups in a giant
+  tuple type.
 - `ReductionWorkspace` modes (`:reduction`, `:negativity`, `:both`) omit
   incompatible buffers. A mode mismatch must raise rather than allocate.
 - Reduced-state and purity paths contract
@@ -1304,10 +1364,10 @@ Durable literature mappings:
   `2V/(N*j)`. Compare the unique finite-`N` parity-symmetric state to parity-
   even observables of a selected mean-field branch; never call the product
   closure exact correlated dynamics.
-- The Debecker draft example is the PI uniform-all-pair specialization, not a
-  reproduction of the nearest-neighbour periodic chain. One site is spin
-  tensor a mode truncated at `nmax`, `Jpair=J/(N-1)`, the manuscript
-  dissipator maps to package rate `2kappa`, and `g=sqrt(gamma*kappa)`. The
+- The all-to-all local-pseudomode example uses exact PI supersites: one site is
+  spin tensor a mode truncated at `nmax`, `Jpair=J/(N-1)`, the helper's
+  Lorentzian parameterization uses package rate `2kappa`, and
+  `g=sqrt(gamma*kappa)`. The
   longitudinal model has strong spin parity; certify leakage and validate the
   full residual after reduced solving. Its contour fits and tab-delimited
   boundary exports are empirical finite-grid guides, not thermodynamic phase

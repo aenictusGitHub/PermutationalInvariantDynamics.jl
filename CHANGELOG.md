@@ -12,6 +12,22 @@ Initial public release candidate.
 
 - General qubit and qudit permutationally invariant Schur-block states,
   operators, local/collective/p-body generators, and matrix-free dynamics.
+- Compact orthogonal projectors onto arbitrary retained Schur isotypic sectors
+  and the fully permutation-symmetric Hilbert-space sector.
+- Short exact constructors for symmetric qudit occupation states,
+  excitation-count Dicke and W states, qudit cat states, and normalized white
+  states confined to one Schur sector or the fully symmetric sector.
+- Physical pure-ket storage and preallocated Hamiltonian evolution in the
+  sole fully symmetric irrep, including sparse one-body lifting, RK4 and
+  Krylov exponential actions, direct expectations, rank-one density
+  conversion, and ket-native local-factor traces.
+- Certified Hilbert-block von Neumann entropy plans built from explicit
+  partitions or diagonal strong symmetries, with strict off-block checks,
+  projected-interpretation diagnostics, and blockwise cubic-work estimates.
+- Stable full-state and reduced density moments of arbitrary positive integer
+  order, with exact Schur-multiplicity scaling, binary block powering, and
+  reusable memory-budgeted scratch; purity remains the dedicated second-order
+  fast path.
 - Prepared deterministic, stochastic, Floquet, mean-field, population,
   spectral, response, information-theoretic, entanglement, and visualization
   workflows.
@@ -89,6 +105,13 @@ Initial public release candidate.
 
 ### Changed
 
+- Literature figures now use resolved research grids and larger finite sizes,
+  while `PID_EXAMPLE_QUICK=1` preserves lightweight executable checks. The
+  boundary time-crystal scaling uses targeted matrix-free spectral solves for
+  `N` through 40, and repeated rate scans reuse compiled Schur geometry.
+- The identical-local-pseudomode example is now a self-contained generic
+  all-to-all model with public pseudomode provenance; private-draft framing and
+  obsolete named output assets were removed throughout the repository.
 - Fixed one-body Schur lifts and compatible Hamiltonian/loss fusion now build
   exact sparse CSC support without dense sector-block intermediates.
 - Density and weak-PI trajectories cache effective jump losses at distinct RK

@@ -38,6 +38,7 @@ function spectrum_multiset_error(numerical, exact; atol=1e-11, rtol=1e-10)
 end
 
 function main()
+    quick_example = get(ENV, "PID_EXAMPLE_QUICK", "0") == "1"
     # Complete-spectrum validation is deliberately kept small and dense.
     N = 6
     g = 1.3
@@ -74,17 +75,18 @@ function main()
 
     # A larger finite-size propagation uses only matrix-free kernels.  The
     # q=+-1, l=0 modes of Eq. (14) give this damped collective oscillation.
-    Ndyn = 24
+    Ndyn = quick_example ? 24 : 40
     dynamic_model = balanced_gain_loss_time_crystal_model(Ndyn; g=g, kappa=kappa, p=0.0)
     dynamic = compile(dynamic_model; backend=:matrixfree)
     basis = dynamic_model.basis
     rho0 = iid_pure_state(basis, ComplexF64[1, 0])
     sz = ComplexF64[1 0; 0 -1] / 2
     Sz = CollectiveObservablePlan(basis, sz)
-    times = range(0.0, 6.0; length=13)
+    times = range(0.0, 6.0; length=quick_example ? 13 : 61)
+    steps_per_interval = quick_example ? 32 : 8
     solution = solve_dynamics(
         dynamic, rho0, (first(times), last(times));
-        saveat=times, steps_per_interval=32)
+        saveat=times, steps_per_interval)
     magnetization = [real(collective_expectation(rho, Sz)) / (Ndyn / 2)
                      for rho in solution]
     exact_magnetization = exp.(-4kappa .* times ./ Ndyn) .* cos.(g .* times)

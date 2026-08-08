@@ -801,10 +801,11 @@ function _local_factor_precision_bounds(values)
     minimum_precision=typemax(Int)
     maximum_precision=0
     for value in values
-        value_precision=max(
-            precision(real(value)),precision(imag(value)))
-        minimum_precision=min(minimum_precision,value_precision)
-        maximum_precision=max(maximum_precision,value_precision)
+        for component in (real(value),imag(value))
+            component_precision=precision(component)
+            minimum_precision=min(minimum_precision,component_precision)
+            maximum_precision=max(maximum_precision,component_precision)
+        end
     end
     isempty(values) ? (precision(BigFloat),precision(BigFloat)) :
         (minimum_precision,maximum_precision)

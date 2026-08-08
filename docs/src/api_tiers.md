@@ -20,15 +20,15 @@ live under `Models`.
 
 | Area | Recommended entry points |
 |---|---|
-| Representation | `PIBasis`, `PIState`, `PIOperator`, `PISupersite`, `GlobalPseudomodeModel`, `pseudomode_model`, `global_pseudomode_model`, `exact_binomial`, `exact_multinomial`, Schur-block constructors, spin/state conveniences, `PIModel`, and the physical term constructors |
+| Representation | `PIBasis`, `PIState`, `PIOperator`, `SymmetricKet`, `PISupersite`, `GlobalPseudomodeModel`, `pseudomode_model`, `global_pseudomode_model`, `exact_binomial`, `exact_multinomial`, Schur-block constructors and projectors, spin/state conveniences, `PIModel`, and the physical term constructors |
 | Preparation | `compile`, `compile_family`, `compile_affine_family`, `specialize`, `prepare_geometry`, `isautonomous`, `freeze` |
 | Guided studies | `PIStudy`, `explain`, `check`, `solve`, `doctor`, and the uniform `result_*` accessors |
-| Dynamics | `solve_dynamics` (including observable-only streaming), `solve_populations`, `dynamics_problem`, `floquet_steady_state`, `quantum_trajectories` (including online ensemble statistics), `trajectory_steady_state`, `HOPSPlan`, `hops_trajectory`, and `hops_average` |
+| Dynamics | `solve_dynamics` (including observable-only streaming), `time_evolve_symmetric_ket`, `solve_populations`, `dynamics_problem`, `floquet_steady_state`, `quantum_trajectories` (including online ensemble statistics), `trajectory_steady_state`, `HOPSPlan`, `hops_trajectory`, and `hops_average` |
 | Mean-field predictions | `MeanFieldPlan`, `solve_meanfield`, `meanfield_problem`, `meanfield_stationary_state`, `meanfield_stability` |
 | Stationary and spectral analysis | `stationary_state`, `liouvillian_spectrum`, `pi_liouvillian_gap`, `diagnostics`, `recommend_solver` |
-| Observables and information | `collective_expectation`, `collective_variance`, `qfi`, `qfim`, `stabilizer_renyi_entropy`, `two_time_correlation`, `delayed_second_order_correlation`, `stationary_correlation_spectrum`, entropy and distance functions |
+| Observables and information | `collective_expectation`, `collective_variance`, `purity`, `trace_power`, `qfi`, `qfim`, `stabilizer_renyi_entropy`, `block_von_neumann_entropy`, `two_time_correlation`, `delayed_second_order_correlation`, `stationary_correlation_spectrum`, entropy and distance functions |
 | Visualization | `schur_block_structure`, `visualize_schur_blocks`, `spin_husimi_q`, `spin_wigner`, `qudit_husimi_q`, `visualize_spin_phase_space`, and the density/Liouvillian/Floquet spectrum data and renderers |
-| Reductions and entanglement | `one_body_rdm`, `one_body_rdm!`, `local_factor_trace`, `local_factor_trace!`, `trace_pseudomodes`, `trace_pseudomodes!`, `global_pseudomode_state`, `composite_reduced_state`, `composite_reduced_state!`, `reduced_state`, `reduced_state!`, `reduced_purity`, `negativity`, `partial_transpose_spectrum`, `ppt_mixture_test` |
+| Reductions and entanglement | `one_body_rdm`, `one_body_rdm!`, `local_factor_trace`, `local_factor_trace!`, `trace_pseudomodes`, `trace_pseudomodes!`, `global_pseudomode_state`, `composite_reduced_state`, `composite_reduced_state!`, `reduced_state`, `reduced_state!`, `reduced_purity`, `reduced_purities`, `reduced_trace_power`, `reduced_trace_powers`, `negativity`, `partial_transpose_spectrum`, `ppt_mixture_test` |
 | Validation | `state_diagnostics`, `positivity_diagnostics`, `validate_state` |
 | Results and exports | `summarize`, `result_table`, `save_result`, `save_checkpoint`, `save_experiment` |
 | Reproducibility | `PIExperiment`, `plan_experiment`, `explain_experiment`, `verified_solve`, `save_experiment`, `load_experiment` |
@@ -72,13 +72,27 @@ They are supported and tested, but callers must obey their compatibility and
 threading contracts.
 
 - `OneBodyGeometry`, `PBodyGeometry`, `CollectiveObservablePlan`,
-  `LocalFactorTracePlan`, `ReductionPlan`, and `CompositeReductionPlan` own prepared representation
+  `LocalFactorTracePlan`, `ReductionPlan`, `CompositeReductionPlan`, and
+  `HilbertBlockEntropyPlan` own prepared representation
   data. They can only be used with the exact `PIBasis` object from which they
   were constructed. `LocalFactorTracePlan` changes the local dimension by
   tracing the same internal factor from every supersite; it is distinct from
   the particle bipartition represented by `ReductionPlan`.
   `pseudomode_trace_plan` prepares that same map for all trailing modes of one
-  exact `PISupersite`.
+  exact `PISupersite`. `HilbertBlockEntropyPlan` owns a complete partition of
+  every retained Schur block and never treats a model symmetry certificate as
+  proof that an arbitrary input state is block diagonal.
+  `HilbertBlockEntropyWorkspace` owns one largest-block eigensolver scratch
+  matrix and is task-local.
+- `DensityPowerWorkspace` owns three largest-Schur-block matrices and exact
+  multiplicity scales for repeated full or reduced density moments. It is
+  tied to one exact basis and arithmetic context and remains task-local.
+- `SymmetricKetHamiltonianPlan` owns a sparse or explicitly supplied
+  Hamiltonian block in the sole fully symmetric irrep.
+  `SymmetricKetWorkspace` owns fixed-step RK4 scratch, while
+  `KrylovExpvWorkspace` owns restarted-Arnoldi scratch. A `SymmetricKet` is a
+  physical unit vector, not a multi-sector weak-PI pseudo-ket; see the
+  [symmetric-ket guide](symmetric_kets_and_block_entropy.md).
 - `PreparedGeometryBundle` groups immutable one-body, selected p-body, and
   multi-bipartition data for one exact basis and arithmetic context.
   `PreparationCache` is an explicit, synchronized, user-owned store with a

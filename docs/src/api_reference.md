@@ -20,6 +20,7 @@ PermutationalInvariantDynamics
 | [Representations, states, and models](api/representation.md) | Partitions, GT patterns, Schur blocks, state/operator construction, physical terms, Appendix-D processes, and vectorized superoperators |
 | [Dynamics and evolution](api/dynamics.md) | Liouvillian preparation and application, SciML integration, fixed-step evolution, quantum trajectories, mean field, and Floquet dynamics |
 | [Observables and quantum information](api/analysis.md) | Moments, correlations, squeezing, QFI/QFIM, spin phase space, reduced states, negativity, entropies, distances, and symmetry-resolved information |
+| [Symmetric pure kets and block-resolved entropy](symmetric_kets_and_block_entropy.md) | Physical fully symmetric pure-state dynamics, ket-native local-factor traces, algebraic entropy, and prepared Hilbert charge blocks |
 | [Nonstabilizerness of symmetric qubit states](nonstabilizerness.md) | Second stabilizer Rényi entropy, prepared Krawtchouk transforms, scope, and validation |
 | [Genuine multipartite entanglement](genuine_entanglement.md) | PI qubit PPT-mixture plans, validated solver results, and the optional Clarabel backend |
 | [Stationary states, spectra, and research solvers](api/solvers.md) | Direct and Krylov solvers, Liouvillian spectra and gaps, Evans tests, weak symmetries, response, memory estimates, and typed high-level commands |
@@ -57,6 +58,6 @@ Modules = [
     PermutationalInvariantDynamics,
     PermutationalInvariantDynamics.Models,
 ]
-Pages = ["api/representation.md", "api/dynamics.md", "api/analysis.md", "api/solvers.md", "api/visualization.md", "api_tiers.md", "result_outputs.md", "streaming_output.md", "progress.md", "batched_trajectories.md", "diffusive_monitoring.md", "weak_pi_trajectories.md", "correlations.md", "cumulant_bridge.md", "research_utilities.md", "composite_systems.md", "global_pseudomodes.md", "prepared_artifacts.md", "parameter_scans.md", "krylov_extensions.md", "accelerators.md", "heom.md", "hops.md", "bath_fitting.md", "counting_statistics.md", "experiments.md", "inference.md", "convergence.md", "qudit_phase_space.md", "nonstabilizerness.md", "genuine_entanglement.md", "interoperability.md"]
+Pages = ["api/representation.md", "api/dynamics.md", "api/analysis.md", "api/solvers.md", "api/visualization.md", "api_tiers.md", "symmetric_kets_and_block_entropy.md", "result_outputs.md", "streaming_output.md", "progress.md", "batched_trajectories.md", "diffusive_monitoring.md", "weak_pi_trajectories.md", "correlations.md", "cumulant_bridge.md", "research_utilities.md", "composite_systems.md", "global_pseudomodes.md", "prepared_artifacts.md", "parameter_scans.md", "krylov_extensions.md", "accelerators.md", "heom.md", "hops.md", "bath_fitting.md", "counting_statistics.md", "experiments.md", "inference.md", "convergence.md", "qudit_phase_space.md", "nonstabilizerness.md", "genuine_entanglement.md", "interoperability.md"]
 Order = [:type, :function, :constant, :macro]
 ```

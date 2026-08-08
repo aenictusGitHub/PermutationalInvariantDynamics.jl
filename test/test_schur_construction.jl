@@ -150,3 +150,102 @@
         @test physical_block(big_operator,mixed_partition)≈big_block rtol=eps(BigFloat)*8
     end
 end
+
+@testset "Schur-sector and fully symmetric projectors" begin
+    basis=PIBasis(4,2)
+    projectors=[schur_sector_projector(basis,partition;T=Float64)
+                for partition in basis.sectors]
+
+    # The isotypic projectors are an orthogonal resolution of the retained
+    # Hilbert-space identity, expressed without multiplicity-copy storage.
+    resolved=reduce(+,projectors)
+    @test resolved.data≈identity_operator(basis).data atol=2e-14 rtol=2e-14
+    for (sector_index,partition) in pairs(basis.sectors)
+        projector=projectors[sector_index]
+        rank=symmetric_group_dimension(partition)*
+             unitary_group_dimension(partition)
+        @test ishermitian(projector)
+        @test (projector*projector).data≈projector.data atol=2e-14 rtol=2e-14
+        @test trace(projector)≈ComplexF64(rank) atol=2e-14 rtol=2e-14
+        for other in basis.sectors
+            block=physical_block(projector,other)
+            if other==partition
+                @test block≈Matrix{ComplexF64}(I,size(block)...) atol=2e-14 rtol=2e-14
+            else
+                @test all(iszero,block)
+            end
+        end
+        for other_index in eachindex(projectors)
+            other_index==sector_index&&continue
+            @test all(iszero,(projector*projectors[other_index]).data)
+        end
+    end
+
+    symmetric=fully_symmetric_projector(basis)
+    @test symmetric.data==schur_sector_projector(basis,(4,0)).data
+    @test trace(symmetric)≈ComplexF64(exact_binomial(5,4))
+
+    # The fastest expectation of a sector projector is the direct population
+    # contraction; this also checks the projector normalization on a state
+    # supported in every sector.
+    rho=maximally_mixed_state(basis)
+    for partition in basis.sectors
+        projector=schur_sector_projector(basis,partition)
+        @test expectation(rho,projector)≈sector_population(rho,partition)
+    end
+    product=iid_pure_state(basis,ComplexF64[sqrt(0.3),sqrt(0.7)])
+    @test expectation(product,symmetric)≈1 atol=2e-14 rtol=2e-14
+
+    # Tiny dense oracle: the compact N=2 qubit result reconstructs to
+    # (I + SWAP)/2. This exponential representation remains test-only.
+    two_qubit_basis=PIBasis(2,2)
+    compact=fully_symmetric_projector(two_qubit_basis)
+    inverse_sqrt_two=inv(sqrt(2.0))
+    schur_transform=ComplexF64[
+        1 0 0 0;
+        0 inverse_sqrt_two inverse_sqrt_two 0;
+        0 0 0 1;
+        0 inverse_sqrt_two -inverse_sqrt_two 0
+    ]
+    schur_projector=zeros(ComplexF64,4,4)
+    schur_projector[1:3,1:3].=physical_block(compact,Partition((2,0)))
+    schur_projector[4,4]=only(physical_block(compact,Partition((1,1))))
+    swap=ComplexF64[
+        1 0 0 0;
+        0 0 1 0;
+        0 1 0 0;
+        0 0 0 1
+    ]
+    dense=schur_transform'*schur_projector*schur_transform
+    @test dense≈(Matrix{ComplexF64}(I,4,4)+swap)/2 atol=2e-14 rtol=2e-14
+
+    # Qudits, scalar preservation, vacuum/d=1 boundaries, and restricted
+    # bases all use the same exact Schur-sector construction.
+    qutrit_basis=PIBasis(3,3)
+    qutrit_symmetric=fully_symmetric_projector(qutrit_basis;T=Float32)
+    @test eltype(qutrit_symmetric.data)===ComplexF32
+    @test trace(qutrit_symmetric)≈ComplexF32(exact_binomial(5,3))
+    @test physical_block(qutrit_symmetric,(first(qutrit_basis.sectors)))≈
+          Matrix{ComplexF32}(I,10,10)
+
+    setprecision(192) do
+        big_projector=schur_sector_projector(PIBasis(4,2),(2,2);T=BigFloat)
+        @test eltype(big_projector.data)===Complex{BigFloat}
+        @test (big_projector*big_projector).data≈big_projector.data rtol=16eps(BigFloat)
+    end
+
+    vacuum=PIBasis(0,2)
+    @test fully_symmetric_projector(vacuum).data==identity_operator(vacuum).data
+    one_level=PIBasis(5,1)
+    @test fully_symmetric_projector(one_level).data==identity_operator(one_level).data
+
+    restricted=PIBasis(4,2;sectors=[(2,2)])
+    @test_throws ArgumentError fully_symmetric_projector(restricted)
+    @test_throws ArgumentError schur_sector_projector(basis,(3,1,0))
+    @test_throws ArgumentError schur_sector_projector(basis,(3,1);T=Int)
+    @test_throws ArgumentError schur_sector_projector(basis,(3,1);T=AbstractFloat)
+
+    # The curated namespace exposes the exact same public bindings.
+    @test Workflow.fully_symmetric_projector===fully_symmetric_projector
+    @test Workflow.schur_sector_projector===schur_sector_projector
+end

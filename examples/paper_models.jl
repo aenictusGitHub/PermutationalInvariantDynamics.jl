@@ -269,17 +269,17 @@ end
         N, nmax; Jpair, omega_c=1, gamma=0.05, kappa=1,
         coupling=:minus)
 
-Construct the permutation-invariant all-to-all specialization of the local
-pseudomode embedding in Debecker *et al.* (2026).  Each of the `N` identical
-spin--pseudomode supersites has the matrices returned by
+Construct a permutation-invariant model of identical spin--pseudomode
+supersites with a uniform interaction on every unordered spin pair. Each of
+the `N` supersites has the matrices returned by
 [`local_pseudomode_operators`](@ref).  The Hamiltonian is
 
 `-Jpair * sum(i<j) X_i*X_j + omega_c * sum_i a_i' a_i +
  sqrt(gamma*kappa) * sum_i (L_i*a_i' + L_i'*a_i)`.
 
-`coupling` is `:minus` or `:z`.  The local mode jump has package rate
-`2kappa`, matching the manuscript convention
-`D_paper[a] = 2D_package[a]`.  `Jpair` is the literal coefficient of every
+`coupling` is `:minus` or `:z`. In this helper's Lorentzian-pseudomode
+parameterization the local mode jump has package rate `2kappa` and the
+spin--mode coupling is `sqrt(gamma*kappa)`. `Jpair` is the literal coefficient of every
 unordered pair: no Kac scaling is inserted.  The basis-taking method supports
 reuse across scans; the convenience method constructs a complete
 `PIBasis(N,2(nmax+1))` with a non-narrowing scalar type inferred from the

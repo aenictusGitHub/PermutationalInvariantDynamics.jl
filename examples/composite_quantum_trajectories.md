@@ -58,10 +58,10 @@ important for driven rates that change appreciably inside one proposed step.
 The classical RK4 update uses three full composite-vector registers; it does
 not retain four separate derivative vectors per worker.
 
-The example compares 1,024 stochastic paths with deterministic RK4 evolution
-under `composite_master_superoperator(plan)`. It also demonstrates
-observable-only online statistics and checks that serial and threaded batches
-use identical trajectory-indexed random streams.
+The default example compares 1,024 stochastic paths with deterministic RK4
+evolution under `composite_master_superoperator(plan)` at 33 output times. It
+also demonstrates observable-only online statistics and checks that serial
+and threaded batches use identical trajectory-indexed random streams.
 
 The numerical scratch is prepared once and reused across ensembles:
 
@@ -98,6 +98,11 @@ julia --project=. examples/composite_quantum_trajectories.jl
 Use the examples environment from [`README.md`](README.md) to save the
 optional Makie figure. The root package environment still runs every
 trajectory and assertion and skips only rendering.
+
+Set `PID_EXAMPLE_QUICK=1` for the original nine-time smoke grid. The fixed
+trajectory step, path counts, reproducibility check, and numerical tolerances
+are unchanged; only the saved-output density and corresponding deterministic
+steps per output interval differ.
 
 ## Interpretation and limits
 

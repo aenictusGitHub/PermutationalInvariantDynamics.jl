@@ -17,7 +17,8 @@ function thermal_model(pump)
     ))
 end
 
-pump_rates=collect(range(0.05,0.50;length=7))
+quick_example=get(ENV,"PID_EXAMPLE_QUICK","0")=="1"
+pump_rates=collect(range(0.05,0.50;length=quick_example ? 7 : 25))
 family=compile_family(thermal_model(first(pump_rates)))
 excited_fraction=(rho,pump,index)->(
     value=real(collective_expectation(rho,excited))/basis.N,

@@ -1341,3 +1341,42 @@ same exact-support materialization bounds as the CPU backend and counts
 simultaneous host assembly, device CSC storage, matrix right-hand sides, and
 index-width limits without initializing hardware or materializing an
 operator. No CPU fallback is presented as accelerator execution.
+
+## Stable full and reduced density moments (2026-08-08)
+
+For a stored coefficient block `C_nu`, direct physical evaluation would use
+`f_nu^(1-q/2) tr(C_nu^q)`. The moment kernel instead powers the
+multiplicity-weighted block `M_nu=sqrt(f_nu)C_nu`, whose trace is the sector
+population, and applies the equivalent exact scale
+`f_nu^(1-q) tr(M_nu^q)`. This prevents large Schur multiplicities from making
+the matrix entries underflow before a representable sector contraction is
+formed. Exact final scales are accumulated as binary mantissa/exponent pairs;
+their potentially large `BigInt` powers are memory-guarded before creation.
+
+`DensityPowerWorkspace` owns three matrices at the largest retained Schur
+dimension and prepared multiplicity square roots. Binary half-powering avoids
+identity multiplications; the even contraction is a Frobenius norm, while the
+odd contraction refills one weighted source block and uses the third buffer.
+Orders one and two retain the established trace and purity shortcuts. A
+prepared particle reduction writes directly into
+`ReductionWorkspace.reduced_blocks`, after which the same kernel is applied on
+the exact output basis without constructing a reduced `PIState`. Conservative
+coefficient-free bounds now guard multiplicity-table allocation before any
+large `BigInt` is created. Reduced and multi-subsystem calls account the live
+reduction resources together with power scratch and denominator temporaries,
+and workspace validation rejects pairwise buffer aliasing before a BLAS call.
+
+## Resolved literature-example grids (2026-08-08)
+
+Plotting defaults that previously joined only three to thirteen numerical
+samples now use resolved finite-size or parameter grids. Expensive scripts
+retain their former bounded calculations behind `PID_EXAMPLE_QUICK=1`, so CI
+coverage does not inherit research-figure cost. Scalar-rate stationary scans
+reuse `CompiledPIModelFamily` geometry and prepared observable plans.
+
+The boundary time-crystal example reaches `N=40` at 17 sizes without complete
+large dense spectra. Small sizes remain dense oracles; larger sizes use
+matrix-free Jacobi--Davidson at zero for the stationary/gap window and at the
+positive and negative expected oscillation frequencies for the conjugate slow
+pair. Every point checks reported Ritz residuals and conjugate pairing before
+plotting. Reviewed expected-output PNGs were regenerated from the new defaults.

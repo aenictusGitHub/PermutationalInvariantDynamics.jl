@@ -5,7 +5,8 @@ include(joinpath(@__DIR__, "utils", "makie_support.jl"))
 using .ExampleMakie
 
 function main()
-    N = 6
+    quick_example = get(ENV, "PID_EXAMPLE_QUICK", "0") == "1"
+    N = quick_example ? 6 : 10
     spin = spin_matrices(2)
 
     # Every term preserves diagonality in the Dicke/GT basis. The diagonal
@@ -32,14 +33,15 @@ function main()
     # both the reduced population solver and the general PI solver exactly.
     rho0 = dicke_state(basis, N / 2, 0)
     p0 = diagonal_populations(rho0)
-    times = range(0.0, 2.0; length=9)
+    times = range(0.0, 2.0; length=quick_example ? 9 : 41)
+    steps_per_interval = quick_example ? 64 : 16
 
     population_solution = solve_populations(plan, p0, (0.0, 2.0);
-        saveat=times, steps_per_interval=64)
+        saveat=times, steps_per_interval)
 
     prepared = compile(model; backend=:sparse)
     full_solution = solve_dynamics(prepared, rho0, (0.0, 2.0);
-        saveat=times, steps_per_interval=64)
+        saveat=times, steps_per_interval)
 
     evolution_errors = [
         norm(population_solution[index] -

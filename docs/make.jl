@@ -111,6 +111,7 @@ makedocs(sitename="PermutationalInvariantDynamics.jl",
                     "Startup latency and local sysimages"=>"startup_performance.md",
                 ],
                 "Analysis and visualization"=>[
+                    "Symmetric pure kets and block entropy"=>"symmetric_kets_and_block_entropy.md",
                     "Nonstabilizerness"=>"nonstabilizerness.md",
                     "Genuine multipartite entanglement"=>"genuine_entanglement.md",
                     "Research utilities and control"=>"research_utilities.md",

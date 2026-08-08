@@ -9,7 +9,8 @@ Monte Carlo wave-function setting introduced by Dalibard, Castin, and Mølmer,
 [*Phys. Rev. Lett.* **68**, 580 (1992)](https://doi.org/10.1103/PhysRevLett.68.580),
 and developed by Mølmer, Castin, and Dalibard,
 [*J. Opt. Soc. Am. B* **10**, 524 (1993)](https://doi.org/10.1364/JOSAB.10.000524).
-Six initially excited qubits decay independently:
+The default figure follows ten initially excited qubits as they decay
+independently:
 
 ```math
 \dot\rho=\gamma\sum_{i=1}^N\mathcal D[\sigma_-^{(i)}]\rho,
@@ -31,7 +32,8 @@ $Np_e(1-p_e)$, and no-jump probability $e^{-N\gamma t}$.
 
 ## PI solution and comparisons
 
-The script draws 500 event-driven paths using continuous hazard roots. It
+The script draws 500 event-driven paths using continuous hazard roots and
+records 31 times, rather than connecting only eleven Monte Carlo samples. It
 compares them with both the exact tensor-power PI state and deterministic
 matrix-free evolution prepared once by `compile`. No $2^N$ vector or
 $2^N\times2^N$ matrix is constructed.
@@ -106,6 +108,9 @@ configured example-figure directory.
 ```sh
 julia --project=examples examples/quantum_trajectories.jl
 ```
+
+Set `PID_EXAMPLE_QUICK=1` for the original six-qubit, eleven-time smoke run;
+the path count and stochastic accuracy gates are unchanged.
 
 For new parameter sets, converge `abstol`, `reltol`, `dtmax`, and the event-time
 tolerance before increasing the trajectory count. Statistical errors then

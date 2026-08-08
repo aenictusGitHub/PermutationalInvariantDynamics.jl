@@ -4,7 +4,7 @@ Source: [`qubit_population_dynamics.jl`](qubit_population_dynamics.jl)
 
 ## Model
 
-Six qubits evolve under the standard local and collective emission,
+The default plot evolves ten qubits under the standard local and collective emission,
 dephasing, and pumping channels constructed by `qubit_ensemble_model`. A
 diagonal one-particle Hamiltonian is included as well. In the package order
 $(|g>,|e>)$, the jump matrices are
@@ -53,7 +53,8 @@ dimension is `sum(g_nu)`, compared with `sum(g_nu^2)` general PI coordinates.
 
 `solve_populations` evolves only these certified variables. The script also
 compiles the ordinary sparse PI Liouvillian and propagates the complete
-`PIState` with the same time grid and RK4 resolution. At every saved time it
+`PIState` with the same time grid and RK4 resolution. The default 41-time grid
+resolves the relaxation curve rather than drawing it through nine samples. At every saved time it
 extracts `diagonal_populations` from the full solution and requires agreement
 to better than `2e-10`.
 
@@ -88,6 +89,10 @@ asserted unmodified errors remain the regression.
 ```sh
 julia --project=. examples/qubit_population_dynamics.jl
 ```
+
+Set `PID_EXAMPLE_QUICK=1` for the `N = 6`, nine-time executable CI run. The
+quick branch preserves the same physical checks and uses a correspondingly
+finer number of integration steps per saved interval.
 
 The output reports the invariance certificate, the reduced and full PI
 coordinate counts, time-evolution discrepancies, and stationary residuals.

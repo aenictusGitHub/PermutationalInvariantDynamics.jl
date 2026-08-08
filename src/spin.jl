@@ -85,6 +85,117 @@ function computational_product_state(b::PIBasis,level::Integer;
     iid_pure_state(b,psi)
 end
 
+function _symmetric_occupation_counts(b::PIBasis{D},occupations) where D
+    (occupations isa Tuple||occupations isa AbstractVector)||throw(ArgumentError(
+        "occupations must be an integer tuple or vector"))
+    length(occupations)==D||throw(DimensionMismatch(
+        "occupations must contain one count for each of the $D local levels"))
+    counts=ntuple(Val(D)) do level
+        count=occupations[level]
+        count isa Integer||throw(ArgumentError(
+            "occupation counts must be integers"))
+        0<=count<=b.N||throw(ArgumentError(
+            "occupation counts must lie in 0:$(b.N)"))
+        Int(count)
+    end
+    sum(big(count) for count in counts;init=big(0))==b.N||throw(ArgumentError(
+        "occupation counts must sum to N=$(b.N)"))
+    counts
+end
+
+# In the fully symmetric irrep, GT patterns are occupation states ordered by
+# their stored entry tuples. This exact rank formula avoids an O(g_nu) scan of
+# the potentially large symmetric block and costs only O(d).
+function _symmetric_occupation_index(counts::NTuple{D,Int}) where D
+    remaining=sum(big(count) for count in counts;init=big(0))
+    zero_based=big(0)
+    for level in 1:D-1
+        trailing_levels=big(D-level)
+        count=big(counts[level])
+        zero_based+=exact_binomial(remaining+trailing_levels,trailing_levels)-
+                    exact_binomial(remaining-count+trailing_levels,trailing_levels)
+        remaining-=count
+    end
+    try
+        Int(zero_based+1)
+    catch error
+        error isa InexactError||rethrow()
+        throw(ArgumentError(
+            "the symmetric occupation index is not representable as an Int"))
+    end
+end
+
+"""
+    symmetric_occupation_state(basis, occupations; T=Float64)
+
+Construct the normalized pure symmetric occupation (qudit Dicke/Fock) state
+with local counts `occupations=(n1,...,nd)`. Counts use the package's
+one-based local-level order, must be nonnegative integers, and must sum to
+`basis.N`.
+
+The state is placed directly in the fully symmetric Schur sector
+``(N,0,...,0)``. Its GT-pattern index is evaluated from an exact ``O(d)``
+combinatorial rank, so the constructor neither scans the complete block nor
+forms a ``d^N`` state vector. The symmetric sector must already be retained
+by `basis`.
+"""
+function symmetric_occupation_state(b::PIBasis,occupations;
+                                    T::Type{<:AbstractFloat}=Float64)
+    scalar_type=_concrete_pi_real_type(T)
+    counts=_symmetric_occupation_counts(b,occupations)
+    partition=_fully_symmetric_partition(b)
+    sector_index=_sidx(b,partition)
+    pattern_index=_symmetric_occupation_index(counts)
+    patterns=b.patterns[sector_index]
+    1<=pattern_index<=length(patterns)&&
+        content(patterns[pattern_index])==counts||error(
+            "internal error: symmetric occupation rank disagrees with GT ordering")
+    state=PIState(b;T=scalar_type)
+    coefficient_block(state,partition)[pattern_index,pattern_index]=
+        one(scalar_type)
+    state
+end
+
+"""
+    dicke_state(basis, excitations; T=Float64)
+    dicke_state(basis, occupations; T=Float64)
+
+Convenient fully symmetric Dicke-state forms. For a qubit basis, an integer
+`excitations=k` constructs the state with occupations `(N-k,k)`, where level
+2 is ``|e>``. A tuple or vector constructs the corresponding qubit or qudit
+[`symmetric_occupation_state`](@ref).
+
+Use the three-argument method `dicke_state(basis,j,m)` when a lower-total-spin
+qubit sector is intended.
+"""
+function dicke_state(b::PIBasis,excitations::Integer;
+                     T::Type{<:AbstractFloat}=Float64)
+    b.d==2||throw(ArgumentError(
+        "an excitation-count Dicke state requires a qubit basis; pass an occupation tuple for qudits"))
+    0<=excitations<=b.N||throw(ArgumentError(
+        "excitations must lie in 0:$(b.N)"))
+    symmetric_occupation_state(b,(b.N-Int(excitations),Int(excitations));T=T)
+end
+
+function dicke_state(b::PIBasis,
+                     occupations::Union{Tuple,AbstractVector};
+                     T::Type{<:AbstractFloat}=Float64)
+    symmetric_occupation_state(b,occupations;T=T)
+end
+
+"""
+    w_state(basis; T=Float64)
+
+Construct the normalized one-excitation qubit W state. This is the fully
+symmetric Dicke state with occupations `(N-1,1)`. At least one qubit is
+required, and no ``2^N`` state vector is formed.
+"""
+function w_state(b::PIBasis;T::Type{<:AbstractFloat}=Float64)
+    b.d==2||throw(ArgumentError("w_state requires a qubit basis"))
+    b.N>=1||throw(ArgumentError("w_state requires at least one qubit"))
+    dicke_state(b,1;T=T)
+end
+
 function _twice_qubit_label(value::Real,name::AbstractString)
     isfinite(value)||throw(ArgumentError("$name must be finite"))
     doubled=if value isa Integer||value isa Rational
@@ -177,8 +288,9 @@ function _spin_state_real_type(requested,values...)
                        if value isa AbstractFloat]
         return isempty(types) ? Float64 : foldl(promote_type,types)
     end
-    requested isa Type&&requested<:AbstractFloat||throw(ArgumentError(
-        "T must be an AbstractFloat type or nothing"))
+    requested isa Type&&requested<:AbstractFloat&&isconcretetype(requested)||
+        throw(ArgumentError(
+            "T must be a concrete AbstractFloat type or nothing"))
     for value in values
         converted=try
             convert(requested,value)
@@ -191,11 +303,75 @@ function _spin_state_real_type(requested,values...)
     requested
 end
 
+function _cat_state_impl(b::PIBasis{D},first_level::Int,second_level::Int,
+                         phase::Real,::Type{R}) where {D,R<:AbstractFloat}
+    converted_phase=convert(R,phase)
+    isfinite(converted_phase)||throw(ArgumentError("phase must be finite"))
+    partition=_fully_symmetric_partition(b)
+    sector_index=_sidx(b,partition)
+    patterns=b.patterns[sector_index]
+    first_counts=ntuple(level->level==first_level ? b.N : 0,Val(D))
+    second_counts=ntuple(level->level==second_level ? b.N : 0,Val(D))
+    first_index=_symmetric_occupation_index(first_counts)
+    second_index=_symmetric_occupation_index(second_counts)
+    1<=first_index<=length(patterns)&&
+        content(patterns[first_index])==first_counts||error(
+            "internal error: first cat-state occupation rank disagrees with GT ordering")
+    1<=second_index<=length(patterns)&&
+        content(patterns[second_index])==second_counts||error(
+            "internal error: second cat-state occupation rank disagrees with GT ordering")
+    state=PIState(b;T=R)
+    block=coefficient_block(state,partition)
+    half=inv(R(2))
+    coherence=half*cis(-converted_phase)
+    block[first_index,first_index]=half
+    block[second_index,second_index]=half
+    block[first_index,second_index]=coherence
+    block[second_index,first_index]=conj(coherence)
+    state
+end
+
+"""
+    cat_state(basis, level_a=1, level_b=basis.d; phase=0, T=nothing)
+
+Construct the balanced qudit cat state
+``(|level_a>^{\\otimes N} + exp(im*phase)|level_b>^{\\otimes N})/sqrt(2)`` directly
+in the fully symmetric Schur sector. Levels are distinct one-based indices in
+`1:basis.d`, and `basis.N >= 1` is required. No full ``d^N`` vector is
+formed.
+
+The scalar type is inferred from a floating `phase`, or defaults to `Float64`
+for the exact zero phase. An explicit `T` must represent the phase without
+narrowing. [`ghz_state`](@ref) is the qubit `(level_a,level_b)=(1,2)`
+specialization.
+"""
+function cat_state(b::PIBasis{D},level_a::Integer=1,level_b::Integer=b.d;
+                   phase::Real=0,T=nothing) where D
+    b.N>=1||throw(ArgumentError("cat_state requires at least one particle"))
+    1<=level_a<=b.d||throw(ArgumentError(
+        "level_a must be a one-based local-state index in 1:$(b.d)"))
+    1<=level_b<=b.d||throw(ArgumentError(
+        "level_b must be a one-based local-state index in 1:$(b.d)"))
+    level_a!=level_b||throw(ArgumentError(
+        "cat-state levels must be distinct"))
+    first_level=Int(level_a);second_level=Int(level_b)
+    R=_spin_state_real_type(T,phase)
+    if R===BigFloat
+        input_precision=phase isa BigFloat ?
+            max(precision(BigFloat),precision(phase)) : precision(BigFloat)
+        return setprecision(BigFloat,input_precision) do
+            _cat_state_impl(
+                b,first_level,second_level,phase,BigFloat)
+        end
+    end
+    _cat_state_impl(b,first_level,second_level,phase,R)
+end
+
 """
     ghz_state(basis; phase=0, T=nothing)
 
 Construct the qubit GHZ state
-``(|g>^otimes N + exp(im*phase)|e>^otimes N)/sqrt(2)`` directly in the fully
+``(|g>^{\\otimes N} + exp(im*phase)|e>^{\\otimes N})/sqrt(2)`` directly in the fully
 symmetric Schur sector. `basis` must contain that sector and have `N >= 1`;
 no full ``2^N`` vector is formed. The scalar type is inferred from a floating
 `phase` (or defaults to `Float64` for the exact default phase); pass `T`
@@ -203,22 +379,7 @@ explicitly to select a non-narrowing output type.
 """
 function ghz_state(b::PIBasis;phase::Real=0,T=nothing)
     b.d==2||throw(ArgumentError("ghz_state requires a qubit basis"))
-    b.N>=1||throw(ArgumentError("ghz_state requires at least one qubit"))
-    R=_spin_state_real_type(T,phase)
-    converted_phase=convert(R,phase)
-    isfinite(converted_phase)||throw(ArgumentError("phase must be finite"))
-    partition=Partition((b.N,0))
-    sector_index=_sidx(b,partition)
-    patterns=b.patterns[sector_index]
-    ground=findfirst(pattern->content(pattern)==(b.N,0),patterns)
-    excited=findfirst(pattern->content(pattern)==(0,b.N),patterns)
-    (ground===nothing||excited===nothing)&&error(
-        "internal error: symmetric qubit sector lacks a polarized GT pattern")
-    amplitudes=zeros(Complex{R},length(patterns))
-    scale=inv(sqrt(R(2)))
-    amplitudes[ground]=scale
-    amplitudes[excited]=scale*cis(converted_phase)
-    sector_density_matrix(b,partition,amplitudes*amplitudes')
+    cat_state(b,1,2;phase=phase,T=T)
 end
 
 """

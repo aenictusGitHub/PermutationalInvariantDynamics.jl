@@ -6,6 +6,7 @@ include(joinpath(@__DIR__, "utils", "makie_support.jl"))
 using .ExampleMakie
 
 # One compressed ensemble coupled to an explicitly truncated auxiliary qubit.
+quick_example=get(ENV,"PID_EXAMPLE_QUICK","0")=="1"
 atoms=PIBasis(4,2)
 auxiliary=FiniteOperatorBasis(2;label=:ancilla)
 basis=CompositePIBasis(atoms,auxiliary)
@@ -30,7 +31,7 @@ loss=CompositeJumpChannel(
     basis,1=>Jm,2=>sm;rate=0.35,label=:joint_emission)
 plan=CompositeTrajectoryPlan(background,loss)
 
-times=collect(0.0:0.25:2.0)
+times=collect(range(0.0,2.0;length=quick_example ? 9 : 33))
 dt=0.01
 npaths=1024
 batch_workspace=CompositeTrajectoryBatchWorkspace(
@@ -45,7 +46,7 @@ stochastic=trajectory_average(paths)
 # The plan exposes the independently propagated unconditional generator.
 master=composite_master_superoperator(plan)
 deterministic=time_evolution(
-    master,rho0,times;steps_per_interval=100)
+    master,rho0,times;steps_per_interval=quick_example ? 100 : 25)
 
 final_error=norm(stochastic[end].data-deterministic[end].data)
 @assert final_error<0.12
@@ -119,7 +120,7 @@ if makie_available()
             color=:black,linewidth=2.8,label="master equation")
         M.scatterlines!(
             axis,times,stochastic_values;
-            color=:darkorange2,linewidth=1.5,markersize=6,
+            color=:darkorange2,linewidth=1.5,markersize=4,
             label="1,024-path state average")
         M.lines!(
             axis,times,statistics.mean;

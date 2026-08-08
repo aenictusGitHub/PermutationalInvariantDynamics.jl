@@ -1787,6 +1787,11 @@ Return `tr(rho_k^2)` for the `k`-particle state returned by
 [`reduced_state`](@ref). The result for `k=0` is one and that for `k=N` equals
 [`purity`](@ref).
 
+With a reduction-capable [`ReductionWorkspace`](@ref), the result is
+contracted directly from the accumulated reduced Schur blocks; no
+intermediate reduced [`PIState`](@ref) is allocated. Reuse the plan and
+task-owned workspace when evaluating a family of states.
+
 Set `check=false` only when the caller has already validated `rho`.
 `BigFloat` plan-only and prepared-workspace calls preserve their source/plan
 precision independently of the ambient precision.

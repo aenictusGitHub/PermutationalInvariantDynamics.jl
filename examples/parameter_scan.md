@@ -12,8 +12,9 @@ pumping reservoir,
  +r\sum_i\mathcal D[\sigma_i^+]\rho.
 ```
 
-The exact stationary excited-state fraction is $r/(1+r)$. This gives a
-compact validation of both the stationary solver and continuation machinery.
+The exact stationary excited-state fraction is $r/(1+r)$. The default
+25-point grid gives a resolved stationary curve while remaining a compact
+validation of both the stationary solver and continuation machinery.
 
 ## Prepared scan
 
@@ -81,7 +82,7 @@ prepared applications, and introduces no ODE solver dependency.
 The left panel compares the streamed PI stationary values with the exact
 thermal fraction $r/(1+r)$; the right panel shows the residual returned at
 each continuation point. The plot reuses the callback records and does not
-retain or recompute stationary states. It is a default-grid illustration:
+retain or recompute stationary states. It is a resolved default-grid illustration:
 the pointwise solver assertions and exact curve are the quantitative checks.
 
 ## Run
@@ -89,6 +90,9 @@ the pointwise solver assertions and exact curve are the quantitative checks.
 ```sh
 julia --project=. examples/parameter_scan.jl
 ```
+
+Set `PID_EXAMPLE_QUICK=1` to use the original seven-point grid in executable
+smoke checks. Continuation, restart, and accuracy assertions remain enabled.
 
 For independent scans set `continuation=false` and use
 `execution=:threads`. After `using Distributed` and adding workers, the

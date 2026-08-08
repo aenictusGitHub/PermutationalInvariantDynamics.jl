@@ -176,9 +176,9 @@ its one-body self term and symmetric two-body cross term. This produces the
 same finite PI Liouvillian as the direct $J_x^2-J_y^2$ construction while
 retaining the microscopic body order needed by `MeanFieldPlan`.
 
-The qubit example reports the finite-size gap across the transition
+The qubit example reports a 21-point finite-size gap curve across the transition
 `(gammaI+gammaC)/abs(V)=2` and compares three distinct predictions: the exact
-correlated `N=8` PI steady state, the finite-`N` product closure, and the
+correlated `N=10` PI steady state, the finite-`N` product closure, and the
 thermodynamic mean-field fixed point following Eqs. (10). The last is also
 checked against the analytical branch and its numerical fixed-point residual.
 Equation (11) is not used: it concerns the singular collective-only case

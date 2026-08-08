@@ -11,6 +11,7 @@ omega_z = 1.0
 omega_x = 3omega_z
 Gamma_up = 0.2omega_z
 Gamma_down = 0.0
+quick_example = get(ENV, "PID_EXAMPLE_QUICK", "0") == "1"
 
 function slow_oscillatory_mode(values; stationary_tol=1e-9, frequency_tol=1e-7)
     modes = filter(z -> abs(z) > stationary_tol && abs(imag(z)) > frequency_tol,
@@ -19,7 +20,10 @@ function slow_oscillatory_mode(values; stationary_tol=1e-9, frequency_tol=1e-7)
     modes[argmax(real.(modes))]
 end
 
-sizes = (8, 12, 16)
+# The normal figure uses nine even sizes and extends the checked curve to
+# N=24.  The original three-size calculation remains available as a quick
+# smoke run; it keeps the same complete-spectrum branch identification.
+sizes = quick_example ? (8, 12, 16) : Tuple(8:2:24)
 decay_rates = Float64[]
 frequencies = Float64[]
 
@@ -29,9 +33,9 @@ for N in sizes
         Gamma_up=Gamma_up, Gamma_down=Gamma_down)
     prepared = compile(model; backend=:sparse)
 
-    # The complete spectrum is affordable in the fully symmetric sector at
-    # these sizes and lets us identify the slow complex-conjugate branch
-    # without assuming that it is the first nonstationary mode.
+    # The complete spectrum remains affordable for this bounded research grid
+    # and lets us identify the slow complex-conjugate branch without assuming
+    # that it is the first nonstationary mode.
     values = liouvillian_spectrum(
         prepared; target=:largest_real, nev=pi_dimension(prepared),
         algorithm=:dense)
@@ -47,9 +51,9 @@ for N in sizes
             "frequency=$frequency")
 end
 
-# This is only a modest-size finite-N check, not a fit of the asymptotic
-# exponent reported in the paper. It nevertheless resolves the expected
-# movement of the oscillatory branch toward the imaginary axis.
+# This is a finite-N check, not a fit of the asymptotic exponent reported in
+# the paper. It nevertheless resolves the expected movement of the
+# oscillatory branch toward the imaginary axis over nine default sizes.
 @assert all(isfinite, decay_rates) && all(>(0), decay_rates)
 @assert decay_rates[end] < decay_rates[1]
 println("decay ratio N=$(sizes[end]) / N=$(sizes[1]) = ",
@@ -70,18 +74,19 @@ if makie_available()
     M.lines!(decay_axis, plotted_sizes, decay_rates;
              color=:firebrick, linewidth=2.7)
     M.scatter!(decay_axis, plotted_sizes, decay_rates;
-               color=:firebrick, markersize=11, label="finite-N PI spectrum")
+               color=:firebrick, markersize=8, label="finite-N PI spectrum")
     M.axislegend(decay_axis; position=:rt, labelsize=12)
 
     M.lines!(frequency_axis, plotted_sizes, frequencies;
              color=:royalblue, linewidth=2.7)
     M.scatter!(frequency_axis, plotted_sizes, frequencies;
-               color=:royalblue, markersize=11, label="finite-N PI spectrum")
+               color=:royalblue, markersize=8, label="finite-N PI spectrum")
     M.axislegend(frequency_axis; position=:rb, labelsize=12)
 
     M.Label(
         figure[2, 1:2],
-        "Three modest sizes resolve a precursor; no asymptotic exponent is fitted.";
+        "Nine default sizes through N=24 resolve the finite-size trend; " *
+        "no asymptotic exponent is fitted.";
         fontsize=14, color=:gray35, tellwidth=false)
     save_example_figure(figure, "interacting_boundary_time_crystal")
 end

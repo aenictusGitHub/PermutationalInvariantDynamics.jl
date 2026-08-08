@@ -9,7 +9,8 @@ The callback `f` is evaluated on physical density eigenvalues.  Generic
 callbacks cannot be algebraically rescaled, so an eigenvalue or final weighted
 term outside the state's floating type raises with wider-precision guidance.
 Use specialized routines such as [`von_neumann_entropy`](@ref) and
-[`renyi_entropy`](@ref) for their overflow-safe logarithmic formulas.
+[`renyi_entropy`](@ref) for their overflow-safe logarithmic formulas, and
+[`trace_power`](@ref) for stable positive-integer density moments.
 """
 function spectral_trace(rho::PIState,f;
         atol::Real=_analysis_atol(rho),rtol::Real=_state_rtol(rho))

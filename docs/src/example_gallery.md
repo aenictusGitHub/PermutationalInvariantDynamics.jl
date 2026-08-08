@@ -114,11 +114,11 @@ This page is generated from [`examples/catalog.toml`](https://github.com/aenictu
   </div>
   <p id="pid-example-count" role="status"></p>
   <div class="pid-example-cards">
-    <article class="pid-example-card" data-search="all-to-all spins with identical local pseudomodes debecker et al., generating spatial correlations in ising chains via bath engineering (2026 draft); pi all-to-all specialization advanced long pseudomodes steady-state negativity parameter-map" data-difficulty="advanced" data-tasks="pseudomodes steady-state negativity parameter-map" data-stochastic="false">
+    <article class="pid-example-card" data-search="all-to-all spins with identical local pseudomodes generic pi lorentzian-pseudomode model; see garraway, phys. rev. a 55, 2290 (1997) advanced long pseudomodes steady-state negativity parameter-map" data-difficulty="advanced" data-tasks="pseudomodes steady-state negativity parameter-map" data-stochastic="false">
       <img loading="lazy" src="../assets/example_figures/all_to_all_xx_spin_local_pseudomodes.png" alt="Expected output for All-to-all spins with identical local pseudomodes">
       <h2>All-to-all spins with identical local pseudomodes</h2>
       <p><strong>advanced</strong> · long · deterministic</p>
-      <p>Debecker et al., Generating spatial correlations in Ising chains via bath engineering (2026 draft); PI all-to-all specialization</p>
+      <p>Generic PI Lorentzian-pseudomode model; see Garraway, Phys. Rev. A 55, 2290 (1997)</p>
       <p class="pid-example-tasks"><code>pseudomodes</code> <code>steady-state</code> <code>negativity</code> <code>parameter-map</code></p>
       <p><a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/all_to_all_xx_spin_local_pseudomodes.md">Guide</a> · <a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/all_to_all_xx_spin_local_pseudomodes.jl">Script</a></p>
       <pre><code>julia --project=. examples/all_to_all_xx_spin_local_pseudomodes.jl</code></pre>

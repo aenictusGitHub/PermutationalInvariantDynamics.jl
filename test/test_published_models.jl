@@ -491,7 +491,7 @@ end
     end
 end
 
-@testset "Debecker 2026 all-to-all Ising pseudomode specialization" begin
+@testset "all-to-all XX spins with identical local pseudomodes" begin
     # One retained boson is enough to fix the supersite ordering and scalar
     # contract without making this literature-model gate expensive.
     operators32=local_pseudomode_operators(1;T=Float32)
@@ -513,8 +513,8 @@ end
     @test model32.terms[2].rate isa Float32
     @test model32.terms[2].rate≈Float32(sqrt(.04*.5)) rtol=eps(Float32)
     @test model32.terms[3].rate===-.23f0
-    # The manuscript uses twice the package dissipator, so its kappa becomes
-    # the package rate 2kappa.
+    # This helper's Lorentzian-pseudomode parameterization uses package jump
+    # rate 2kappa.
     @test model32.terms[4].rate===1.0f0
     @test eltype(liouvillian(model32;representation=:sparse))===ComplexF32
 

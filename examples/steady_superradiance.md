@@ -12,12 +12,16 @@ repumping:
  +w\sum_i\mathcal D[\sigma_i^+]\rho .
 ```
 
-The example uses `N = 10` and scans the pump rate from weak to strong pumping.
+The default figure uses `N = 20` and a 41-point logarithmic pump grid, with
+$w=N\Gamma_c/2$ and $w=N\Gamma_c$ inserted exactly for 43 sampled states. It therefore resolves the
+weak-pump, collective-emission peak, and saturated regimes instead of joining
+only five isolated stationary states.
 
 ## Solution
 
 Represent collective emission with `CollectiveJump` and local repumping with
-`LocalJump`. For each `w`, `compile` prepares the Liouvillian once and
+`LocalJump`. Only their scalar rates vary, so `compile_family` prepares the
+common Schur geometry once. For each `w`, `specialize` binds the new rates and
 `stationary_state(...; algorithm=DirectAlgorithm())` solves the
 trace-constrained PI linear system. The emitted intensity is
 
@@ -43,6 +47,10 @@ copies are saved as `steady_superradiance.*`.
 ```sh
 julia --project=examples examples/steady_superradiance.jl
 ```
+
+Set `PID_EXAMPLE_QUICK=1` for the lightweight `N = 10`, five-point smoke run.
+Quick mode retains the same physical equations, normalizations, and numerical
+checks.
 
 Finite `N` shifts and rounds the optimum, so compare trends rather than
 expecting the asymptotic maximum exactly.

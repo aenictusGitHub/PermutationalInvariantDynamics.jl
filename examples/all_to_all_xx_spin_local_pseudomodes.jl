@@ -8,14 +8,12 @@ using .ExampleMakie
 include(joinpath(@__DIR__, "utils", "contour_fit.jl"))
 using .ExampleContourFit
 
-# Permutation-invariant all-to-all specialization of the local-pseudomode
-# embedding in Debecker et al., "Generating spatial correlations in Ising
-# chains via bath engineering" (2026 draft).  The draft studies a
-# nearest-neighbour ring.  Here every spin pair has the same interaction, so
-# one spin plus its local truncated pseudomode is an exact PI supersite.
+# Permutation-invariant model of identical spin--pseudomode supersites with
+# the same interaction on every unordered spin pair. One spin plus its local
+# truncated pseudomode is an exact PI supersite.
 #
 # Set PI_PSEUDOMODE_FULL_SCAN=1 for a denser parameter grid.  The default is a
-# compact executable research example, not a digitization of the manuscript.
+# compact executable research example.
 const FULL_SCAN = get(ENV, "PI_PSEUDOMODE_FULL_SCAN", "0") == "1"
 const CONTOUR_FIT_FALLBACK_RELATIVE_L2_THRESHOLD = 0.10
 
@@ -410,8 +408,7 @@ function main(;N::Int=parse(Int,get(ENV,"PI_PSEUDOMODE_N","3")),
     @assert action_error<2e-10
     @assert trace_preservation_error<2e-9
 
-    # Manuscript-Fig.-2(b)-style dynamics, now using the only distinct PI pair
-    # correlation rather than a distance-dependent nearest-neighbour value.
+    # Long-time dynamics of the single distinct PI pair correlation.
     dynamics_times=collect(range(0.0,100.0;length=201))
     kappas=(1.0,5.0,20.0)
     dynamics=[dynamics_case(
@@ -427,9 +424,10 @@ function main(;N::Int=parse(Int,get(ENV,"PI_PSEUDOMODE_N","3")),
     @assert maximum(curve.estimated_error for curve in dynamics)<2e-8
     @assert maximum(maximum(curve.top) for curve in dynamics)<0.08
 
-    # A coarse stationary map analogous in layout to Fig. 3.  Since a PI
-    # state has no distance coordinate, the data are the common pair Cxx and
-    # the negativity of the two physical spins after tracing both modes.
+    # A coarse stationary map over the two dimensionless model parameters.
+    # Since a PI state has no distance coordinate, the data are the common
+    # pair Cxx and the negativity of the two physical spins after tracing both
+    # modes.
     J_values=FULL_SCAN ? collect(range(0.05,0.55;length=9)) :
                          [0.05,0.15,0.25,0.40,0.55]
     kappa_values=FULL_SCAN ? collect(10 .^ range(log10(0.5),log10(8.0);length=9)) :
@@ -601,7 +599,7 @@ function main(;N::Int=parse(Int,get(ENV,"PI_PSEUDOMODE_N","3")),
     @assert weak_trajectory_stationary.residual<0.1
     @assert weak_trajectory_stationary.trace_error<2e-8
 
-    # Manuscript-Fig.-4-style strong-symmetry calculation.  For L=sigma_z,
+    # Strong-symmetry calculation for L=sigma_z.
     # the fully excited spin product has a definite global spin parity.  A
     # weak conjugation projector would retain both diagonal Hilbert-parity
     # blocks and leave the stationary solve nonunique.  Resolve the ket and
@@ -702,9 +700,8 @@ function main(;N::Int=parse(Int,get(ENV,"PI_PSEUDOMODE_N","3")),
     @assert isfinite(ghz_half_fit.alpha)&&ghz_half_fit.alpha>0
     @assert ghz_half_fit.point_count>=2
 
-    # The draft does not state its pseudomode cutoff.  Compare nmax=1 and 2 at
-    # one dynamical point and inspect the first omitted-boundary population in
-    # the wider calculation.
+    # Compare nmax=1 and 2 at one dynamical point and inspect the
+    # first omitted-boundary population in the wider calculation.
     cutoff_times=collect(range(0.0,6.0;length=61))
     cutoff_1=cutoff_curve(
         N,1;J=J_dynamic,omega_c,gamma,kappa=2.0,
@@ -933,7 +930,7 @@ if makie_available()
         "HS SE=$(round(results.weak_trajectory_stationary.standard_error;sigdigits=2)), " *
         "Cxx=$(round(results.weak_trajectory_cxx;sigdigits=3)), " *
         "negativity=$(round(results.weak_trajectory_negativity;sigdigits=3)); " *
-        "no spatial correlation length is defined.";
+        "all unordered pairs share the same correlator.";
         fontsize=14,color=:gray35,tellwidth=false)
     save_example_figure(
         figure,"all_to_all_xx_spin_local_pseudomodes")

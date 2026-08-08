@@ -167,7 +167,7 @@ tasks = ["pseudomodes", "steady-state", "negativity", "parameter-map"]
 runtime_class = "long"
 stochastic = false
 optional_dependencies = ["CairoMakie"]
-citation = "Debecker et al., Generating spatial correlations in Ising chains via bath engineering (2026 draft); PI all-to-all specialization"
+citation = "Generic PI Lorentzian-pseudomode model; see Garraway, Phys. Rev. A 55, 2290 (1997)"
 expected_outputs = [
     "docs/src/assets/example_figures/all_to_all_xx_spin_local_pseudomodes.png",
     "docs/src/assets/example_figures/all_to_all_xx_spin_local_pseudomodes_cutoff.png",

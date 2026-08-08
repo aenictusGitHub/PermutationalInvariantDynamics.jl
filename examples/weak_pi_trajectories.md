@@ -39,9 +39,10 @@ I_c=\Gamma_c\langle J_+J_-\rangle,
 I_{\mathrm{fs}}=\gamma_l\left(N/2+\langle J_z\rangle\right).
 ```
 
-The default $N=6$ and 400 paths per unraveling make this a fast backend
-regression. The paper used $N=50$ and 512 pseudo-state paths, so this is not
-a digitization of its figure.
+The default $N=6$, 400 paths per unraveling, and 31 saved times make this a
+resolved but still compact backend regression. The paper used $N=50$ and 512
+pseudo-state paths, so this is not a digitization of its figure. Set
+`PID_EXAMPLE_QUICK=1` to retain the original eleven-time output grid.
 
 ## Four solution routes
 

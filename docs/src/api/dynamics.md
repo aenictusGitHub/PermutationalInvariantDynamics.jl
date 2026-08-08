@@ -123,6 +123,26 @@ applications are rejected because one fixed exponential does not represent
 their dynamics. Keep the default RK4 route for driven models, or use
 `dynamics_problem` with an adaptive SciML solver.
 
+## Physical fully symmetric ket dynamics
+
+For closed pure-state dynamics confined to the sole fully symmetric irrep,
+the ket-native plan avoids the quadratic density coordinate. The immutable
+plan is shareable; fixed-step and Krylov workspaces are task-owned. Read
+[Symmetric pure kets and block-resolved
+entropy](../symmetric_kets_and_block_entropy.md) before substituting this
+physical ket for a weak-PI or HOPS pseudo-ket.
+
+```@docs
+SymmetricKetHamiltonianPlan
+SymmetricKetWorkspace
+apply_symmetric_hamiltonian!
+evolve_symmetric_ket!
+time_evolve_symmetric_ket
+krylov_evolve_symmetric_ket!
+krylov_time_evolve_symmetric_ket
+symmetric_ket_expectation
+```
+
 ## Certified Schur-diagonal populations
 
 ```@docs

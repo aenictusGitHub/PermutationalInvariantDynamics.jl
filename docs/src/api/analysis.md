@@ -45,6 +45,8 @@ spin_wigner
 ## Entropies and distances
 
 ```@docs
+DensityPowerWorkspace
+trace_power
 von_neumann_entropy
 renyi_entropy
 reduced_entropy
@@ -55,6 +57,22 @@ fidelity
 bures_distance
 quantum_relative_entropy
 hilbert_schmidt_distance
+```
+
+## Prepared Hilbert-block entropy
+
+These routines certify a block partition inside the retained Schur sectors
+and diagonalize only its blocks. Exact support is required by default;
+nonzero block tolerances explicitly select a projected interpretation and are
+reported by the diagnostics. See [Symmetric pure kets and block-resolved
+entropy](../symmetric_kets_and_block_entropy.md) for the prepared workflow.
+
+```@docs
+HilbertBlockEntropyPlan
+HilbertBlockEntropyWorkspace
+HilbertBlockEntropyDiagnostics
+block_entropy_diagnostics
+block_von_neumann_entropy
 ```
 
 ## Nonstabilizerness
@@ -109,6 +127,8 @@ ReductionPlan
 ReductionWorkspace
 reduced_state
 reduced_state!
+reduced_trace_power
+reduced_trace_powers
 reduced_purity
 reduced_purities
 partial_transpose_spectrum

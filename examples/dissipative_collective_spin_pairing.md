@@ -12,8 +12,10 @@ H=\frac{V}{Nj}(J_x^2-J_y^2),
 
 together with individual and collective spin-lowering channels of respective
 rates `gammaI/j` and `gammaC/(N*j)` in the package dissipator convention. It
-uses `N = 8`, `V = 1`, `gammaC = 0.2`, and scans `gammaI` below, at, and above
-the thermodynamic transition `gammaI + gammaC = 2abs(V)`.
+uses `N = 10`, `V = 1`, `gammaC = 0.2`, and scans 21 `gammaI` values below,
+at, and above the thermodynamic transition
+`gammaI + gammaC = 2abs(V)`. The denser default resolves the finite-size
+crossover instead of connecting only three stationary states.
 
 The reusable constructor preserves the exact microscopic decomposition
 
@@ -31,7 +33,9 @@ retained for the higher-spin version of the model.
 
 ## Three levels of prediction
 
-For every parameter point, the script compares:
+Only the independent decay rate changes, so `compile_family` prepares the
+one- and two-body Schur geometry once and `specialize` reuses it throughout
+the scan. For every parameter point, the script compares:
 
 1. the exact correlated finite-`N` PI steady state;
 2. `MeanFieldPlan(...; limit=:finite)`, the finite-`N` product-state closure;
@@ -109,6 +113,9 @@ copies are saved as `dissipative_collective_spin_pairing_meanfield.*`.
 ```sh
 julia --project=examples examples/dissipative_collective_spin_pairing.jl
 ```
+
+Set `PID_EXAMPLE_QUICK=1` for the lightweight `N = 8`, three-point smoke run.
+It retains the same physical model and numerical checks.
 
 ## Expected output
 

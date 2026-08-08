@@ -145,6 +145,184 @@
             PIBasis(2,2);phase=0.3,T=Float32)
     end
 
+    @testset "short common-state constructors" begin
+        # Exhaust the small symmetric GT blocks to certify the O(d) exact
+        # occupation-rank formula, including the vacuum and d=1 boundaries.
+        for particle_count in 0:4,local_dimension in 1:4
+            symmetric_sector=ntuple(
+                level->level==1 ? particle_count : 0,local_dimension)
+            restricted=PIBasis(
+                particle_count,local_dimension;sectors=[symmetric_sector])
+            partition=only(restricted.sectors)
+            for pattern in only(restricted.patterns)
+                counts=content(pattern)
+                constructed=symmetric_occupation_state(restricted,counts)
+                reference=basis_state(restricted,partition,pattern)
+                @test constructed.data==reference.data
+            end
+        end
+
+        qutrit_basis=PIBasis(4,3)
+        counts=(1,2,1)
+        occupation=symmetric_occupation_state(qutrit_basis,counts)
+        @test trace(occupation)≈1 atol=2e-14
+        @test purity(occupation)≈1 atol=2e-14
+        @test sector_population(occupation,Partition((4,0,0)))≈1 atol=2e-14
+        @test dicke_state(qutrit_basis,counts).data==occupation.data
+        @test dicke_state(qutrit_basis,collect(counts)).data==occupation.data
+        local_state=one_body_rdm(occupation)
+        @test real.(diag(local_state))≈collect(counts)./4 atol=3e-13 rtol=3e-13
+        @test norm(local_state-Diagonal(diag(local_state)))<3e-13
+        occupation32=symmetric_occupation_state(
+            qutrit_basis,Int32[1,2,1];T=Float32)
+        @test eltype(occupation32.data)===ComplexF32
+        @test_throws ArgumentError symmetric_occupation_state(
+            qutrit_basis,counts;T=AbstractFloat)
+
+        @test_throws DimensionMismatch symmetric_occupation_state(
+            qutrit_basis,(2,2))
+        @test_throws ArgumentError symmetric_occupation_state(
+            qutrit_basis,(1.0,2,1))
+        @test_throws ArgumentError symmetric_occupation_state(
+            qutrit_basis,(-1,4,1))
+        @test_throws ArgumentError symmetric_occupation_state(
+            qutrit_basis,(1,1,1))
+        @test_throws ArgumentError symmetric_occupation_state(qutrit_basis,:bad)
+        @test_throws ArgumentError symmetric_occupation_state(
+            qutrit_basis,(big(typemax(Int))+1,0,0))
+        missing_symmetric=PIBasis(4,3;sectors=[(3,1,0)])
+        @test_throws ArgumentError symmetric_occupation_state(
+            missing_symmetric,(1,2,1))
+        vacuum=symmetric_occupation_state(PIBasis(0,3),(0,0,0))
+        @test trace(vacuum)==1
+
+        qubit_basis=PIBasis(5,2)
+        for excitations in 0:qubit_basis.N
+            counted=dicke_state(qubit_basis,excitations)
+            labeled=dicke_state(
+                qubit_basis,qubit_basis.N/2,excitations-qubit_basis.N/2)
+            @test counted.data==labeled.data
+            @test dicke_state(
+                qubit_basis,(qubit_basis.N-excitations,excitations)).data==
+                  counted.data
+        end
+        @test_throws ArgumentError dicke_state(qubit_basis,-1)
+        @test_throws ArgumentError dicke_state(qubit_basis,qubit_basis.N+1)
+        @test_throws ArgumentError dicke_state(qutrit_basis,1)
+
+        w=w_state(qubit_basis;T=Float32)
+        @test eltype(w.data)===ComplexF32
+        @test w.data==dicke_state(qubit_basis,1;T=Float32).data
+        w_local=one_body_rdm(w)
+        @test real.(diag(w_local))≈Float32[4/5,1/5] atol=4f-6 rtol=4f-6
+        @test collective_expectation(w,spin_matrices(2;T=Float32).jz)≈
+              Float32(1-qubit_basis.N/2) atol=4f-5 rtol=4f-5
+        @test_throws ArgumentError w_state(PIBasis(3,3))
+        @test_throws ArgumentError w_state(PIBasis(0,2))
+        @test w_state(PIBasis(1,2)).data==
+              computational_product_state(PIBasis(1,2),2).data
+
+        phase=0.27
+        qutrit_cat=cat_state(qutrit_basis;phase=phase)
+        @test trace(qutrit_cat)≈1 atol=2e-14
+        @test purity(qutrit_cat)≈1 atol=2e-14
+        @test sector_population(qutrit_cat,Partition((4,0,0)))≈1 atol=2e-14
+        @test qutrit_cat.data==cat_state(qutrit_basis,1,3;phase=phase).data
+        one_particle_cat=cat_state(PIBasis(1,3),1,3;phase=phase)
+        expected_cat=zeros(ComplexF64,3,3)
+        expected_cat[1,1]=expected_cat[3,3]=1/2
+        expected_cat[1,3]=exp(-im*phase)/2
+        expected_cat[3,1]=exp(im*phase)/2
+        @test one_body_rdm(one_particle_cat)≈expected_cat atol=2e-14
+        qubit_cat=cat_state(qubit_basis,1,2;phase=phase)
+        @test qubit_cat.data==ghz_state(qubit_basis;phase=phase).data
+        @test eltype(cat_state(qutrit_basis;T=Float32).data)===ComplexF32
+        setprecision(128) do
+            big_cat=cat_state(PIBasis(2,3),1,3;phase=big"0.2")
+            @test eltype(big_cat.data)===Complex{BigFloat}
+        end
+        phase256=setprecision(BigFloat,256) do
+            BigFloat("0.2")
+        end
+        preserved_cat=setprecision(BigFloat,64) do
+            cat_state(PIBasis(2,3),1,3;phase=phase256)
+        end
+        @test minimum(value->precision(real(value)),
+                      (value for value in preserved_cat.data
+                       if !iszero(value)))>=256
+        @test_throws ArgumentError cat_state(PIBasis(0,3))
+        @test_throws ArgumentError cat_state(PIBasis(2,1))
+        @test_throws ArgumentError cat_state(qutrit_basis,0,3)
+        @test_throws ArgumentError cat_state(qutrit_basis,1,4)
+        @test_throws ArgumentError cat_state(qutrit_basis,2,2)
+        @test_throws ArgumentError cat_state(qutrit_basis;phase=Inf)
+        @test_throws ArgumentError cat_state(
+            qutrit_basis;T=AbstractFloat)
+        @test_throws ArgumentError cat_state(
+            qutrit_basis;phase=0.3,T=Float32)
+        @test_throws ArgumentError cat_state(missing_symmetric)
+
+        # Sector-confined white states use the exact isotypic Hilbert rank,
+        # including the symmetric-group multiplicity.
+        for partition in qutrit_basis.sectors
+            mixed=sector_maximally_mixed_state(qutrit_basis,partition)
+            rank=symmetric_group_dimension(partition)*
+                 unitary_group_dimension(partition)
+            @test trace(mixed)≈1 atol=3e-14 rtol=3e-14
+            @test purity(mixed)≈1/Float64(rank) atol=3e-14 rtol=3e-14
+            for other in qutrit_basis.sectors
+                block=physical_block(mixed,other)
+                if other==partition
+                    @test block≈Matrix{ComplexF64}(I,size(block)...)/rank atol=3e-14 rtol=3e-14
+                else
+                    @test all(iszero,block)
+                end
+            end
+        end
+        symmetric_mixed=symmetric_maximally_mixed_state(qutrit_basis)
+        @test symmetric_mixed.data==sector_maximally_mixed_state(
+            qutrit_basis,(4,0,0)).data
+        @test sector_population(symmetric_mixed,Partition((4,0,0)))≈1
+        @test real(sector_population(
+            maximally_mixed_state(qutrit_basis),Partition((4,0,0))))<1
+        restricted_mixed=sector_maximally_mixed_state(
+            missing_symmetric,(3,1,0);T=Float32)
+        @test eltype(restricted_mixed.data)===ComplexF32
+        @test restricted_mixed.data≈
+              maximally_mixed_state(missing_symmetric;T=Float32).data rtol=4eps(Float32)
+        @test_throws ArgumentError sector_maximally_mixed_state(
+            missing_symmetric,(4,0,0))
+        @test_throws ArgumentError symmetric_maximally_mixed_state(
+            missing_symmetric)
+        @test_throws ArgumentError sector_maximally_mixed_state(
+            qutrit_basis,(4,0,0);T=Int)
+        large_sector_basis=PIBasis(400,2;sectors=[(200,200)])
+        large_sector_white=sector_maximally_mixed_state(
+            large_sector_basis,(200,200))
+        @test trace(large_sector_white)≈1 atol=3e-14
+        @test all(isfinite,large_sector_white.data)
+        large_precision_error=try
+            sector_maximally_mixed_state(
+                large_sector_basis,(200,200);T=Float32)
+            nothing
+        catch error
+            error
+        end
+        @test large_precision_error isa ArgumentError
+        @test occursin("use a wider scalar type",
+                       sprint(showerror,large_precision_error))
+        vacuum_mixed=symmetric_maximally_mixed_state(PIBasis(0,3))
+        @test trace(vacuum_mixed)==1
+
+        @test Workflow.symmetric_occupation_state===symmetric_occupation_state
+        @test Workflow.w_state===w_state
+        @test Workflow.cat_state===cat_state
+        @test Workflow.sector_maximally_mixed_state===
+              sector_maximally_mixed_state
+        @test Workflow.symmetric_maximally_mixed_state===
+              symmetric_maximally_mixed_state
+    end
+
     @testset "six-rate qubit ensemble" begin
         basis=PIBasis(3,2)
         rates=(emission=0.31,dephasing=0.17,pumping=0.09,

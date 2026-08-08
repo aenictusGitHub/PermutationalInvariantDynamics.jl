@@ -42,21 +42,30 @@ function transverse_pair_order(rho, Jx, Jy, N, j)
 end
 
 function main()
-    N = 8
+    quick_example = get(ENV, "PID_EXAMPLE_QUICK", "0") == "1"
+    N = quick_example ? 8 : 10
     d = 2
     V = 1.0
     gammaC = 0.2
     spin = spin_matrices(d)
     identity_state = Matrix{ComplexF64}(I, d, d) / d
     results = NamedTuple[]
+    gammaI_values = quick_example ? [1.0, 1.8, 2.6] :
+        sort!(unique!(vcat(
+            collect(range(0.2, 3.0; length=20)), [1.8])))
 
-    for gammaI in (1.0, 1.8, 2.6)
+    # Only the independent decay rate changes. Share the costly one-/two-body
+    # Schur geometry across the complete finite-size scan.
+    prototype = dissipative_collective_spin_pairing_model(
+        N, d; V=V, gammaI=first(gammaI_values), gammaC=gammaC)
+    family = compile_family(prototype; rate_indices=(3,))
+
+    for gammaI in gammaI_values
         # dissipative_collective_spin_pairing_model retains the exact one-/two-body decomposition of
         # Jx^2-Jy^2.  The same model therefore drives both exact PI and
         # product-state mean-field calculations without changing conventions.
-        model = dissipative_collective_spin_pairing_model(
-            N, d; V=V, gammaI=gammaI, gammaC=gammaC)
-        prepared = compile(model; backend=:sparse)
+        prepared = specialize(family, gammaI / spin.j; backend=:sparse)
+        model = prepared.model
         steady = stationary_state(
             prepared; algorithm=DirectAlgorithm(), return_info=true)
         gap = pi_liouvillian_gap(prepared; method=:dense)
@@ -123,44 +132,49 @@ function main()
             meanfield_spectral_abscissa=stability.spectral_abscissa)
         push!(results, result)
 
-        println("(gammaI+gammaC)/|V| = ", result.control,
-                ", finite-N gap = ", gap)
-        println("  Z: exact PI = ", Zpi,
-                ", finite product = ", finite_spin.Z,
-                ", thermodynamic = ", thermodynamic_spin.Z,
-                ", article = ", article.Z)
-        println("  Cperp: exact PI = ", Cperp_pi,
-                ", finite product = ", Cperp_finite,
-                ", thermodynamic = ", Cperp_thermodynamic,
-                ", article = ", Cperp_article)
-        println("  selected thermodynamic branch (X,Y) = ",
-                (thermodynamic_spin.X, thermodynamic_spin.Y),
-                ", fixed-point residual = ", thermodynamic.residual,
-                ", stability abscissa = ", stability.spectral_abscissa)
+        if quick_example || gammaI in (first(gammaI_values), 1.8,
+                                       last(gammaI_values))
+            println("(gammaI+gammaC)/|V| = ", result.control,
+                    ", finite-N gap = ", gap)
+            println("  Z: exact PI = ", Zpi,
+                    ", finite product = ", finite_spin.Z,
+                    ", thermodynamic = ", thermodynamic_spin.Z,
+                    ", article = ", article.Z)
+            println("  Cperp: exact PI = ", Cperp_pi,
+                    ", finite product = ", Cperp_finite,
+                    ", thermodynamic = ", Cperp_thermodynamic,
+                    ", article = ", Cperp_article)
+            println("  selected thermodynamic branch (X,Y) = ",
+                    (thermodynamic_spin.X, thermodynamic_spin.Y),
+                    ", fixed-point residual = ", thermodynamic.residual,
+                    ", stability abscissa = ", stability.spectral_abscissa)
+        end
     end
+    println("collective-spin-pairing scan: N=$N, points=$(length(results))")
     results
 end
 
 results = main()
+plot_N = get(ENV, "PID_EXAMPLE_QUICK", "0") == "1" ? 8 : 10
 
 if makie_available()
     M = makie_module()
     controls = [result.control for result in results]
     figure = M.Figure(size=(1350, 430), fontsize=17)
     gap_axis = M.Axis(
-        figure[1, 1]; xlabel="(γI + γC) / |V|", ylabel="Liouvillian gap",
+        figure[1, 1]; ylabel="Liouvillian gap",
         title="Finite-N relaxation")
     z_axis = M.Axis(
-        figure[1, 2]; xlabel="(γI + γC) / |V|", ylabel="Z",
+        figure[1, 2]; xlabel="(γᵢ + γc) / |V|", ylabel="Z",
         title="Longitudinal polarization")
     order_axis = M.Axis(
-        figure[1, 3]; xlabel="(γI + γC) / |V|", ylabel="C⊥",
+        figure[1, 3]; ylabel="C⊥",
         title="Parity-even transverse order")
 
     M.lines!(gap_axis, controls, [result.gap for result in results];
              color=:black, linewidth=2.5)
     M.scatter!(gap_axis, controls, [result.gap for result in results];
-               color=:black, markersize=10, label="exact PI, N=8")
+               color=:black, markersize=5, label="exact PI, N=$plot_N")
     M.vlines!(gap_axis, [2.0]; color=:gray50, linestyle=:dash,
               label="mean-field transition")
     M.axislegend(gap_axis; position=:lt, labelsize=12)
@@ -176,11 +190,11 @@ if makie_available()
         M.lines!(z_axis, controls, [value.Z for value in values];
                  color, linewidth=2.0)
         M.scatter!(z_axis, controls, [value.Z for value in values];
-                   color, marker, markersize=10, label)
+                   color, marker, markersize=5, label)
         M.lines!(order_axis, controls, [value.Cperp for value in values];
                  color, linewidth=2.0)
         M.scatter!(order_axis, controls, [value.Cperp for value in values];
-                   color, marker, markersize=10, label)
+                   color, marker, markersize=5, label)
     end
     M.vlines!(z_axis, [2.0]; color=:gray50, linestyle=:dash)
     M.vlines!(order_axis, [2.0]; color=:gray50, linestyle=:dash)

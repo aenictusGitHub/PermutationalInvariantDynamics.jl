@@ -8,6 +8,88 @@ The one-body geometry implements the CG products (B.10–B.11), the three-nu
 dyadics (22), the local kernel (26–27), and collective blocks (31). Local and
 collective dissipators implement equations (38) and (39).
 
+## Density-matrix power traces
+
+For a positive integer $q$, `trace_power(rho, q)` evaluates the moment
+$\mathrm{tr}(\rho^q)$ directly from the stored Schur blocks. With the package
+normalization, the physical density operator has the decomposition
+
+```math
+\rho
+=\bigoplus_\nu
+ \left(\frac{C_\nu}{\sqrt{f^\nu}}\right)
+ \otimes I_{f^\nu},
+```
+
+and therefore
+
+```math
+\mathrm{tr}(\rho^q)
+=\sum_\nu (f^\nu)^{1-q/2}\,
+ \mathrm{tr}\left(C_\nu^q\right).
+```
+
+Here $C_\nu$ is the stored coefficient block and $f^\nu$ is the exact
+symmetric-group multiplicity. For numerical stability, the implementation
+does not power the per-copy physical block. It first forms the
+multiplicity-weighted analysis block $M_\nu=\sqrt{f^\nu}C_\nu$ and evaluates
+the equivalent expression
+
+```math
+\mathrm{tr}(\rho^q)
+=\sum_\nu (f^\nu)^{1-q}\,
+ \mathrm{tr}\left(M_\nu^q\right).
+```
+
+This keeps the block traces on their natural sector-population scale and
+applies the multiplicity factor through exact checked scaling. Block powers
+use binary exponentiation. The calculation never reconstructs a
+computational-basis matrix of size $d^N$. The cases $q=1$ and $q=2$ use
+dedicated paths: the latter is the same Frobenius-block contraction used by
+`purity(rho)`.
+
+Repeated higher-order evaluations can reuse a `DensityPowerWorkspace`. The
+workspace owns the mutable square buffers sized by the largest retained Schur
+block; it is tied to one exact basis, scalar type, and `BigFloat` precision.
+It may be reused sequentially, but one workspace must not be shared by
+concurrent tasks. `memory_budget` is checked before retaining these buffers
+or exact multiplicity tables, and before constructing exact multiplicity
+powers; pass `Inf` only to opt out explicitly. Reduced calls combine the live
+reduction plan/workspace, density-power scratch, and predictable one-shot
+reduction temporaries in the same preflight. A prepared multi-`k` batch also
+counts every simultaneously retained workspace entry rather than checking
+each entry in isolation.
+
+```julia
+q3 = trace_power(rho, 3)
+
+# Reuse the dominant scratch across a state or parameter scan.
+power_work = DensityPowerWorkspace(rho)
+q4 = trace_power(rho, 4; workspace=power_work)
+
+# Prepared repeated reductions avoid constructing an intermediate PIState.
+reduction = ReductionPlan(rho.basis, 2)
+reduction_work = ReductionWorkspace(reduction, rho; mode=:reduction)
+reduced_power_work = DensityPowerWorkspace(reduction_work)
+q3_reduced = reduced_trace_power(
+    rho, 2, 3;
+    plan=reduction,
+    workspace=reduction_work,
+    power_workspace=reduced_power_work,
+)
+```
+
+`reduced_trace_power(rho, k, q)` applies the same formula to the prepared
+$k$-particle reduction. With a `ReductionPlan` and task-owned
+`ReductionWorkspace`, the reduced Schur blocks are accumulated once and the
+moment is contracted from those blocks directly. No intermediate full-space
+marginal is formed. `reduced_trace_powers(rho, q; ks=...)` fixes one power
+$q$ and reuses this prepared reduction path for the requested subsystem sizes
+$k$. At $q=2$, both routines retain the specialized `reduced_purity`
+contraction. Thus state purity, reduced purity, and higher moments all remain
+polynomial-sized PI calculations rather than operations on a $d^N$ density
+matrix.
+
 ## PI spectra
 
 `pi_liouvillian_spectrum(L)` returns the complete spectrum of a static

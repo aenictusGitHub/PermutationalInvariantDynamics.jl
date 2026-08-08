@@ -6,27 +6,43 @@ include(joinpath(@__DIR__, "utils", "makie_support.jl"))
 using .ExampleMakie
 
 # D. Meiser and M. J. Holland, PRA 81, 033847 (2010), Eqs. (1),(2),(8)-(10).
-N = 10
+quick_example = get(ENV, "PID_EXAMPLE_QUICK", "0") == "1"
+N = quick_example ? 10 : 20
 GammaC = 1.0
 sm = ComplexF64[0 1; 0 0]
 excited = ComplexF64[0 0; 0 1]
 results = NamedTuple[]
 
-for pump in (0.1, 1.0, N * GammaC / 2, N * GammaC, 30.0)
-    model = steady_superradiance_model(
-        N; GammaC=GammaC, pump=pump)
-    prepared = compile(model)
+# Resolve the broad weak-pump, superradiant, and saturated regimes on a log
+# grid. Include the two analytically important N-scaled rates exactly.
+pump_values = if quick_example
+    [0.1, 1.0, N * GammaC / 2, N * GammaC, 30.0]
+else
+    sort!(unique!(vcat(
+        exp.(range(log(0.05GammaC), log(4N * GammaC); length=41)),
+        [N * GammaC / 2, N * GammaC])))
+end
+prototype = steady_superradiance_model(
+    N; GammaC=GammaC, pump=first(pump_values))
+family = compile_family(prototype)
+basis = prototype.basis
+geometry = OneBodyGeometry(basis)
+Jm = collective_operator(basis, sm; cache=geometry)
+Neplan = CollectiveObservablePlan(basis, excited; cache=geometry)
+
+for pump in pump_values
+    prepared = specialize(family, (GammaC, pump); backend=:sparse)
     rho = stationary_state(prepared; algorithm=DirectAlgorithm())
-    Jm = collective_operator(model.basis, sm)
-    Neplan = CollectiveObservablePlan(model.basis, excited)
     intensity = GammaC * real(expectation(rho, adjoint(Jm) * Jm))
     Ne = real(collective_expectation(rho, Neplan))
     enhancement = intensity / (max(Ne, eps()) * GammaC)
     push!(results, (; pump, intensity, Ne, enhancement))
-    println("w/GammaC=$(pump / GammaC): I/GammaC=$intensity, " *
-            "Ne=$Ne, I/(Ne GammaC)=$enhancement")
 end
 large_N_maximum = N^2 / 8
+peak = results[argmax(result.intensity for result in results)]
+println("steady-superradiance scan: N=$N, points=$(length(results)), " *
+        "maximum I/GammaC=$(peak.intensity / GammaC) at " *
+        "w/GammaC=$(peak.pump / GammaC)")
 println("large-N prediction at w=N GammaC/2: Imax/GammaC = ",
         large_N_maximum)
 
@@ -49,7 +65,7 @@ if makie_available()
              color=:firebrick, linewidth=2.7)
     M.scatter!(intensity_axis, pump_ratios,
                [result.intensity / GammaC for result in results];
-               color=:firebrick, markersize=11, label="finite N = $N")
+               color=:firebrick, markersize=5, label="finite N = $N")
     M.hlines!(intensity_axis, [large_N_maximum];
               color=:gray45, linestyle=:dash,
               label="large-N peak N²/8")
@@ -60,14 +76,14 @@ if makie_available()
              color=:royalblue, linewidth=2.7)
     M.scatter!(excitation_axis, pump_ratios,
                [result.Ne / N for result in results];
-               color=:royalblue, markersize=11)
+               color=:royalblue, markersize=5)
 
     M.lines!(enhancement_axis, pump_ratios,
              [result.enhancement for result in results];
              color=:seagreen, linewidth=2.7)
     M.scatter!(enhancement_axis, pump_ratios,
                [result.enhancement for result in results];
-               color=:seagreen, markersize=11, label="collective result")
+               color=:seagreen, markersize=5, label="collective result")
     M.hlines!(enhancement_axis, [1.0];
               color=:gray45, linestyle=:dash,
               label="independent emission")

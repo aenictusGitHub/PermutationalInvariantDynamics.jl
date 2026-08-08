@@ -5,8 +5,9 @@ Source: [`paper_models.jl`](paper_models.jl)
 This file is a helper module used to keep paper-specific normalizations and
 spin conventions in one place. It provides constructors for the Damanet (2016),
 Pausch (2024), Kitagawa-Ueda, Huelga, Shammah, Morrison, Meiser, Iemini,
-Piccitto, Nakanishi--Sasamoto, Zhang--Mølmer, and Debecker spin--pseudomode
-models, together with the package's public `spin_matrices` convention. The
+Piccitto, Nakanishi--Sasamoto, and Zhang--Mølmer models, together with a
+package-authored all-pair spin--pseudomode model and the package's public
+`spin_matrices` convention. The
 Nakanishi--Sasamoto helper also returns the exact balanced-gain/loss
 Liouvillian spectrum used as a finite-size regression oracle.
 
@@ -66,9 +67,9 @@ spin Pauli matrices, their supersite lifts, the mode annihilation, number, and
 top-level projectors, and the exchange matrices for either `sigma_minus` or
 `sigma_z` coupling. Its local dimension is `2(nmax+1)`.
 
-`all_to_all_xx_spin_local_pseudomode_model` then constructs the exact PI
-uniform-all-pair specialization of the local-pseudomode embedding in the
-maintainer-supplied Debecker *et al.* manuscript:
+`all_to_all_xx_spin_local_pseudomode_model` then constructs an exact PI model
+with identical local pseudomodes and a uniform interaction on every unordered
+spin pair:
 
 ```julia
 operators = local_pseudomode_operators(2)
@@ -94,13 +95,10 @@ H=-J_{\mathrm{pair}}\sum_{i<j}X_iX_j
 
 `Jpair` is the literal coefficient of each unordered pair; the helper never
 inserts a Kac factor. The example above explicitly chooses
-`Jpair=J/(N-1)`. The mode-loss term has package rate `2kappa` because the
-manuscript uses `D_paper=2D_package`. `coupling` accepts `:minus` and `:z`.
-
-This helper is not a constructor for the manuscript's nearest-neighbour
-ring. That geometry is only translation invariant, whereas the helper assumes
-invariance under every site permutation. Consequently the all-pair model has
-one common distinct-pair correlator and no spatial correlation length. See
+`Jpair=J/(N-1)`. In this helper's Lorentzian-pseudomode parameterization the
+mode-loss term has package rate `2kappa` and the spin--mode coupling is
+`sqrt(gamma*kappa)`. `coupling` accepts `:minus` and `:z`. The all-pair model
+has one common distinct-pair correlator and no site-distance coordinate. See
 [`all_to_all_xx_spin_local_pseudomodes.md`](all_to_all_xx_spin_local_pseudomodes.md)
 for the complete dynamics, stationary-state, spin-only-negativity, and cutoff
 workflow.

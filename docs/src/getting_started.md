@@ -174,13 +174,23 @@ rho_same = iid_pure_state(basis, ComplexF64[0, 1])
 mixed_local = ComplexF64[0.7 0; 0 0.3]
 rho_mixed = iid_state(basis, mixed_local)
 
-rho_dicke = dicke_state(basis, N / 2, 0)
+rho_two_excitations = dicke_state(basis, 2)
+rho_w = w_state(basis)
+rho_dicke_sector = dicke_state(basis, N / 2, 0)
 rho_ghz = ghz_state(basis)
+rho_cat = cat_state(basis; phase=pi / 5)
 rho_coherent = spin_coherent_state(basis, pi / 3, pi / 4)
+rho_symmetric_white = symmetric_maximally_mixed_state(basis)
+
+qutrit_basis = PIBasis(4, 3)
+rho_qutrit_counts = symmetric_occupation_state(qutrit_basis, (1, 2, 1))
 ```
 
 An identical mixed product state generally occupies several Schur sectors;
 that is still a PI state and is handled by the complete basis.
+Occupation tuples use one-based local-level order and must sum to `N`.
+`sector_maximally_mixed_state(basis, nu)` is the corresponding shortcut when
+a normalized white state in one retained Schur sector is needed.
 
 ## Step 6: compile once
 

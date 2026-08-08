@@ -13,6 +13,10 @@ HOPS introduces two independent numerical limits:
 
 Neither limit replaces the time-step convergence check. A result should be
 reported as converged only after all three have been varied independently.
+The HOPS root is an unnormalized auxiliary direct-sum amplitude, not the
+physical [`SymmetricKet`](@ref) used for closed fully symmetric dynamics; see
+[Symmetric pure kets and block-resolved
+entropy](symmetric_kets_and_block_entropy.md) for a side-by-side comparison.
 
 ## Physical convention
 

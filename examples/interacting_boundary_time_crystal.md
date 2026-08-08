@@ -50,8 +50,9 @@ The script chooses the oscillatory parameters used in Figs. 6 and 8,
 \qquad \Gamma^\downarrow=0,
 ```
 
-and computes complete PI Liouvillian spectra for `N = 8, 12, 16`. At each
-size it selects the oscillatory eigenvalue with largest real part and reports
+and computes complete PI Liouvillian spectra at the nine even sizes from
+`N = 8` through `N = 24`. At each size it selects the oscillatory eigenvalue
+with largest real part and reports
 
 - its decay rate `-real(lambda)`;
 - its frequency `abs(imag(lambda))`;
@@ -62,10 +63,17 @@ remains nonzero. This is the small-system precursor of the paper's result:
 the complex branch approaches the imaginary axis with increasing `N`, and
 its frequency tends to a finite value. The paper reports an approximately
 `N^-0.4` decay over substantially larger sizes. The script deliberately does
-not fit that exponent from three small systems.
+not fit that exponent from this bounded finite-size grid.
 
-Complete dense spectra are used only because these symmetric-sector problems
-are modest and the comparison needs to identify a particular complex branch.
+The selector is intentionally reapplied at every size: it always returns the
+oscillatory mode with largest real part. Near `N = 24`, two oscillatory
+branches have almost equal decay rates and exchange order, so the frequency
+panel shows a branch crossing rather than enforcing an artificially smooth
+continuation.
+
+Complete dense spectra are used only because the default grid is bounded at
+`N = 24` and the comparison needs to identify a particular complex branch
+without a selected-mode assumption.
 For larger `N`, compile matrix-free and use
 `liouvillian_spectrum(...; target=:largest_real, algorithm=:arnoldi)` with a
 converged Krylov dimension. Harmonic extraction *near zero* can miss the slow
@@ -75,7 +83,7 @@ oscillatory branch because its imaginary part remains finite.
 
 When CairoMakie is available, the script creates a two-panel finite-size
 spectral summary. The first panel shows the decay rate of the selected slow
-oscillatory mode; the second shows its frequency. The panels display the three
+oscillatory mode; the second shows its frequency. The panels display all nine
 computed sizes directly and do not fit the asymptotic exponent reported in the
 paper. Thus the figure visualizes a finite-size precursor, not evidence by
 itself for persistent thermodynamic oscillations.
@@ -90,6 +98,9 @@ directory.
 julia --project=examples examples/interacting_boundary_time_crystal.jl
 ```
 
+Set `PID_EXAMPLE_QUICK=1` to retain the original `N = 8, 12, 16` smoke grid.
+The quick branch uses the same complete-spectrum solver and numerical checks.
+
 The core numerical assertions can also be run with `--project=.`; if
 CairoMakie is unavailable, only figure generation is skipped.
 
@@ -101,5 +112,5 @@ spin models*, [Phys. Rev. B **104**, 014307 (2021)](https://doi.org/10.1103/Phys
 
 ![Expected interacting boundary-time-crystal slow-mode scaling](../docs/src/assets/example_figures/interacting_boundary_time_crystal.png)
 
-The finite sizes and selected modes are the checked defaults; larger-size
-claims require a separately converged spectral calculation.
+The nine finite sizes and selected modes are the checked defaults;
+larger-size claims require a separately converged selected-mode calculation.

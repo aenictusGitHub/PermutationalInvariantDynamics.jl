@@ -294,7 +294,7 @@ prepared = compile(model; backend=:matrixfree)
 ```
 
 That snippet is the basic prepared workflow, not the integrator used for the
-long manuscript-style panel. The executable propagates each
+long-time panel. The executable propagates each
 `omega_c*t=0:0.5:100` curve interval by interval with a matrix-free generator,
 one reusable dimension-30 `KrylovExpvWorkspace`, and preallocated
 `krylov_expv!`. This costs 6000 Liouvillian applications per curve and avoids
@@ -317,9 +317,9 @@ or event-driven integration controls, path count, and pseudomode cutoff remain
 separate convergence requirements.
 
 The helper treats `Jpair` as the literal coefficient of every unordered pair;
-the displayed `J` uses the explicit Kac choice `Jpair=J/(N-1)`. It also maps
-the manuscript convention `D_paper=2D_package` to a local mode-jump rate
-`2kappa` and sets the exchange strength to `sqrt(gamma*kappa)`. Both
+the displayed `J` uses the explicit Kac choice `Jpair=J/(N-1)`. Its documented
+Lorentzian-pseudomode parameterization uses local mode-jump rate `2kappa` and
+exchange strength `sqrt(gamma*kappa)`. Both
 `coupling=:minus` and `coupling=:z` are available. The latter retains a strong
 spin-parity symmetry, so an unrestricted steady state need not be unique. For
 that branch the script restricts both Schur-block indices to the initial
@@ -337,12 +337,9 @@ it explicitly, but does not restrict the selected state to one of its charges:
 for odd `N` that transformation exchanges the two strong spin-parity sectors
 and a trivial-charge projection would alter the GHZ coherence.
 
-The supplied manuscript studies a nearest-neighbour periodic chain. That
-geometry is not invariant under arbitrary permutations, so this runnable
-model is deliberately the uniform-all-pair specialization, not a reproduction
-of the spatial chain. All distinct pairs share one `Cxx`; there is no distance
-coordinate or spatial correlation length. The finite-size stationary heat
-maps must likewise not be advertised as a thermodynamic phase diagram.
+All distinct pairs share one `Cxx`; there is no site-distance coordinate. The
+finite-size stationary heat maps must not be advertised as a thermodynamic
+phase diagram.
 
 For the repeated stationary maps, the example prepares one
 `LocalFactorTracePlan(basis,(2,levels); traced_factor=2)`. It traces every
@@ -376,9 +373,9 @@ n_{\mathrm{PI}}=\binom{N+[2(n_{\max}+1)]^2-1}{N},
 ```
 
 so cutoff growth must be estimated and convergence repeated for each claimed
-observable. The optional Makie output contains a manuscript-style dynamics
+observable. The optional Makie output contains a long-time dynamics
 panel, stationary correlation and spin-negativity maps, and a separate cutoff
-figure. A third, manuscript-Fig.-4-style figure shows the parity-selected
+figure. A third figure shows the parity-selected
 x-GHZ witness, its `0.5` contour, and the maximum long-time residual. The
 extracted `Cxx=0` and GHZ-witness boundaries are also written, independently
 of Makie, as run-qualified tab-delimited text files beside the figures. Each

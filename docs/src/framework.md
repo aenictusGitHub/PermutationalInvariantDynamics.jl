@@ -230,6 +230,42 @@ product state $\sigma^{\otimes N}$ generally has support in several Schur
 sectors. Independent local dissipation can also transfer population between
 sectors even though the resulting state remains PI.
 
+Two projections that are sometimes both called the "permutation projector"
+must be distinguished. The Hilbert-space projector onto invariant vectors is
+
+```math
+P_{\mathrm{sym}}
+=\frac{1}{N!}\sum_{\pi\in S_N}P_\pi,
+```
+
+and selects only the fully symmetric sector. Construct it directly in PI
+coordinates with `fully_symmetric_projector(basis)`. More generally,
+`schur_sector_projector(basis, nu)` constructs the isotypic projector
+$P_\nu$ with
+
+```math
+C_\nu(P_\nu)=\sqrt{f^\nu}\,I,
+```
+
+and all other blocks zero. These projectors are not trace-normalized;
+`trace(P_nu)` is the Hilbert-space rank of the sector. For an existing state,
+`sector_population(rho, nu)` evaluates $\mathrm{Tr}(P_\nu\rho)$
+without allocating the projector.
+
+By contrast, the Hilbert--Schmidt projector from arbitrary operators onto the
+PI operator algebra is the permutation twirl
+
+```math
+\mathcal T_{\mathrm{PI}}(A)
+=\frac{1}{N!}\sum_{\pi\in S_N}P_\pi A P_\pi^\dagger.
+```
+
+Every `PIState` and `PIOperator` is already in the range of this twirl, so it
+acts as the identity on the package's compressed coordinates. Applying the
+twirl to an arbitrary non-PI operator instead requires an external structured
+representation or an exponentially large ambient input; the package does not
+construct such a full-space object.
+
 Consequently, `PIBasis(N, d)` retains all sectors by default. A restricted
 basis is appropriate only when the model preserves the requested sector set.
 For example, a purely collective model can often be studied in the symmetric
@@ -298,12 +334,30 @@ other named components lower these matrices directly to Schur blocks.
 
 The state helpers retain the same convention. `computational_product_state`
 uses a one-based local level and works for qubits or qudits.
-`dicke_state(basis,j,m)` and `dicke_operator(basis,j,m,mp)` map qubit spin
+`symmetric_occupation_state(basis, (n1, ..., nd))` constructs a qudit
+occupation state directly in the fully symmetric sector. The counts follow
+the same one-based local-level order and must sum to `basis.N`. Its exact
+combinatorial rank costs only $O(d)$ to evaluate, so the constructor does not
+scan the symmetric block.
+
+For qubits, `dicke_state(basis, k)` is the short excitation-count form and
+`w_state(basis)` is its one-excitation specialization. The more general
+`dicke_state(basis, j, m)` and `dicke_operator(basis, j, m, mp)` map spin
 labels to the corresponding partition and GT-pattern weights. In a sector of
-multiplicity $f^nu$, their selected physical block entry is $1/f^nu$:
+multiplicity $f^\nu$, their selected physical block entry is $1/f^\nu$:
 the PI object is uniform over the indistinguishable multiplicity copies.
-`ghz_state` and `spin_coherent_state` construct their symmetric-sector states
-without forming a $2^N$ vector.
+
+`cat_state(basis, a, b; phase=phi)` constructs a balanced cat state between
+any two distinct qudit levels. `ghz_state` is the qubit levels-1-and-2
+specialization, and `spin_coherent_state` constructs a qubit coherent-spin
+state. None of these helpers forms a $d^N$ vector.
+
+There are three distinct useful white states. `maximally_mixed_state(basis)`
+is uniform over the complete Hilbert space represented by all retained
+sectors. `sector_maximally_mixed_state(basis, nu)` is normalized on one Schur
+isotypic sector, including all of its multiplicity copies, while
+`symmetric_maximally_mixed_state(basis)` selects the fully symmetric sector.
+All retain the caller's exact basis and raise if a requested sector is absent.
 
 ## Dimension and computational scaling
 

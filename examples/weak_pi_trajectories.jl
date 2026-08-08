@@ -17,6 +17,7 @@ render_plots && include(joinpath(@__DIR__, "utils", "makie_support.jl"))
 # shared cavity. This executable remains the emitter-only Zhang--Mølmer decay
 # benchmark and does not claim to reproduce the shared-cavity calculations.
 N = 6
+quick_example = get(ENV, "PID_EXAMPLE_QUICK", "0") == "1"
 GammaC = 1.0
 gammaL = 1.0
 nweak = 400
@@ -31,7 +32,8 @@ model = PIModel(basis, (
 ))
 rho0 = iid_pure_state(basis, ComplexF64[0, 1])
 psi0 = weak_pi_pseudoket(rho0)
-times = collect(range(0.0, 1.0; length=11))
+times = collect(range(0.0, 1.0; length=quick_example ? 11 : 31))
+deterministic_steps_per_interval = quick_example ? 100 : 34
 
 prepared = compile(model; backend=:matrixfree)
 weak_plan = WeakPITrajectoryPlan(prepared)
@@ -112,7 +114,7 @@ population_plan = PopulationPlan(model)
 @assert population_plan.invariance.invariant === true
 population_solution = solve_populations(
     population_plan, rho0, (first(times), last(times));
-    saveat=times, steps_per_interval=100,
+    saveat=times, steps_per_interval=deterministic_steps_per_interval,
 )
 population_states = [state(population_solution, index)
                      for index in eachindex(times)]
@@ -122,7 +124,7 @@ population_states = [state(population_solution, index)
 # errors use this full PI solution as their common target.
 deterministic = solve_dynamics(
     prepared, rho0, (first(times), last(times));
-    saveat=times, steps_per_interval=100,
+    saveat=times, steps_per_interval=deterministic_steps_per_interval,
 )
 exact_cavity = real.([expectation(rho, cavity_flux)
                       for rho in population_states])
@@ -273,13 +275,13 @@ if render_plots && ExampleMakie.makie_available()
         M.band!(axis, times, weak.lower, weak.upper;
                 color=(:dodgerblue, 0.16))
         M.lines!(axis, times, weak.mean; color=:dodgerblue, linewidth=1.4)
-        M.scatter!(axis, times, weak.mean; color=:dodgerblue, markersize=8,
+        M.scatter!(axis, times, weak.mean; color=:dodgerblue, markersize=5,
                    label="weak-PI pseudo-kets (95% CI)")
         M.band!(axis, times, density.lower, density.upper;
                 color=(:darkorange, 0.14))
         M.lines!(axis, times, density.mean; color=:darkorange, linewidth=1.4)
         M.scatter!(axis, times, density.mean; color=:darkorange,
-                   marker=:diamond, markersize=8,
+                   marker=:diamond, markersize=5,
                    label="density-valued PI paths (95% CI)")
         M.lines!(axis, times, reference; color=:black, linewidth=2.7,
                  label="population master equation")

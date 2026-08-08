@@ -53,7 +53,11 @@ state_from_schur_blocks
 sector_metadata
 sector_view
 identity_operator
+schur_sector_projector
+fully_symmetric_projector
 maximally_mixed_state
+sector_maximally_mixed_state
+symmetric_maximally_mixed_state
 trace
 purity
 normalize!
@@ -70,8 +74,11 @@ iid_pure_state
 iid_state
 thermal_state
 computational_product_state
+symmetric_occupation_state
 dicke_state
 dicke_operator
+w_state
+cat_state
 ghz_state
 spin_coherent_state
 spin_matrices
@@ -82,6 +89,25 @@ mean_local_operator
 local_kernel_element
 local_kernel_operator
 OneBodyGeometry
+```
+
+## Physical fully symmetric pure kets
+
+These objects represent genuine physical pure states only when the basis
+retains the single fully symmetric sector. They are distinct from
+`WeakPIPseudoKet` and `HOPSRootKet`; see [Symmetric pure kets and
+block-resolved entropy](../symmetric_kets_and_block_entropy.md) for the
+comparison and scaling limits.
+
+```@docs
+SymmetricKet
+symmetric_ket_dimension
+validate_symmetric_ket
+symmetric_occupation_ket
+symmetric_product_ket
+symmetric_ket_density
+symmetric_ket_density!
+symmetric_ket
 ```
 
 ## Appendix-D processes

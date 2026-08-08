@@ -7,14 +7,15 @@ using .ExampleMakie
 # A directly checkable Monte Carlo wave-function benchmark in the setting of
 # Dalibard--Castin--Mølmer (1992) and Mølmer--Castin--Dalibard (1993): N
 # initially excited, independently decaying two-level atoms.
-N = 6
+quick_example = get(ENV, "PID_EXAMPLE_QUICK", "0") == "1"
+N = quick_example ? 6 : 10
 gamma = 1.0
 ntrajectories = 500
 basis = PIBasis(N, 2)
 sm = ComplexF64[0 1; 0 0]
 model = PIModel(basis, (LocalJump(sm; rate=gamma),))
 rho0 = iid_pure_state(basis, ComplexF64[0, 1])
-times = collect(0.0:0.1:1.0)
+times = collect(range(0.0, 1.0; length=quick_example ? 11 : 31))
 prepared = compile(model; backend=:matrixfree)
 trajectory_plan = TrajectoryPlan(prepared)
 trajectory_batch = TrajectoryBatchWorkspace(trajectory_plan, rho0)
@@ -45,7 +46,7 @@ exact_states = [iid_state(
     basis, ComplexF64[1-p 0; 0 p]) for p in excited_probability]
 deterministic = solve_dynamics(
     prepared, rho0, (first(times), last(times));
-    saveat=times, steps_per_interval=64,
+    saveat=times, steps_per_interval=quick_example ? 64 : 24,
 )
 deterministic_errors = [
     norm(deterministic[index].data - exact_states[index].data)
@@ -124,7 +125,7 @@ if makie_available()
             excitation_mean .+ excitation_sem;
             color=(:dodgerblue, 0.25), label="trajectory ±1 SE")
     M.scatter!(excitation_axis, times, excitation_mean;
-               color=:dodgerblue, markersize=9, label="trajectory mean")
+               color=:dodgerblue, markersize=5, label="trajectory mean")
     M.lines!(excitation_axis, times, excited_probability;
              color=:black, linewidth=2.5, label="exact exp(-γt)")
     M.axislegend(excitation_axis; position=:rt)

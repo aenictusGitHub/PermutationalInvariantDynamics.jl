@@ -11,13 +11,16 @@ H=\Omega J_x,\qquad
 \dot\rho=-i[H,\rho]+\frac{2\gamma}{N}\mathcal D[J_-]\rho .
 ```
 
-For `N = 20`, the example tests several damping strengths in the fully
-symmetric sector.
+The default plot uses `N = 40` and 31 damping strengths spanning
+$0.25 \leq \gamma/\Omega \leq 3$ in the fully symmetric sector. This is dense
+enough to resolve the nonmonotonic transverse polarization without connecting
+only a few isolated validation points.
 
 ## Solution
 
-The model is compiled once per parameter point, and the numerical state comes
-from the typed high-level call
+Only the two scalar rates change along the scan. The example therefore calls
+`compile_family` once, specializes the shared Schur geometry at each damping
+strength, and obtains the numerical state from the typed high-level call
 `stationary_state(...; algorithm=DirectAlgorithm())`. It is compared with the
 finite-size exact stationary density operator written in the paper as an
 inverse collective-spin expression. The two spin observables share one
@@ -41,7 +44,8 @@ julia --project=examples examples/cooperative_fluorescence.jl
 ```
 
 Small residuals and state distance provide stronger validation than matching
-a single observable.
+a single observable. Set `PID_EXAMPLE_QUICK=1` to retain the lightweight
+`N = 20`, three-point numerical smoke check without changing tolerances.
 
 ## Expected output
 
