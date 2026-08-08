@@ -15,7 +15,7 @@ jobs:
       issues: write
       pull-requests: read
     steps:
-      - uses: JuliaRegistries/TagBot@e4c81aa138ef4179bddea165bb4a9680c223aca4 # v1.25.9
+      - uses: JuliaRegistries/TagBot@14d7645453716d7a2f09b1da0504a024f97462a1 # v1.25.10
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           # The repository-scoped deploy key lets a tag push trigger the
