@@ -104,13 +104,13 @@ if makie_available()
     figure = M.Figure(size=(1350, 430), fontsize=17)
     gap_axis = M.Axis(
         figure[1, 1]; xlabel="1 / N", ylabel="gap / κ",
-        title="Liouvillian gap")
+        title="Liouvillian gap", limits=(0, nothing, 0, nothing))
     damping_axis = M.Axis(
         figure[1, 2]; xlabel="1 / N", ylabel="−Re λosc / κ",
-        title="Oscillatory-mode damping")
+        title="Oscillatory-mode damping", limits=(0, nothing, 0, nothing))
     frequency_axis = M.Axis(
         figure[1, 3]; xlabel="1 / N", ylabel="|Im λosc| / κ",
-        title="Oscillation frequency")
+        title="Oscillation frequency", limits=(0, nothing, 0, nothing))
 
     colors = (:royalblue, :firebrick)
     markers = (:circle, :rect)

@@ -738,6 +738,11 @@ CI or Documenter. Update a snapshot only from a successful default run,
 review it visually, keep stochastic seeds and convergence caveats explicit,
 and commit no generated PDF.
 
+Finite-size gap plots against `1/N` anchor both axes at zero. A plot of an
+approximately size-independent nonzero quantity, such as the imaginary part
+of a slow Liouvillian mode, must include zero on its value axis rather than
+magnifying small variations with a narrow automatic range.
+
 `examples/catalog.toml` is the complete machine-readable inventory of paired
 scripts and guides. `scripts/generate_example_gallery.jl` deterministically
 renders the tracked browser-side gallery from that catalog; the catalog test

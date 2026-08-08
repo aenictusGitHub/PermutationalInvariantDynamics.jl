@@ -85,8 +85,11 @@ When CairoMakie is available, the script creates a two-panel finite-size
 spectral summary. The first panel shows the decay rate of the selected slow
 oscillatory mode; the second shows its frequency. The panels display all nine
 computed sizes directly and do not fit the asymptotic exponent reported in the
-paper. Thus the figure visualizes a finite-size precursor, not evidence by
-itself for persistent thermodynamic oscillations.
+paper. The frequency panel includes zero on its vertical axis, so a nearly
+constant nonzero imaginary part is shown on an honest absolute scale rather
+than magnified by a narrow automatic range. Thus the figure visualizes a
+finite-size precursor, not evidence by itself for persistent thermodynamic
+oscillations.
 
 Vector PDF and raster PNG copies are written as
 `interacting_boundary_time_crystal.*` in the configured example-figure

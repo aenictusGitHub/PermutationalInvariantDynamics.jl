@@ -51,9 +51,12 @@ time-crystalline parameter ratios use consistent colours and markers in the
 gap panel. The damping and frequency panels show the resolved oscillatory
 branch only for `ω0/κ = 1.5`; below threshold the leading selected modes are
 real, so the script does not promote a faster, remote mode into an artificial
-"slow oscillatory" curve. The normal figure contains 17 points per curve and
-uses compact markers suited to that resolution. PDF and PNG copies are saved
-as `boundary_time_crystal.*`.
+"slow oscillatory" curve. All three inverse-size panels start both axes at
+zero. This exposes the thermodynamic endpoint `1/N = 0` and prevents the
+nearly size-independent frequency from appearing artificially variable. The
+normal figure contains 17 points per curve and uses compact markers suited to
+that resolution. PDF and PNG copies are saved as
+`boundary_time_crystal.*`.
 
 ## Run
 

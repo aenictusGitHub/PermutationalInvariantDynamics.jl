@@ -69,7 +69,8 @@ if makie_available()
         title="Slow oscillatory-mode decay")
     frequency_axis = M.Axis(
         figure[1, 2]; xlabel="particle number N", ylabel="frequency |Im(λ)|",
-        title="Slow oscillatory-mode frequency")
+        title="Slow oscillatory-mode frequency",
+        limits=(nothing, nothing, 0, nothing))
 
     M.lines!(decay_axis, plotted_sizes, decay_rates;
              color=:firebrick, linewidth=2.7)
