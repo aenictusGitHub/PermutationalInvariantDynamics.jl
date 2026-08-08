@@ -51,8 +51,7 @@ independent pumping:
 +\gamma_\uparrow\sum_i\mathcal D[\sigma_i^+]\rho.
 ```
 
-Here
-`\mathcal D[L]\rho=L\rho L^\dagger-\{L^\dagger L,\rho\}/2`.
+Here $\mathcal D[L]\rho=L\rho L^\dagger-\{L^\dagger L,\rho\}/2$.
 The model is PI because every site receives the same Hamiltonian and the same
 local rates.
 

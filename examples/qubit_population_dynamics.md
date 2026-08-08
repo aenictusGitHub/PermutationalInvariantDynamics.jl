@@ -7,7 +7,7 @@ Source: [`qubit_population_dynamics.jl`](qubit_population_dynamics.jl)
 The default plot evolves ten qubits under the standard local and collective emission,
 dephasing, and pumping channels constructed by `qubit_ensemble_model`. A
 diagonal one-particle Hamiltonian is included as well. In the package order
-$(|g>,|e>)$, the jump matrices are
+$(\lvert g\rangle,\lvert e\rangle)$, the jump matrices are
 
 ```math
 j_- = |g\rangle\langle e|,\qquad

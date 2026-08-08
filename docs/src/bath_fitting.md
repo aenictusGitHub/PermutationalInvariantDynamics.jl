@@ -4,7 +4,7 @@ PI--HEOM and PI--HOPS consume a finite exponential correlation,
 
 ```math
 C(t)=\sum_{k=1}^{K} c_k e^{-\nu_k t},
-\qquad \mathrm{Re}\,\nu_k>0.
+\qquad \mathrm{Re}\,\nu_k\gt 0.
 ```
 
 The bath-preparation workflow turns either correlation samples or a sampled

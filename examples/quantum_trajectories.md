@@ -90,7 +90,7 @@ trials at every bisection point.
 
 For an individual local jump the package does not resolve which identical
 particle emitted. The conditional PI state can therefore be mixed when
-$N>1$. That is a different measurement record from a particle-resolved pure
+$N\gt 1$. That is a different measurement record from a particle-resolved pure
 wave-function trajectory, while its ensemble density matrix and the count and
 excitation laws tested here are the same.
 

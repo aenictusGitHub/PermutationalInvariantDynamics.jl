@@ -8,7 +8,7 @@ For `N = 6`, the example combines a two-body Ising interaction, local pair
 loss, and collective pair loss. Representative terms are
 
 ```math
-\sum_{i<j}\sigma_i^z\sigma_j^z
+\sum_{i\lt j}\sigma_i^z\sigma_j^z
 =\frac{J_z^2-NI}{2},\qquad
 L_{ij}=\sigma_i^-\sigma_j^- .
 ```

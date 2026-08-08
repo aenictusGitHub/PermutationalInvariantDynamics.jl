@@ -87,7 +87,7 @@ model = all_to_all_xx_spin_local_pseudomode_model(
 The Hamiltonian represented by this call is
 
 ```math
-H=-J_{\mathrm{pair}}\sum_{i<j}X_iX_j
+H=-J_{\mathrm{pair}}\sum_{i\lt j}X_iX_j
   +\omega_c\sum_i a_i^\dagger a_i
   +\sqrt{\gamma\kappa}\sum_i
    \left(L_i a_i^\dagger+L_i^\dagger a_i\right).

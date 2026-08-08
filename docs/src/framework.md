@@ -327,8 +327,10 @@ still succeed whenever the requested final entries are representable.
 ### Spin and Dicke conveniences
 
 `spin_matrices(d)` returns the standard spin-$j=(d-1)/2$ generators in the
-ascending order $|-j>,...,|j>$. For qubits the package local order is
-$(|g>,|e>)=(|-1/2>,|+1/2>)$. Thus `jm` is $|g><e|$ and `jx`, `jy`, and
+ascending order $\lvert-j\rangle,\ldots,\lvert j\rangle$. For qubits the
+package local order is
+$(\lvert g\rangle,\lvert e\rangle)=(\lvert-1/2\rangle,\lvert+1/2\rangle)$.
+Thus `jm` is $\lvert g\rangle\langle e\rvert$ and `jx`, `jy`, and
 `jz` are Pauli matrices divided by two. `collective_spin(basis, :x)` and the
 other named components lower these matrices directly to Schur blocks.
 

@@ -359,7 +359,7 @@ reported CPMG--UDD4 separation.
 ## Collective-bath extension
 
 The report and the executable comparison study one qubit. The same
-construction extends without a full-Hilbert representation to $N>1$
+construction extends without a full-Hilbert representation to $N\gt 1$
 identical qubits coupled to one shared bath through $Q=2J_z$, with the same
 collective $\pi_x$ pulse on every particle:
 
@@ -378,7 +378,7 @@ the corresponding compressed Schur operator block.
 
 This is a common collective environment, not $N$ independent colored baths.
 Independent local noise is not PI on an individual HOPS realization and
-cannot be replaced by one shared stochastic process. The $N>1$ curves are a
+cannot be replaced by one shared stochastic process. The $N\gt 1$ curves are a
 package extension of the model, not a reproduction of the report's
 single-qubit figures.
 

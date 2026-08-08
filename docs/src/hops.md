@@ -26,7 +26,7 @@ For bath $b$, [`HOPSBath`](@ref) represents
 C_b(t)=\sum_{k\in b}c_k e^{-\nu_k t},\qquad t\geq0,
 ```
 
-where $\mathrm{Re}\,\nu_k>0$. Its PI coupling operator is $L_b$.
+where $\mathrm{Re}\,\nu_k\gt 0$. Its PI coupling operator is $L_b$.
 Different baths have independent proper complex Gaussian processes,
 
 ```math

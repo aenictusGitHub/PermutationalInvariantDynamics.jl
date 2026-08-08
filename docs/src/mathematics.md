@@ -342,7 +342,7 @@ cancellation-risk blocks accumulate their error bound in preallocated real
 scratch while traversing the same packed support as the value kernel.
 
 `pbody_collective_operator(basis,X,p)` represents
-$\sum_{n_1<\cdots<n_p}X^{(n_1,\ldots,n_p)}$, while
+$\sum_{n_1\lt\cdots\lt n_p}X^{(n_1,\ldots,n_p)}$, while
 `pbody_kernel_operator(basis,X,Y,p)` represents the local superoperator
 $K_{X,Y}$ of equation (D.2). The term constructors are:
 

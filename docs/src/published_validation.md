@@ -70,7 +70,7 @@ pulse cannot be reproduced literally because its pulse width and bare qubit
 frequency are not specified; the example instead uses the instantaneous
 pulses of the analytical derivation in Eqs. (47)--(52).
 
-The checked default is the report's single qubit. A fully symmetric $N>1$
+The checked default is the report's single qubit. A fully symmetric $N\gt 1$
 extension remains exact in PI coordinates for one common bath coupled through
 $Q=2J_z$ and one collective pulse $U_x^{\otimes N}$. It is not a validation
 of independent local non-Markovian environments.

@@ -22,7 +22,7 @@ The reusable constructor preserves the exact microscopic decomposition
 ```math
 J_x^2-J_y^2=
 \sum_i\left(j_{x,i}^2-j_{y,i}^2\right)
-+2\sum_{i<k}\left(j_{x,i}j_{x,k}-j_{y,i}j_{y,k}\right).
++2\sum_{i\lt k}\left(j_{x,i}j_{x,k}-j_{y,i}j_{y,k}\right).
 ```
 
 It therefore uses one `LocalHamiltonian` and one `PBodyHamiltonian` instead of

@@ -37,7 +37,7 @@ d=2(n_{\max}+1).
 The example evolves
 
 ```math
-H=-J_{\mathrm{pair}}\sum_{i<j}X_iX_j
+H=-J_{\mathrm{pair}}\sum_{i\lt j}X_iX_j
   +\omega_c\sum_i a_i^\dagger a_i
   +g\sum_i\left(L_i a_i^\dagger+L_i^\dagger a_i\right),
 \qquad
@@ -80,7 +80,7 @@ The pair term is lowered with `PBodyHamiltonian`. The script independently
 checks the identity
 
 ```math
-\sum_{i<j}X_iX_j
+\sum_{i\lt j}X_iX_j
 =\frac{1}{2}\left[\left(\sum_iX_i\right)^2-NI\right].
 ```
 
@@ -550,7 +550,7 @@ For the `F_GHZx^max=0.5` contour, the script instead passes
 `fallback_model=:power_law` and requests the positive power-law fallback
 
 ```math
-y=\alpha_p x^\beta,\qquad \alpha_p>0,\quad \beta>0.
+y=\alpha_p x^\beta,\qquad \alpha_p\gt 0,\quad \beta\gt 0.
 ```
 
 This is a two-parameter fit; it does not keep the exponent fixed at two. For a

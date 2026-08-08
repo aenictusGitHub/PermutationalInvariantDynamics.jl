@@ -1327,7 +1327,9 @@ not dispatch on the accidental presence of an optional package.
   Source docstrings remain Julia-native and use double-backtick math; an
   unescaped `$` in an ordinary Julia string would interpolate. GitHub rejects
   `\operatorname`; use `\mathrm{tr}`, `\mathrm{Re}`, `\mathrm{diag}`, and
-  analogous roman labels.
+  analogous roman labels. Literal `<` and `>` are HTML-significant even inside
+  GitHub math regions; write `\lt` and `\gt`, and use `\langle`/`\rangle` or
+  `\lvert`/`\rvert` for mathematical delimiters.
 - Keep README, `CITATION.cff`, Documenter links, repository URL, and license
   synchronized. Do not add `date-released` before an actual release.
 - `scripts/release_gate.jl` is the dependency-free, non-publishing metadata

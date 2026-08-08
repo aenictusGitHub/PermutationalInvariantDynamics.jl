@@ -56,6 +56,146 @@ function _matching_backtick_end(bytes,start,count)
     nothing
 end
 
+function _markdown_fence_info(line::AbstractString,marker)
+    stripped=lstrip(line)
+    run=marker[2]
+    ncodeunits(stripped)==run ? "" : strip(stripped[run+1:end])
+end
+
+function _ascii_is_escaped(bytes,index)
+    preceding_backslashes=0
+    previous=index-1
+    while previous>=1&&bytes[previous]==UInt8('\\')
+        preceding_backslashes+=1
+        previous-=1
+    end
+    isodd(preceding_backslashes)
+end
+
+function _scan_github_math!(
+        violations,bytes,line_number,start,stop,open_braces;
+        reject_dollars=false)
+    index=start
+    while index<=stop
+        byte=bytes[index]
+        escaped=_ascii_is_escaped(bytes,index)
+        if !escaped&&byte==UInt8('{')
+            push!(open_braces,line_number)
+        elseif !escaped&&byte==UInt8('}')
+            if isempty(open_braces)
+                push!(violations,(line=line_number,token="unmatched }"))
+            else
+                pop!(open_braces)
+            end
+        elseif !escaped&&byte==UInt8('<')
+            push!(violations,(line=line_number,token="raw < in math"))
+        elseif !escaped&&byte==UInt8('>')
+            push!(violations,(line=line_number,token="raw > in math"))
+        elseif reject_dollars&&!escaped&&byte==UInt8('$')
+            push!(violations,(line=line_number,token="\$ inside math fence"))
+        end
+        index+=1
+    end
+end
+
+function _matching_inline_math_end(bytes,start)
+    index=start
+    while index<=length(bytes)
+        if bytes[index]==UInt8('$')&&!_ascii_is_escaped(bytes,index)
+            return index
+        end
+        index+=1
+    end
+    nothing
+end
+
+"""
+Return constructs that GitHub's math renderer either misparses or reports as
+invalid. In particular, literal angle brackets are HTML-significant even in a
+`math` fence; use `\\lt`/`\\gt` (or `\\langle`/`\\rangle`) instead.
+"""
+function _github_math_syntax_violations(markdown::AbstractString)
+    violations=NamedTuple{(:line,:token),Tuple{Int,String}}[]
+    fence=nothing
+    math_fence=false
+    math_fence_line=0
+    open_braces=Int[]
+
+    for (line_number,line) in
+            enumerate(split(markdown,'\n';keepempty=true))
+        marker=_markdown_fence_marker(line)
+        if fence!==nothing
+            if marker!==nothing&&marker[1]==fence[1]&&marker[2]>=fence[2]&&
+                    isempty(_markdown_fence_info(line,marker))
+                if math_fence
+                    for opening_line in open_braces
+                        push!(violations,
+                            (line=opening_line,token="unclosed {"))
+                    end
+                    empty!(open_braces)
+                end
+                fence=nothing
+                math_fence=false
+                continue
+            end
+            if math_fence
+                bytes=codeunits(line)
+                _scan_github_math!(violations,bytes,line_number,1,
+                    length(bytes),open_braces;reject_dollars=true)
+            end
+            continue
+        elseif marker!==nothing
+            fence=marker
+            info=_markdown_fence_info(line,marker)
+            math_fence=info=="math"
+            math_fence_line=line_number
+            empty!(open_braces)
+            continue
+        end
+
+        bytes=codeunits(line)
+        index=1
+        while index<=length(bytes)
+            if bytes[index]==UInt8('`')
+                run=1
+                while index+run<=length(bytes)&&
+                        bytes[index+run]==UInt8('`')
+                    run+=1
+                end
+                closing=_matching_backtick_end(bytes,index+run,run)
+                index=closing===nothing ? index+run : closing
+            elseif bytes[index]==UInt8('$')&&
+                    !_ascii_is_escaped(bytes,index)
+                if index<length(bytes)&&bytes[index+1]==UInt8('$')
+                    index+=2
+                    continue
+                end
+                closing=_matching_inline_math_end(bytes,index+1)
+                closing===nothing&&break
+                empty!(open_braces)
+                _scan_github_math!(violations,bytes,line_number,index+1,
+                    closing-1,open_braces)
+                for opening_line in open_braces
+                    push!(violations,(line=opening_line,token="unclosed {"))
+                end
+                empty!(open_braces)
+                index=closing+1
+            else
+                index+=1
+            end
+        end
+    end
+
+    if math_fence
+        push!(violations,
+            (line=math_fence_line,token="unclosed math fence"))
+        for opening_line in open_braces
+            push!(violations,(line=opening_line,token="unclosed {"))
+        end
+    end
+    violations
+end
+
 function _prose_math_syntax_violations(markdown::AbstractString)
     violations=NamedTuple{(:line,:token),Tuple{Int,String}}[]
     fence=nothing
@@ -150,6 +290,9 @@ $$display$$
 portable inline math $x^2+\mathrm{tr}(\rho)$
 `inline code \(x\), ``y``, and $z$`
 ```math
+x=\langle y\rangle,\qquad \{i:i\lt j\}
+```
+```text
 \[x\] + $y$
 ```
 ```julia
@@ -160,6 +303,22 @@ source = raw"\(x\) and $y$"
 | subset | $\lvert S\rvert=p$ |
 """
     @test isempty(_prose_math_syntax_violations(valid_math))
+
+    invalid_github_math=raw"""
+inline raw relations $i<j$ and $j>i$, and unclosed group $x_{i$.
+```math
+H=\sum_{i<j}X_iX_j + x} + $z$
+```
+```math
+x=\sqrt{y}
+"""
+    github_tokens=Set(
+        violation.token for violation in
+        _github_math_syntax_violations(invalid_github_math))
+    @test all(token in github_tokens for token in (
+        "raw < in math","raw > in math","unclosed {","unmatched }",
+        "\$ inside math fence","unclosed math fence"))
+    @test isempty(_github_math_syntax_violations(valid_math))
 
     example_directory=normpath(joinpath(@__DIR__,"..","examples"))
     entries=readdir(example_directory)
@@ -188,6 +347,7 @@ source = raw"\(x\) and $y$"
         markdown=read(joinpath(example_directory,guide),String)
         @test !occursin(raw"\operatorname",markdown)
         @test isempty(_prose_math_syntax_violations(markdown))
+        @test isempty(_github_math_syntax_violations(markdown))
         @test occursin("## Expected output",markdown)
 
         matches=collect(eachmatch(
@@ -212,8 +372,11 @@ source = raw"\(x\) and $y$"
             path=joinpath(root,filename)
             markdown=read(path,String)
             markdown_count+=1
+            @test !occursin(raw"\operatorname",markdown)
             violations=_prose_math_syntax_violations(markdown)
             @test isempty(violations)
+            github_violations=_github_math_syntax_violations(markdown)
+            @test isempty(github_violations)
             for (opening_line,source) in _exact_julia_fences(markdown)
                 julia_fence_count+=1
                 parsed=Meta.parseall(

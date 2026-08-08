@@ -118,7 +118,7 @@ P_\nu=f^\nu\mathrm{tr}(\rho_\nu),
 This is more meaningful for a state than an unweighted coefficient-block norm.
 The diagram aggregates each Schur block to this trace weight; it is not an
 entry-wise heat map of the matrix $\rho_\nu$.
-Because $\Delta\gamma>0$, the unresolved local channel transfers population
+Because $\Delta\gamma\gt 0$, the unresolved local channel transfers population
 out of the symmetric partition `(30,0)`; all 16 qubit sectors are visible at
 the pulse maximum. The Young shape shown for each sector represents its
 partition, while the tooltip records its exact symmetric-group multiplicity.

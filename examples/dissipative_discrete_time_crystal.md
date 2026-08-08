@@ -77,7 +77,7 @@ article writes $\sum_{i\ne j}$, which counts ordered pairs, but one caption
 identifies the effective mean-field coupling with $V_0$. Read literally,
 the Hamiltonian instead gives $V\to2V_0$; this is also the normalization
 consistent with bistability at the displayed point. The package's
-`PBodyHamiltonian` sums unordered subsets $i<j$, so the exact mapping of the
+`PBodyHamiltonian` sums unordered subsets $i\lt j$, so the exact mapping of the
 written Hamiltonian is
 
 ```julia

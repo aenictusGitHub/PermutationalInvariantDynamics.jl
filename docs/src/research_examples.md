@@ -243,7 +243,7 @@ an analytical comparison using two converged half-line quadrature orders; it
 is not attributed to either hierarchy. The executable uses ideal
 instantaneous pulses because the supplied report does not specify the
 Gaussian pulse width or bare qubit frequency needed to reproduce its
-finite-pulse HOPS calculation. Its same construction remains PI for $N>1$
+finite-pulse HOPS calculation. Its same construction remains PI for $N\gt 1$
 under one collective bath coupling $Q=2J_z$ and the global pulse
 $U_x^{\otimes N}$; this common-bath extension is not a model of independent
 local colored noises.
@@ -748,8 +748,8 @@ $N^2\Gamma_c/8$ from Eq. (10).
 `examples/boundary_time_crystal.jl` implements Eq. (2) of Iemini
 *et al.*, *Phys. Rev. Lett.* **121**, 035301 (2018). It uses the high-level
 `liouvillian_spectrum` ordering and contrasts the gapped
-$\omega_0/\kappa<1$ regime with the time-crystalline
-$\omega_0/\kappa>1$ regime, where finite-size oscillatory modes approach the
+$\omega_0/\kappa\lt 1$ regime with the time-crystalline
+$\omega_0/\kappa\gt 1$ regime, where finite-size oscillatory modes approach the
 imaginary axis as `N` increases.
 
 `examples/interacting_boundary_time_crystal.jl` implements the nonlinear
