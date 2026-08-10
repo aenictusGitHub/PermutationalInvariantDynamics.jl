@@ -1,7 +1,7 @@
 name = "PermutationalInvariantDynamics"
 uuid = "8edbc7f6-5364-4b2e-9e03-73a6d67b7c8a"
-authors = ["Thierry Bastin", "John Martin"]
 version = "0.1.0"
+authors = ["Thierry Bastin", "John Martin"]
 
 [deps]
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
@@ -38,20 +38,20 @@ HDF5 = "0.16, 0.17"
 JLD2 = "0.4, 0.5"
 LinearAlgebra = "1.10"
 Makie = "0.21, 0.22, 0.23, 0.24"
-QuantumCumulants = "0.5"
+QuantumCumulants = "0.5, 0.7"
 QuantumOptics = "1"
 QuantumToolbox = "0.45"
 Random = "1.10"
 SciMLBase = "2"
 SparseArrays = "1.10"
-Test = "1.10"
-Tables = "1"
 TOML = "1"
+Tables = "1"
+Test = "1.10"
 julia = "1.10"
 
 [extras]
-Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
 test = ["Test", "Distributed", "Tables", "TOML"]
