@@ -12,6 +12,12 @@ family, continuation with a recycled subspace, or direct exponential action,
 see [Block, shifted, recycled, and exponential Krylov
 methods](krylov_extensions.md).
 
+For autonomous GKSL models whose no-jump generator is inexpensive to invert
+sector by sector, the [no-jump resolvent and Tilloy methods](no_jump_iterative_solvers.md)
+provide a different matrix-free route: an exact no-jump right preconditioner,
+a CPTP fixed-point stationary map, nested shift-invert slow modes, and
+implicit Euler.
+
 Public high-level commands report canonical solver names even when a retained
 compatibility alias is supplied:
 

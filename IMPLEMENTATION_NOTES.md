@@ -1380,3 +1380,42 @@ matrix-free Jacobi--Davidson at zero for the stationary/gap window and at the
 positive and negative expected oscillation frequencies for the conjugate slow
 pair. Every point checks reported Ritz residuals and conjugate pairing before
 plotting. Reviewed expected-output PNGs were regenerated from the new defaults.
+
+## Sectorwise no-jump resolvents and Tilloy solvers (2026-09-02)
+
+The autonomous GKSL compiler now exposes the Beugnot--Gregory--Robin--Tilloy
+jump/no-jump split without materializing a Hilbert-space or PI-coordinate
+inverse. The effective generator `G=-im*H-sum(K'K)/2` is accumulated from the
+same fixed physical kernels as the full `LiouvillianPlan`. Its physical Schur
+blocks define independent Sylvester equations, so setup and repeated dense
+block work scale with the sum of irrep-dimension cubes rather than the cube of
+the PI coordinate dimension.
+
+The default factorization is a unitary Schur decomposition followed by a
+preallocated Bartels--Stewart recurrence. This remains valid for defective
+blocks. The optional eigendecomposition backend implements the paper's
+four-GEMM route, but rejects a singular or overly ill-conditioned eigenvector
+matrix unless the caller explicitly changes its conditioning limit. Both
+backends preserve prepared scalar precision and require separate source and
+destination storage.
+
+`TilloyPlan` retains the exact matrix-free Liouvillian, no-jump factorization,
+sparse physical trace functional, and trace-one identity direction. Its
+normalized rank-one deflation moves the stationary eigenvalue by the requested
+coefficient independently of `d^N`; this is the paper's unnormalized identity
+after rescaling. `TilloyWorkspace` owns the Sylvester, Liouvillian, and
+recycled-GMRES scratch, cached Sherman--Morrison correction, warm start, and
+recycle space. Plans are shareable and workspaces are task-owned and
+memory-guarded.
+
+The stationary linear route is genuinely right preconditioned, while the
+fixed-point route applies the gain map directly as `Phi=K*R0` (rather than the
+more cancellation-prone identity `I+L*R0`) and selects the Arnoldi Ritz value
+nearest one instead of assuming a convergent power iteration. The low-mode
+route nests recycled-GMRES inverse actions inside thick-restarted shift-invert
+Arnoldi. Every route recomputes the raw, undeflated Liouvillian residual in
+physical Schur scaling; transformed or inner convergence is not promoted to a
+physical certificate. The fixed-point/zero-shift routes reject the dark-state
+branch when strict stability of `G` cannot be certified, whereas positive
+shifts remain available. Implicit Euler reuses those positive-shift solves but
+retains its explicit first-order time-step convergence requirement.

@@ -22,6 +22,7 @@ const TEST_FILES=(
     (:solvers,"test_spectra.jl"),
     (:solvers,"test_krylov.jl"),
     (:solvers,"test_krylov_extensions.jl"),
+    (:solvers,"test_tilloy.jl"),
     (:solvers,"test_evans.jl"),
     (:solvers,"test_symmetries.jl"),
     (:solvers,"test_restricted_symmetries.jl"),

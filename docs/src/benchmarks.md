@@ -7,7 +7,7 @@ versions, solver choices, thread settings, and hardware. A result is useful
 only together with that context and the numerical checks performed on the
 same case.
 
-There are seven complementary internal suites and one cross-package track:
+There are seven complementary internal suites and two cross-package tracks:
 
 1. `performance_regression.jl` supplies deterministic CI correctness,
    equivalence, retained-storage, and hot-allocation gates without
@@ -27,7 +27,10 @@ There are seven complementary internal suites and one cross-package track:
    warmed allocation measurements; and
 8. the cross-package runner compares a deliberately small common operation
    with general-purpose Julia quantum-dynamics packages where the underlying
-   representations can be matched or clearly identified.
+   representations can be matched or clearly identified; and
+9. the optional Tilloy/QuTiP runner compares complete all-sector PI
+   steady-state solving against a QuTiP 5.2 PIQS generator restricted to the
+   exact same physical block-diagonal equation-(7) coordinates.
 
 The command-line details and current case grids are canonical in
 [`benchmark/README.md`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/benchmark/README.md)
@@ -36,6 +39,9 @@ and
 Generated timing tables and local manifests are intentionally ignored rather
 than committed. This avoids presenting one developer machine's measurements
 as package-wide results.
+
+The cross-language solver protocol is documented separately in
+[`benchmark/comparison/tilloy_qutip/README.md`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/benchmark/comparison/tilloy_qutip/README.md).
 
 ## Startup latency and complete workflows
 
@@ -349,3 +355,59 @@ criterion and convergence study.
 
 Accordingly, the repository publishes the harness and validation rules, not a
 timeless claim that one package is universally faster.
+
+### Tilloy solver versus QuTiP PIQS
+
+The optional cross-language harness measures a different task from the sparse
+action comparison above: a complete stationary-state solve for
+
+```math
+\dot\rho=-i[\Omega J_x+\Delta J_z,\rho]
++\gamma_\downarrow\sum_i\mathcal D[\sigma_-^{(i)}]\rho
++\gamma_\uparrow\sum_i\mathcal D[\sigma_+^{(i)}]\rho.
+```
+
+Independent jumps connect total-spin sectors. Both adapters therefore retain
+the exact `binomial(N+3,3)` all-sector PI operator coordinates. QuTiP's public
+PIQS Liouvillian is first checked and restricted to the invariant
+block-diagonal coordinates, then diagonally transformed from PIQS's native
+multiplicity weighting to the package's equation-(7) normalization; the
+baseline is then SciPy sparse direct solving, not a single-spin-sector
+approximation. PID prepares the sectorwise no-jump
+Schur resolvent and a fixed-capacity Tilloy workspace, then reuses them for
+warmed restarted-Arnoldi fixed-point solves by default.
+
+The same run separately probes QuTiP's official high-level `steadystate`
+function on its untrimmed Dicke embedding. A successful and validated probe is
+retained as `QuTiP-public`; a singular or invalid result is recorded as
+unavailable and never assigned a speed ratio. The restricted direct route is
+therefore both the primary same-coordinate baseline and usually the stronger
+QuTiP comparison.
+
+The primary timing is fresh setup plus the first solve. The runner also writes
+separate setup and prepared solve-only times, distinguishing SciPy `spsolve`
+that refactors on every call from a separately prepared SuperLU `splu`
+triangular solve. Every row includes software and machine versions, observed
+native thread-pool counts, retained and ambient dimensions, solver tolerances,
+the true undeflated physical-block residual, trace/positivity/Hermiticity
+diagnostics, and `real(<Jz>)/N`. The observable also has an analytic
+optical-Bloch value.
+The runner additionally compares the norm and complex checksum obtained by
+applying both equation-(7) generators to the same deterministic probe. Only
+solutions passing all checks enter the summary. The reported descriptive
+ratio is `QuTiP time / PID time`: quote the time-to-solution ratio first, and
+retain the prepared/refactor labels on solve-only ratios. Every ratio is
+workload- and crossover-dependent and must remain attached to its raw table.
+
+Run it with:
+
+```sh
+PYTHON=benchmark/comparison/tilloy_qutip/.venv/bin/python \
+  julia --startup-file=no benchmark/comparison/tilloy_qutip/run_all.jl \
+  --mode quick
+```
+
+See the
+[protocol README](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/benchmark/comparison/tilloy_qutip/README.md)
+for the pinned optional environment, exact parameters, full controls, and why
+the QuTiP generator is restricted before solving.

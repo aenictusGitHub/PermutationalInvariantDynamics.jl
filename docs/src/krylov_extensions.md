@@ -154,6 +154,12 @@ complement of $C$. Near-`target` Ritz directions from the final correction
 space replace `U` for the next call. The default `target=0` is appropriate for
 trace-fixed steady-state and low-frequency response systems.
 
+Ordinary projected Ritz extraction remains the default. For nested inverses
+or other interior-target sequences, pass `recycle_extraction=:harmonic` to
+retain harmonic Ritz directions nearest `target`. The returned
+`recycle_extraction_used` field is `:harmonic` when that projected extraction
+was performed and `:rayleigh_ritz` after an exact invariant-space breakdown.
+
 Recycling is mutable algorithmic state. Use one workspace per continuation
 chain and never share it concurrently. The `recycle_reset` diagnostic is true
 if a changed operator made the retained image rank deficient and the solver

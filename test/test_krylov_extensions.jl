@@ -29,6 +29,21 @@
                 block_result.residuals[column] atol=2e-14
         end
 
+        # An invariant starting vector must trigger a genuinely orthogonal
+        # random complement.  The breakdown threshold is referenced to the
+        # pre-orthogonalization image norm so normalized roundoff cannot be
+        # appended repeatedly as duplicate basis vectors.
+        invariant=Diagonal(ComplexF64[1,0.4,0.2,0.0])
+        invariant_work=BlockArnoldiWorkspace(ComplexF64,4,4,1)
+        invariant_result=block_arnoldi_spectrum(invariant;nev=1,
+            block_size=1,krylovdim=4,maxrestarts=0,which=:LM,target=1,
+            initial_subspace=reshape(ComplexF64[1,0,0,0],:,1),
+            workspace=invariant_work,vectors=true,
+            rng=MersenneTwister(0x696e7661),atol=1e-12,rtol=1e-10)
+        @test only(invariant_result.values)≈1 atol=2e-14
+        @test only(invariant_result.residuals)<2e-14
+        @test norm(adjoint(invariant_work.V)*invariant_work.V-I)<2e-12
+
         # Exercise the actual thick-restart path: the full dimension is much
         # larger than the bounded search space and convergence takes several
         # retained-subspace cycles.
@@ -255,6 +270,23 @@
             atol=1e-12,rtol=1e-10,maxiter=n)
         @test callable_result.converged
         @test callable_solution≈A\b1 atol=2e-10 rtol=2e-10
+
+        # Harmonic Ritz extraction is an explicit opt-in for interior-target
+        # continuation.  The ordinary projected-Ritz behavior remains the
+        # public default for compatibility.
+        harmonic_workspace=RecycledGMRESWorkspace(ComplexF64,n,6,3)
+        harmonic_solution=zeros(ComplexF64,n)
+        harmonic=recycled_gmres!(harmonic_solution,A,b1,
+            harmonic_workspace;recycle_extraction=:harmonic,
+            atol=1e-12,rtol=1e-10,maxiter=80)
+        @test harmonic.converged
+        @test harmonic.recycle_extraction===:harmonic
+        @test harmonic.recycle_extraction_used in (:harmonic,:rayleigh_ritz)
+        @test harmonic_solution≈A\b1 atol=2e-10 rtol=2e-10
+        @test_throws ArgumentError recycled_gmres!(
+            zeros(ComplexF64,n),A,b1,
+            RecycledGMRESWorkspace(ComplexF64,n,6,3);
+            recycle_extraction=:invalid)
 
         narrow_recycle=RecycledGMRESWorkspace(ComplexF32,n,8,3)
         @test_throws ArgumentError recycled_gmres!(zeros(ComplexF32,n),A,

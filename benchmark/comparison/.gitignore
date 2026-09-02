@@ -1,3 +1,4 @@
 **/Manifest.toml
+**/.venv/
+**/__pycache__/
 results/
-

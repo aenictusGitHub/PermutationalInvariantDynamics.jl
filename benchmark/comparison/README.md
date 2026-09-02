@@ -7,6 +7,14 @@ runs in a separate Julia project and process. This isolation is intentional:
 it prevents their SciML dependency trees and preferences from changing the
 environment used to benchmark `PermutationalInvariantDynamics.jl`.
 
+The separate [`tilloy_qutip/`](tilloy_qutip/) harness is an optional
+cross-language stationary-state comparison with Python QuTiP 5.2 PIQS. It
+uses a complete all-sector driven-qubit model, matched physical coordinates,
+raw time-to-solution/setup/solve samples, explicit direct and prepared SuperLU
+baselines, and independent residual/observable validation. Its Python
+requirements and interpretation rules are intentionally not folded into this
+Julia sparse-action runner.
+
 The scripts record raw measurements, not a headline speed ratio. The output
 includes package, Julia, and BenchmarkTools versions; timestamp, OS, CPU,
 architecture, Julia-thread, and BLAS metadata; the benchmark Git revision and

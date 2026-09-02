@@ -102,6 +102,7 @@ makedocs(sitename="PermutationalInvariantDynamics.jl",
                 ],
                 "Large-scale numerical methods"=>[
                     "Matrix-free Krylov solvers"=>"matrix_free_krylov.md",
+                    "No-jump resolvents and Tilloy methods"=>"no_jump_iterative_solvers.md",
                     "Block, multi-shift, and recycled Krylov"=>"krylov_extensions.md",
                     "Optional accelerators"=>"accelerators.md",
                     "Prepared parameter scans"=>"parameter_scans.md",

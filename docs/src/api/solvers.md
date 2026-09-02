@@ -19,6 +19,27 @@ liouvillian_eigenvalues
 liouvillian_gap
 ```
 
+## No-jump resolvents and Tilloy methods
+
+```@docs
+NoJumpResolventPlan
+NoJumpResolventWorkspace
+no_jump_resolvent!
+no_jump_resolvent
+TilloyPlan
+TilloyWorkspace
+tilloy_resolvent!
+tilloy_resolvent
+tilloy_steady_state
+tilloy_liouvillian_spectrum
+tilloy_implicit_euler_step!
+tilloy_implicit_euler
+```
+
+The mathematical assumptions, dark-state branch, trace-deflation convention,
+and nested-solver workflow are described in [No-jump resolvents and Tilloy
+iterative methods](../no_jump_iterative_solvers.md).
+
 ## PI spectra
 
 ```@docs

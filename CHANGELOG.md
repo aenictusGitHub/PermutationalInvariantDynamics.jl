@@ -57,6 +57,10 @@ Initial public release candidate.
 - Block, multi-shift, and recycled GMRES, plus adaptive matrix-free Krylov
   exponential actions and an autonomous high-level `ExpvAlgorithm` dynamics
   route with saved-state or observable-only output.
+- Sectorwise no-jump resolvents and the Tilloy iterative solver family for
+  autonomous PI GKSL models, including robust Schur and guarded eigen
+  backends, CPTP fixed-point and right-preconditioned stationary states,
+  nested shift-invert slow modes, and implicit-Euler propagation.
 - PI hierarchy equations of motion for finite-exponential bosonic bath
   correlations, including propagation, stationary solving, and hierarchy-depth
   convergence reports.

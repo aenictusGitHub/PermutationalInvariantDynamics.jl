@@ -31,6 +31,11 @@ plan construction, sparse-first materialization, `:auto` compilation, sparse
 and matrix-free actions, driven preallocated action, and prepared collective
 observable measurements.
 
+An additional optional cross-language harness under
+`comparison/tilloy_qutip/` compares the prepared Tilloy steady-state solver
+with a QuTiP 5.2 PIQS generator on an exactly matched, all-sector driven-qubit
+model. It is kept separate because it requires Python, QuTiP, NumPy, and SciPy.
+
 The CI regression and human-readable audit also include `N=64` structured
 support, sparse/matrix-free equivalence, memory, and hot-allocation checks.
 
@@ -149,6 +154,38 @@ The dependency-light parser and dry-run checks can be run independently:
 julia --startup-file=no --project=benchmark \
   benchmark/test_productization_harnesses.jl
 ```
+
+## Tilloy steady-state comparison with QuTiP PIQS
+
+The optional solver benchmark uses independent emission and pumping together
+with a collective linear drive, so every total-spin sector is part of the
+physical problem. PID and QuTiP retain the same
+`binomial(N+3,3)` block-diagonal PI density coordinates. The QuTiP adapter
+restricts its public PIQS Liouvillian from the larger concatenated-Dicke
+embedding to this exactly invariant physical subspace, then converts its
+native multiplicity-weighted blocks to the package's equation-(7) coordinate
+normalization before applying SciPy's sparse direct solver.
+
+After installing the pinned optional Python environment, run:
+
+```sh
+python3 -m venv benchmark/comparison/tilloy_qutip/.venv
+benchmark/comparison/tilloy_qutip/.venv/bin/pip install -r \
+  benchmark/comparison/tilloy_qutip/requirements.txt
+PYTHON=benchmark/comparison/tilloy_qutip/.venv/bin/python \
+  julia --startup-file=no benchmark/comparison/tilloy_qutip/run_all.jl \
+  --mode quick
+```
+
+The harness reports fresh setup plus first solve as its primary
+time-to-solution metric, then separates setup and prepared solve-only samples.
+The latter distinguish refactor-each-call SciPy `spsolve` from a separately
+prepared SuperLU `splu` baseline. Every raw sample is retained. Both outputs
+must pass an undeflated physical-Schur residual check, state checks,
+invariant-subspace closure, and an analytic/cross-package `real(<Jz>)/N`
+check. Full workload semantics, controls, output schema, and interpretation
+limits are in
+[`comparison/tilloy_qutip/README.md`](comparison/tilloy_qutip/README.md).
 
 ## Internal scaling benchmark
 

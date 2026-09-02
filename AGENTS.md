@@ -231,6 +231,8 @@ Related workflows are:
   `PIBasis/StrongSymmetryReduction -> HilbertBlockEntropyPlan -> workspace -> entropy`.
 - Ideal hierarchy control:
   `local/PI unitary or Platonic constructor -> HierarchyPulseSequence -> HEOM/HOPS`.
+- No-jump iterative solvers:
+  `PIModel/LiouvillianPlan -> TilloyPlan -> TilloyWorkspace -> stationary state/slow modes/implicit Euler`.
 
 Prefer `PIStudy`/`solve`, `compile`, `solve_dynamics`, `stationary_state`,
 `liouvillian_spectrum`, `diagnostics`, and `recommend_solver` in research
@@ -341,6 +343,7 @@ pattern.
   compact summaries, dependency-free result tables, and the common export dispatch;
   optional storage and plotting methods remain in extensions.
 - Krylov, spectra, and symmetries: `krylov.jl`, `krylov_extensions.jl`,
+  `tilloy.jl`,
   `spectra.jl`, `evans.jl`, `symmetries.jl`, and
   `restricted_symmetries.jl`, and `automatic_symmetries.jl`.
 - State analysis: `observables.jl`, `entanglement.jl`,
@@ -445,6 +448,45 @@ pattern.
   coordinates retain sliced rectangular Schur contractions. Do not expand
   these gains into quartic reduced-coordinate triplets. Preserve prepared
   exact p-body scales in both forward and adjoint sandwiches.
+
+### No-jump resolvents and Tilloy solvers
+
+- `NoJumpResolventPlan` and `TilloyPlan` accept only fixed autonomous GKSL
+  models with finite nonnegative jump rates and built-in kernels that expose
+  the exact physical gain/loss split. Never infer a jump decomposition from an
+  opaque matrix-free callback or apply the CPTP/contraction claims to negative
+  deterministic rates.
+- Build the effective no-jump generator from the same prepared Hamiltonian and
+  loss blocks as `LiouvillianPlan`. In each sector use the physical Schur block
+  `G_nu` and solve `(lambda-S_nu)X=Y`, with
+  `S_nu(X)=G_nu*X+X*G_nu'`. Never form a `d^N` object, a complete
+  PI-coordinate no-jump matrix, or its inverse.
+- The robust default is a unitary Schur factorization with a preallocated
+  Bartels--Stewart recurrence. The optional eigen backend must reject singular
+  or over-limit eigenvector conditioning rather than return an uncertified
+  inverse. Preserve plan precision in both routes.
+- A zero-shift resolvent requires strict stability of every `G_nu`. An
+  imaginary-axis eigenvalue is the theorem's dark-state branch and must raise
+  with an alternative-solver explanation; positive shifts remain valid.
+- `TilloyPlan` uses the trace-one identity direction for rank-one deflation.
+  Keep this normalization explicit: it is the paper's unnormalized identity
+  after rescaling the deflation coefficient, and it avoids constructing or
+  converting `d^N`.
+- The fixed-point action is applied directly as `Phi=K*R0`; `I+L*R0` is only
+  its algebraic identity and must not be used by the hot kernel because it
+  introduces avoidable cancellation. Select the Ritz value nearest one and
+  never replace restarted Arnoldi with an assumed-convergent power iteration,
+  because other peripheral eigenvalues may exist. Uniqueness remains an
+  assumption, not a certificate.
+- Right-preconditioned linear and nested shift-invert solves must recompute
+  true residuals of the original, undeflated Liouvillian in physical Schur
+  scaling. Inner or transformed convergence is never a physical stationary or
+  eigenpair certificate. Returned nonzero modes must also pass the physical
+  trace-null check.
+- `NoJumpResolventWorkspace` and `TilloyWorkspace` are fixed-capacity,
+  task-owned, basis/plan-bound, and memory-guarded. Reuse warm starts and
+  recycled subspaces only when requested explicitly; never share mutable
+  solver scratch concurrently.
 
 ### Threaded application
 

@@ -230,7 +230,8 @@ end
 # Factor the columns of W as Q*R, dropping dependent columns. Q may alias
 # neither W nor R. The no-pivot order is deterministic and preserves the
 # original right-hand-side ordering in R.
-function _advanced_column_factor!(Q,W,R;breakdown_factor=nothing)
+function _advanced_column_factor!(Q,W,R;breakdown_factor=nothing,
+        reference_scale=nothing)
     n,p=size(W);size(Q,1)==n||throw(DimensionMismatch("factor basis has the wrong row count"))
     size(Q,2)>=p||throw(DimensionMismatch("factor basis has too few columns"))
     size(R,1)>=p&&size(R,2)>=p||throw(DimensionMismatch("factor array is too small"))
@@ -243,8 +244,15 @@ function _advanced_column_factor!(Q,W,R;breakdown_factor=nothing)
     factor=breakdown_factor===nothing ? sqrt(eps(RT)) : RT(breakdown_factor)
     factor>=zero(RT)&&isfinite(factor)||throw(ArgumentError(
         "breakdown tolerance must be finite and nonnegative"))
-    scale=maximum((_advanced_checked_norm(view(W,:,j),
-        "block-Arnoldi input column $j") for j in 1:p);init=zero(RT))
+    scale=reference_scale===nothing ?
+        maximum((_advanced_checked_norm(view(W,:,j),
+            "block-Arnoldi input column $j") for j in 1:p);
+            init=zero(RT)) : begin
+        reference_scale isa Real&&isfinite(reference_scale)&&
+            reference_scale>=0||throw(ArgumentError(
+                "column-factor reference scale must be finite and nonnegative"))
+        RT(reference_scale)
+    end
     threshold=factor*max(scale,floatmin(RT));rank=0
     for j in 1:p
         w=view(W,:,j)
@@ -573,13 +581,14 @@ function _block_orthogonalize_against!(W,V,k,coefficients)
     W
 end
 
-function _block_append!(V,k,W,factor;breakdown_factor)
+function _block_append!(V,k,W,factor;breakdown_factor,
+        reference_scale=nothing)
     available=min(size(W,2),size(V,2)-k)
     available==0&&return 0
     Q=view(V,:,k+1:k+available)
     _advanced_column_factor!(Q,view(W,:,1:available),
         view(factor,1:available,1:available);
-        breakdown_factor=breakdown_factor)
+        breakdown_factor=breakdown_factor,reference_scale)
 end
 
 function _block_apply_chunks!(destination,A,source,columns,capacity,
@@ -599,9 +608,12 @@ function _block_random_complement!(work,rng,k,p,breakdown_factor)
     available=min(p,size(work.V,2)-k)
     available==0&&return 0
     W=view(work.W,:,1:available);randn!(rng,W)
+    reference_scale=maximum((_advanced_checked_norm(view(W,:,column),
+        "block-Arnoldi random complement column $column")
+        for column in 1:available);init=zero(typeof(real(zero(eltype(W))))))
     _block_orthogonalize_against!(W,work.V,k,work.coefficients)
     _block_append!(work.V,k,W,work.factor;
-                   breakdown_factor=breakdown_factor)
+                   breakdown_factor=breakdown_factor,reference_scale)
 end
 
 """
@@ -762,9 +774,14 @@ function block_arnoldi_spectrum(A;nev::Integer=6,block_size::Integer=min(nev,4),
             applications+=q;batches+=1
             copyto!(view(work.AV,:,frontier_start:frontier_end),image)
             k==m&&break
+            image_reference_scale=maximum((
+                _advanced_checked_norm(view(image,:,column),
+                    "block-Arnoldi image column $column")
+                for column in 1:q);init=zero(RT))
             _block_orthogonalize_against!(image,work.V,k,work.coefficients)
             appended=_block_append!(work.V,k,image,work.factor;
-                                    breakdown_factor=factor)
+                breakdown_factor=factor,
+                reference_scale=image_reference_scale)
             if appended==0
                 appended=_block_random_complement!(work,rng,k,p,factor)
             end
@@ -1121,10 +1138,60 @@ function _prepare_recycle!(ws,A,P)
     k,false,applications
 end
 
-function _update_recycle!(ws,k,target)
-    capacity=size(ws.U,2);capacity==0&&return 0
-    E=_projected_eigen(Matrix(view(ws.H,1:k,1:k)))
-    keep=min(capacity,k);order=sortperm(abs.(E.values .- target))[1:keep]
+function _recycle_projected_eigen(ws,k,rows,target,extraction)
+    projected=Matrix(view(ws.H,1:k,1:k))
+    if extraction===:ritz||rows==k
+        E=_projected_eigen(projected)
+        return E,E.values,rows==k&&extraction===:harmonic ?
+            :rayleigh_ritz : :ritz
+    end
+
+    # For the Arnoldi relation A*V_k=V_{k+1}*Hbar, harmonic Ritz values near
+    # target sigma are the eigenvalues of
+    #
+    # H_sigma + |h_(k+1,k)|^2 * H_sigma^(-H) e_k e_k'.
+    #
+    # This one-matrix form avoids retaining two extra k-by-k generalized-
+    # pencil buffers in every GCRO workspace. It is equivalent whenever the
+    # target-shifted projected factor is nonsingular; an explicit harmonic
+    # request raises with guidance rather than silently reverting to Ritz
+    # vectors when that condition fails.
+    @inbounds for index in 1:k
+        projected[index,index]-=target
+    end
+    unit=zeros(eltype(projected),k);unit[end]=one(eltype(projected))
+    correction=try
+        adjoint(projected)\unit
+    catch error
+        error isa Union{SingularException,LinearAlgebra.LAPACKException}||
+            rethrow()
+        throw(ArgumentError(
+            "harmonic recycled-GMRES extraction is singular at target " *
+            "$target; change the recycling target or use " *
+            "recycle_extraction=:ritz"))
+    end
+    all(value->isfinite(real(value))&&isfinite(imag(value)),correction)||
+        throw(ArgumentError(
+            "harmonic recycled-GMRES extraction is numerically singular at " *
+            "target $target; change the target or use " *
+            "recycle_extraction=:ritz"))
+    remainder=ws.H[k+1,k]
+    @inbounds for row in 1:k
+        projected[row,k]+=abs2(remainder)*correction[row]
+    end
+    E=_projected_eigen(projected)
+    E,target .+ E.values,:harmonic
+end
+
+function _update_recycle!(ws,k,rows,target,extraction)
+    capacity=size(ws.U,2);capacity==0&&return (0,:none)
+    E,values,used=_recycle_projected_eigen(
+        ws,k,rows,target,extraction)
+    finite=findall(value->isfinite(real(value))&&isfinite(imag(value)),values)
+    isempty(finite)&&throw(ArgumentError(
+        "recycled-GMRES Ritz extraction produced no finite values"))
+    keep=min(capacity,length(finite))
+    order=finite[sortperm(abs.(values[finite].-target))[1:keep]]
     Y=view(E.vectors,:,order)
     mul!(view(ws.candidate,:,1:keep),view(ws.V,:,1:k),Y)
     old=ws.nrecycle
@@ -1139,7 +1206,7 @@ function _update_recycle!(ws,k,target)
     rank=_advanced_column_factor!(view(ws.U,:,1:keep),view(ws.AU,:,1:keep),
         view(ws.smallR,1:keep,1:keep))
     ws.nrecycle=rank
-    rank
+    rank,used
 end
 
 """
@@ -1152,6 +1219,12 @@ the end it retains near-`target` Ritz directions constructed from the GCRO
 correction basis. This makes the workspace suitable for continuation through
 a sequence of slowly varying operators.
 
+`recycle_extraction=:ritz` preserves the ordinary projected-Ritz default.
+Set `recycle_extraction=:harmonic` to retain harmonic Ritz directions nearest
+`target`; this is useful for interior modes in nested resolvent sequences. An
+invariant final Arnoldi space uses exact Rayleigh--Ritz extraction, and the
+returned `recycle_extraction_used` records that fallback.
+
 A fixed left preconditioner is supported. Full unpreconditioned residuals are
 always validated. The returned named tuple records whether recycling was
 used, the retained dimension, residuals, restarts, iterations, and operator
@@ -1160,13 +1233,16 @@ applications. Failure raises unless `require_convergence=false`.
 function recycled_gmres!(x::AbstractVector,A,b::AbstractVector,
                          ws::RecycledGMRESWorkspace;atol::Real=1e-10,
                          rtol::Real=1e-8,maxiter::Integer=500,target=0,
-                         preconditioner=nothing,require_convergence::Bool=true)
+                         preconditioner=nothing,require_convergence::Bool=true,
+                         recycle_extraction::Symbol=:ritz)
     n=length(b);length(x)==n||throw(DimensionMismatch(
         "solution and right-hand side have different lengths"))
     Base.mightalias(x,b)&&throw(ArgumentError("x and b must not alias"))
     _advanced_krylov_dimension(A,n);size(ws.V,1)==n||throw(DimensionMismatch(
         "recycled-GMRES workspace has the wrong dimension"))
     maxiter>0||throw(ArgumentError("maxiter must be positive"))
+    recycle_extraction in (:ritz,:harmonic)||throw(ArgumentError(
+        "recycle_extraction must be :ritz or :harmonic"))
     _advanced_check_preconditioner_dimension(preconditioner,n)
     isfinite(real(target))&&isfinite(imag(target))||throw(ArgumentError(
         "recycling target must be finite"))
@@ -1205,7 +1281,7 @@ function recycled_gmres!(x::AbstractVector,A,b::AbstractVector,
     ptol=atolT+rtolT*projected_bnorm
     isfinite(ptol)||throw(ArgumentError(
         "recycled-GMRES projected tolerance overflowed; rescale the problem or use wider precision"))
-    iterations=0;restarts=0;lastk=0
+    iterations=0;restarts=0;lastk=0;lastrows=0
     m=size(ws.H,2);breakfactor=sqrt(eps(RT))
     while !(rawres<=rawtol&&pres<=ptol)&&iterations<maxiter
         fill!(ws.H,zero(T));fill!(ws.coupling,zero(T))
@@ -1235,7 +1311,7 @@ function recycled_gmres!(x::AbstractVector,A,b::AbstractVector,
             end
             ws.V[:,j+1].=ws.w./ws.H[j+1,j];has_extra=true
         end
-        lastk=k;rows=k+(has_extra ? 1 : 0)
+        lastk=k;rows=k+(has_extra ? 1 : 0);lastrows=rows
         g=zeros(T,rows);g[1]=beta
         y=_advanced_projected_least_squares(
             Matrix(view(ws.H,1:rows,1:k)),g)
@@ -1263,7 +1339,11 @@ function recycled_gmres!(x::AbstractVector,A,b::AbstractVector,
         pres=_advanced_checked_norm(ws.projected_residual,
             "recycled-GMRES projected residual")
     end
-    lastk>0&&_update_recycle!(ws,lastk,targetT)
+    recycle_extraction_used=:none
+    if lastk>0
+        _,recycle_extraction_used=_update_recycle!(
+            ws,lastk,lastrows,targetT,recycle_extraction)
+    end
     converged=rawres<=rawtol&&pres<=ptol
     if require_convergence&&!converged
         throw(ArgumentError(
@@ -1273,6 +1353,7 @@ function recycled_gmres!(x::AbstractVector,A,b::AbstractVector,
      iterations,restarts,operator_applications=applications,
      recycled_initially=recycled_requested>0,recycle_reset,
      recycle_dimension=ws.nrecycle,krylov_dimension=m,target=targetT,
+     recycle_extraction,recycle_extraction_used,
      preconditioned=preconditioner!==nothing,workspace_reused=true)
 end
 

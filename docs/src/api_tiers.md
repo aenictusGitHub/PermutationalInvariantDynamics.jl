@@ -122,6 +122,15 @@ threading contracts.
   full-coordinate storage for structured linear solves and exponential
   actions. Projected dense factorizations may still allocate, and every
   workspace is task-owned.
+- `NoJumpResolventPlan` and `TilloyPlan` prepare the autonomous GKSL
+  jump/no-jump split for sectorwise Sylvester inverses, stationary states,
+  selected slow modes, and implicit Euler. `NoJumpResolventWorkspace` and
+  `TilloyWorkspace` are task-owned. The zero-shift methods require a strictly
+  stable no-jump generator and assume, but do not certify, a unique stationary
+  state. Read the [Tilloy-method guide](no_jump_iterative_solvers.md) before
+  using these specialized solvers. These new research interfaces are exported
+  by the parent module but are deliberately not yet part of the stable
+  `Workflow` namespace.
 - `ParameterScanPlan` holds a copied parameter grid and callable model recipe;
   `ParameterScanWorkspace` holds continuation, family-Liouvillian, and solver
   scratch. Serial
