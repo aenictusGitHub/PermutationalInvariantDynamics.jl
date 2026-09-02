@@ -1,6 +1,6 @@
 function parse_arguments(arguments)
     mode = "quick"
-    output = normpath(joinpath(@__DIR__, "..", "results", "tilloy_qutip"))
+    output = normpath(joinpath(@__DIR__, "..", "results", "no_jump_iterative_qutip"))
     samples = 3
     warmups = 1
     sizes = nothing
@@ -197,7 +197,7 @@ function main(arguments=ARGS)
         "XDG_CACHE_HOME" => joinpath(tempdir(), "pid-qutip-cache"),
     )
 
-    println("==> PermutationalInvariantDynamics Tilloy solver")
+    println("==> PermutationalInvariantDynamics No-jump-resolvent iterative solver")
     run(addenv(julia_command, environment...))
     println("\n==> QuTiP PIQS direct baseline")
     run(addenv(python_command, environment...))
@@ -219,7 +219,7 @@ function main(arguments=ARGS)
                 row.pid_time_to_solution_speedup)
     end
     println("\nMedian prepared solve-only results:")
-    println("N\tPID Tilloy (s)\tQuTiP spsolve/refactor (s)\t" *
+    println("N\tPID no-jump-resolvent iterative (s)\tQuTiP spsolve/refactor (s)\t" *
             "QuTiP prepared splu (s)\tQuTiP public (s)")
     for row in rows
         println(row.N, '\t', row.pid_solve_median_s, '\t',

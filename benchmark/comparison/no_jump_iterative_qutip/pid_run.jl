@@ -96,7 +96,7 @@ function workspace_dimensions(method)
         solver_krylovdim=60,
         solver_recycle_dim=8,
     )
-    throw(ArgumentError("unsupported Tilloy method $method"))
+    throw(ArgumentError("unsupported no-jump-resolvent iterative method $method"))
 end
 
 function prepare_case(N, method)
@@ -108,9 +108,9 @@ function prepare_case(N, method)
         LocalJump(spin.jm; rate=GAMMA_DOWN),
         LocalJump(spin.jp; rate=GAMMA_UP),
     ))
-    plan = TilloyPlan(model; backend=:schur, memory_budget=Inf)
+    plan = NoJumpIterativePlan(model; backend=:schur, memory_budget=Inf)
     dimensions = workspace_dimensions(method)
-    workspace = TilloyWorkspace(
+    workspace = NoJumpIterativeWorkspace(
         plan;
         krylovdim=dimensions.workspace_krylovdim,
         recycle_dim=dimensions.workspace_recycle_dim,
@@ -120,7 +120,7 @@ function prepare_case(N, method)
 end
 
 function solve_case(case, method)
-    tilloy_steady_state(
+    no_jump_iterative_steady_state(
         case.plan;
         method,
         workspace=case.workspace,
@@ -225,7 +225,7 @@ function row(case, validation, method, phase, sample, seconds)
         embedded_liouville_dimension=length(case.basis),
         generator_nnz="NA_matrix_free",
         representation="complete_all_sector_PI_equation_7",
-        solver="Tilloy_$(method)_Schur_no_jump",
+        solver="NoJumpIterative_$(method)_Schur_no_jump",
         phase=String(phase),
         sample,
         seconds,
@@ -247,7 +247,7 @@ function row(case, validation, method, phase, sample, seconds)
         iterations=validation.iterations,
         invariant_subspace_leakage=0.0,
         validation_passed=validation.passed,
-        notes="time_to_solution is fresh setup plus first solve; setup prepares PI geometry, exact no-jump Schur factors, and a method-specific fixed-capacity workspace; solve is prepared/warmed and reuses them; timed tilloy_steady_state includes its true-residual and state-diagnostic checks",
+        notes="time_to_solution is fresh setup plus first solve; setup prepares PI geometry, exact no-jump Schur factors, and a method-specific fixed-capacity workspace; solve is prepared/warmed and reuses them; timed no_jump_iterative_steady_state includes its true-residual and state-diagnostic checks",
         generator_probe_norm=validation.generator_probe_norm,
         generator_probe_checksum_real=real(validation.generator_probe_checksum),
         generator_probe_checksum_imag=imag(validation.generator_probe_checksum),

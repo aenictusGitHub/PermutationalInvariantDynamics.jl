@@ -32,7 +32,7 @@ and matrix-free actions, driven preallocated action, and prepared collective
 observable measurements.
 
 An additional optional cross-language harness under
-`comparison/tilloy_qutip/` compares the prepared Tilloy steady-state solver
+`comparison/no_jump_iterative_qutip/` compares the prepared no-jump-resolvent iterative steady-state solver
 with a QuTiP 5.2 PIQS generator on an exactly matched, all-sector driven-qubit
 model. It is kept separate because it requires Python, QuTiP, NumPy, and SciPy.
 
@@ -155,7 +155,7 @@ julia --startup-file=no --project=benchmark \
   benchmark/test_productization_harnesses.jl
 ```
 
-## Tilloy steady-state comparison with QuTiP PIQS
+## No-jump-resolvent iterative steady-state comparison with QuTiP PIQS
 
 The optional solver benchmark uses independent emission and pumping together
 with a collective linear drive, so every total-spin sector is part of the
@@ -169,11 +169,11 @@ normalization before applying SciPy's sparse direct solver.
 After installing the pinned optional Python environment, run:
 
 ```sh
-python3 -m venv benchmark/comparison/tilloy_qutip/.venv
-benchmark/comparison/tilloy_qutip/.venv/bin/pip install -r \
-  benchmark/comparison/tilloy_qutip/requirements.txt
-PYTHON=benchmark/comparison/tilloy_qutip/.venv/bin/python \
-  julia --startup-file=no benchmark/comparison/tilloy_qutip/run_all.jl \
+python3 -m venv benchmark/comparison/no_jump_iterative_qutip/.venv
+benchmark/comparison/no_jump_iterative_qutip/.venv/bin/pip install -r \
+  benchmark/comparison/no_jump_iterative_qutip/requirements.txt
+PYTHON=benchmark/comparison/no_jump_iterative_qutip/.venv/bin/python \
+  julia --startup-file=no benchmark/comparison/no_jump_iterative_qutip/run_all.jl \
   --mode quick
 ```
 
@@ -185,7 +185,7 @@ must pass an undeflated physical-Schur residual check, state checks,
 invariant-subspace closure, and an analytic/cross-package `real(<Jz>)/N`
 check. Full workload semantics, controls, output schema, and interpretation
 limits are in
-[`comparison/tilloy_qutip/README.md`](comparison/tilloy_qutip/README.md).
+[`comparison/no_jump_iterative_qutip/README.md`](comparison/no_jump_iterative_qutip/README.md).
 
 ## Internal scaling benchmark
 

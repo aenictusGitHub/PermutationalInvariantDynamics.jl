@@ -24,7 +24,7 @@ PermutationalInvariantDynamics
 | [Nonstabilizerness of symmetric qubit states](nonstabilizerness.md) | Second stabilizer Rényi entropy, prepared Krawtchouk transforms, scope, and validation |
 | [Genuine multipartite entanglement](genuine_entanglement.md) | PI qubit PPT-mixture plans, validated solver results, and the optional Clarabel backend |
 | [Stationary states, spectra, and research solvers](api/solvers.md) | Direct and Krylov solvers, Liouvillian spectra and gaps, Evans tests, weak symmetries, response, memory estimates, and typed high-level commands |
-| [No-jump resolvents and Tilloy iterative methods](no_jump_iterative_solvers.md) | Sectorwise Sylvester resolvents, CPTP fixed-point and right-preconditioned stationary solvers, low-mode shift-invert Arnoldi, and implicit Euler |
+| [No-jump-resolvent iterative solvers](no_jump_iterative_solvers.md) | Sectorwise Sylvester resolvents, stationary solvers, complex-shift trace-deflated inexact IRAM, paired left/right conditioning diagnostics, and implicit Euler |
 | [Visualization](api/visualization.md) | Schur-block, density-spectrum, Liouvillian-spectrum, Floquet-spectrum, and spin phase-space SVG renderers |
 | [Streaming output](streaming_output.md) | Observable-only deterministic evolution and state-free online trajectory statistics |
 | [Matrix-RHS trajectory cohorts](batched_trajectories.md) | Fixed-capacity conditional propagation, intensities, grouped gains, and index-stable stochastic streams |

@@ -1381,7 +1381,7 @@ positive and negative expected oscillation frequencies for the conjugate slow
 pair. Every point checks reported Ritz residuals and conjugate pairing before
 plotting. Reviewed expected-output PNGs were regenerated from the new defaults.
 
-## Sectorwise no-jump resolvents and Tilloy solvers (2026-09-02)
+## Sectorwise no-jump resolvents and no-jump-resolvent iterative solvers (2026-09-02)
 
 The autonomous GKSL compiler now exposes the Beugnot--Gregory--Robin--Tilloy
 jump/no-jump split without materializing a Hilbert-space or PI-coordinate
@@ -1399,11 +1399,11 @@ matrix unless the caller explicitly changes its conditioning limit. Both
 backends preserve prepared scalar precision and require separate source and
 destination storage.
 
-`TilloyPlan` retains the exact matrix-free Liouvillian, no-jump factorization,
+`NoJumpIterativePlan` retains the exact matrix-free Liouvillian, no-jump factorization,
 sparse physical trace functional, and trace-one identity direction. Its
 normalized rank-one deflation moves the stationary eigenvalue by the requested
 coefficient independently of `d^N`; this is the paper's unnormalized identity
-after rescaling. `TilloyWorkspace` owns the Sylvester, Liouvillian, and
+after rescaling. `NoJumpIterativeWorkspace` owns the Sylvester, Liouvillian, and
 recycled-GMRES scratch, cached Sherman--Morrison correction, warm start, and
 recycle space. Plans are shareable and workspaces are task-owned and
 memory-guarded.
@@ -1419,3 +1419,35 @@ physical certificate. The fixed-point/zero-shift routes reject the dark-state
 branch when strict stability of `G` cannot be certified, whereas positive
 shifts remain available. Implicit Euler reuses those positive-shift solves but
 retains its explicit first-order time-step convergence requirement.
+
+### Complex-shift inexact IRAM and left modes
+
+`TraceDeflatedShiftInvertPlan` fixes a finite real or complex target and a
+strictly positive trace-deflation scale. Its transformed action is evaluated
+by the same right-preconditioned no-jump GMRES solve used by the stationary
+route, but complex shifts deliberately carry no positive-real contraction
+claim. `TraceDeflatedShiftInvertWorkspace` owns one full implicit-QR Arnoldi
+workspace and one fixed-capacity inner workspace; the default inner recycle
+dimension is zero because consecutive Arnoldi right-hand sides are not a
+stationary sequence.
+
+The outer method is the package's true implicit-QR IRAM implementation;
+`outer_restart=:iram` is explicit and other restart schemes are rejected. A
+private restart-feedback hook computes physical candidate residuals against
+the original undeflated Liouvillian and tightens the inner absolute and
+relative tolerances monotonically. Existing ordinary IRAM callers receive a
+no-op feedback object, so their stopping behavior is unchanged. Final
+acceptance never uses only the transformed Ritz residual or inner-GMRES
+residual: nonzero right modes must also pass the original-Liouvillian residual
+and physical trace-null checks.
+
+Optional mode diagnostics repeat the solve for the adjoint generator. The
+adjoint rank-one deflation uses the computed stationary state as its
+functional, so nonzero left eigenvectors of the original generator remain
+unchanged. A global minimum-cost assignment pairs adjoint eigenvalues with
+conjugated right eigenvalues. Simple modes report
+`norm(l)*norm(r)/abs(dot(l,r))`, true left and right residuals, and stationary
+direction overlaps. Numerical eigenvalue clusters report singular values of
+the orthonormal left/right subspace overlap and the associated projector
+condition estimate. The implementation does not rotate clustered vectors and
+does not infer defectiveness from a selected iterative spectrum.

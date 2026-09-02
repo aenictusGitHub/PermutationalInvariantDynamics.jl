@@ -13,7 +13,7 @@ see [Block, shifted, recycled, and exponential Krylov
 methods](krylov_extensions.md).
 
 For autonomous GKSL models whose no-jump generator is inexpensive to invert
-sector by sector, the [no-jump resolvent and Tilloy methods](no_jump_iterative_solvers.md)
+sector by sector, the [no-jump-resolvent iterative solvers](no_jump_iterative_solvers.md)
 provide a different matrix-free route: an exact no-jump right preconditioner,
 a CPTP fixed-point stationary map, nested shift-invert slow modes, and
 implicit Euler.

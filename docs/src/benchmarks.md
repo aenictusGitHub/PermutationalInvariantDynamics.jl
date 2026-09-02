@@ -28,7 +28,7 @@ There are seven complementary internal suites and two cross-package tracks:
 8. the cross-package runner compares a deliberately small common operation
    with general-purpose Julia quantum-dynamics packages where the underlying
    representations can be matched or clearly identified; and
-9. the optional Tilloy/QuTiP runner compares complete all-sector PI
+9. the optional no-jump-resolvent iterative-solver/QuTiP runner compares complete all-sector PI
    steady-state solving against a QuTiP 5.2 PIQS generator restricted to the
    exact same physical block-diagonal equation-(7) coordinates.
 
@@ -41,7 +41,7 @@ than committed. This avoids presenting one developer machine's measurements
 as package-wide results.
 
 The cross-language solver protocol is documented separately in
-[`benchmark/comparison/tilloy_qutip/README.md`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/benchmark/comparison/tilloy_qutip/README.md).
+[`benchmark/comparison/no_jump_iterative_qutip/README.md`](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/benchmark/comparison/no_jump_iterative_qutip/README.md).
 
 ## Startup latency and complete workflows
 
@@ -356,7 +356,7 @@ criterion and convergence study.
 Accordingly, the repository publishes the harness and validation rules, not a
 timeless claim that one package is universally faster.
 
-### Tilloy solver versus QuTiP PIQS
+### No-jump-resolvent iterative solver versus QuTiP PIQS
 
 The optional cross-language harness measures a different task from the sparse
 action comparison above: a complete stationary-state solve for
@@ -374,7 +374,8 @@ block-diagonal coordinates, then diagonally transformed from PIQS's native
 multiplicity weighting to the package's equation-(7) normalization; the
 baseline is then SciPy sparse direct solving, not a single-spin-sector
 approximation. PID prepares the sectorwise no-jump
-Schur resolvent and a fixed-capacity Tilloy workspace, then reuses them for
+Schur resolvent and a fixed-capacity no-jump-resolvent iterative workspace, then
+reuses them for
 warmed restarted-Arnoldi fixed-point solves by default.
 
 The same run separately probes QuTiP's official high-level `steadystate`
@@ -402,12 +403,12 @@ workload- and crossover-dependent and must remain attached to its raw table.
 Run it with:
 
 ```sh
-PYTHON=benchmark/comparison/tilloy_qutip/.venv/bin/python \
-  julia --startup-file=no benchmark/comparison/tilloy_qutip/run_all.jl \
+PYTHON=benchmark/comparison/no_jump_iterative_qutip/.venv/bin/python \
+  julia --startup-file=no benchmark/comparison/no_jump_iterative_qutip/run_all.jl \
   --mode quick
 ```
 
 See the
-[protocol README](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/benchmark/comparison/tilloy_qutip/README.md)
+[protocol README](https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/benchmark/comparison/no_jump_iterative_qutip/README.md)
 for the pinned optional environment, exact parameters, full controls, and why
 the QuTiP generator is restricted before solving.

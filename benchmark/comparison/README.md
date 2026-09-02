@@ -7,7 +7,7 @@ runs in a separate Julia project and process. This isolation is intentional:
 it prevents their SciML dependency trees and preferences from changing the
 environment used to benchmark `PermutationalInvariantDynamics.jl`.
 
-The separate [`tilloy_qutip/`](tilloy_qutip/) harness is an optional
+The separate [`no_jump_iterative_qutip/`](no_jump_iterative_qutip/) harness is an optional
 cross-language stationary-state comparison with Python QuTiP 5.2 PIQS. It
 uses a complete all-sector driven-qubit model, matched physical coordinates,
 raw time-to-solution/setup/solve samples, explicit direct and prepared SuperLU

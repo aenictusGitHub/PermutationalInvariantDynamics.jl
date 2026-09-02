@@ -1,13 +1,15 @@
-# No-jump resolvents and Tilloy iterative methods
+# No-jump-resolvent iterative solvers
 
 The no-jump solver family implements the construction of Beugnot, Gregory,
 Robin, and Tilloy, *Well-conditioned iterative methods for large open quantum
 systems*, [arXiv:2608.30860 (2026)](https://arxiv.org/abs/2608.30860), directly
-in PI Schur coordinates. It provides four related calculations:
+in PI Schur coordinates. It provides five related calculations:
 
 - a reusable sectorwise no-jump resolvent;
 - stationary states from right-preconditioned GMRES or a CPTP fixed-point map;
-- selected nonzero slow Liouvillian modes from nested shift-invert Arnoldi; and
+- selected nonzero slow Liouvillian modes from nested shift-invert Arnoldi or
+  complex-shift, trace-deflated inexact IRAM;
+- paired left/right-mode conditioning and non-normality diagnostics; and
 - first-order implicit-Euler dynamics for stiff, low-accuracy propagation.
 
 These are specialized research solvers, not automatic replacements for
@@ -32,19 +34,19 @@ For a driven `PIModel`, select the instantaneous generator explicitly while
 the physical terms are still available:
 
 ```julia
-instantaneous_plan = TilloyPlan(
+instantaneous_plan = NoJumpIterativePlan(
     driven_model; time=1.25, parameters=params, backend=:schur)
 instantaneous_resolvent = NoJumpResolventPlan(
     driven_model; time=1.25, parameters=params)
 ```
 
 The same `time` and `parameters` keywords are accepted by
-`tilloy_steady_state`, `tilloy_liouvillian_spectrum`, and
-`tilloy_implicit_euler` when their source is the original `PIModel`. Every
+`no_jump_iterative_steady_state`, `no_jump_iterative_liouvillian_spectrum`, and
+`no_jump_iterative_implicit_euler` when their source is the original `PIModel`. Every
 term is evaluated first and the resulting autonomous model is then lowered,
 so the exact jump/no-jump split is retained. This answers only the stationary,
 spectral, or resolvent question for the generator at that instant; it is not a
-steady state of the driven evolution. If `tilloy_implicit_euler` receives these
+steady state of the driven evolution. If `no_jump_iterative_implicit_euler` receives these
 keywords, every step likewise uses that one frozen instantaneous generator;
 it does not follow the original time-dependent schedule. Do not pass
 `freeze(model; ...)` here:
@@ -128,14 +130,14 @@ inside a hot loop. Source and destination may not alias.
 
 ## One prepared solver family
 
-[`TilloyPlan`](@ref) combines the no-jump factorization, the exact matrix-free
+[`NoJumpIterativePlan`](@ref) combines the no-jump factorization, the exact matrix-free
 PI Liouvillian, the physical trace functional, and a trace-one identity
-direction. [`TilloyWorkspace`](@ref) owns all mutable sector, Liouvillian, and
+direction. [`NoJumpIterativeWorkspace`](@ref) owns all mutable sector, Liouvillian, and
 recycled-GMRES scratch.
 
 ```julia
-plan = TilloyPlan(model; backend=:schur)
-workspace = TilloyWorkspace(plan; krylovdim=40, recycle_dim=8)
+plan = NoJumpIterativePlan(model; backend=:schur)
+workspace = NoJumpIterativeWorkspace(plan; krylovdim=40, recycle_dim=8)
 ```
 
 Plans are immutable and may be shared. A workspace retains warm starts and
@@ -160,7 +162,7 @@ is included exactly in the no-jump right preconditioner through a
 Sherman--Morrison correction.
 
 ```julia
-steady = tilloy_steady_state(
+steady = no_jump_iterative_steady_state(
     plan;
     method=:gmres,
     workspace,
@@ -204,7 +206,7 @@ is strictly stable; dark-state plans retain only the positive-shift
 contraction guarantee.
 
 ```julia
-fixed = tilloy_steady_state(
+fixed = no_jump_iterative_steady_state(
     plan;
     method=:fixed_point,
     krylovdim=40,
@@ -219,12 +221,12 @@ candidate.
 
 ### General shifted and deflated solves
 
-[`tilloy_resolvent`](@ref) solves $A_{\lambda,\delta}x=b$ with
+[`no_jump_iterative_resolvent`](@ref) solves $A_{\lambda,\delta}x=b$ with
 right-preconditioned recycled GMRES:
 
 ```julia
 rhs = copy(source.data)
-response = tilloy_resolvent(
+response = no_jump_iterative_resolvent(
     plan,
     rhs;
     shift=0.2,
@@ -244,14 +246,14 @@ strict contraction in the induced trace norm. At zero shift that contraction
 becomes the CPTP map $\Phi$, so the same geometric convergence guarantee does
 not apply.
 
-Tilloy nested and reused solves request harmonic-Ritz recycle extraction near
-the zero target. The `recycle_extraction` and `recycle_extraction_used`
+Nested and reused no-jump-resolvent iterative solves request harmonic-Ritz
+recycle extraction near the zero target. The `recycle_extraction` and `recycle_extraction_used`
 diagnostics distinguish the request from the exact Rayleigh--Ritz fallback
 used after an invariant Arnoldi breakdown.
 
 ### Nonzero slow modes
 
-[`tilloy_liouvillian_spectrum`](@ref) applies thick-restarted Arnoldi to the
+[`no_jump_iterative_liouvillian_spectrum`](@ref) applies thick-restarted Arnoldi to the
 inverse of the trace-deflated shifted generator. Every outer action is an
 inner recycled-GMRES solve. Transformed Ritz values $\nu$ are mapped back by
 
@@ -260,7 +262,7 @@ inner recycled-GMRES solve. Transformed Ritz values $\nu$ are mapped back by
 ```
 
 ```julia
-modes = tilloy_liouvillian_spectrum(
+modes = no_jump_iterative_liouvillian_spectrum(
     plan;
     nev=3,
     shift=0.0,
@@ -284,6 +286,121 @@ of `max(2, nev)` Ritz candidates. Increase it, together with `krylovdim`, when
 several zero or rejected candidates occupy that window. Selected modes do not
 certify a global Liouvillian gap or stationary-state multiplicity.
 
+### Complex-shift inexact IRAM
+
+For interior modes near a real or complex target, prepare a
+[`TraceDeflatedShiftInvertPlan`](@ref). It applies
+
+```math
+\left[
+\sigma-\mathcal L
+-\delta\lvert I/D\rangle\langle\mathrm{Tr}\rvert
+\right]^{-1}
+```
+
+without materializing that inverse. Here `sigma` is the requested shift and
+`delta > 0` leaves every traceless nonzero mode unchanged while displacing the
+traceful zero branch. The trace-one vector `I/D` is a numerical deflator; it
+need not be the physical stationary state. Each transformed
+operator action is an inexact, right-preconditioned GMRES solve using the
+sectorwise no-jump resolvent. The outer eigensolver is a true implicit-QR
+implicitly restarted Arnoldi method (IRAM); it is not a Krylov--Schur
+implementation. The explicit `outer_restart=:iram` selector records that
+contract and currently rejects every other value.
+
+```julia
+spectral_plan = TraceDeflatedShiftInvertPlan(
+    plan; shift=-0.05 + 0.2im, deflation=1.0)
+spectral_work = TraceDeflatedShiftInvertWorkspace(
+    spectral_plan;
+    outer_krylovdim=48,
+    inner_krylovdim=36,
+    inner_recycle_dim=0,
+)
+
+modes = trace_deflated_shiftinvert_spectrum(
+    spectral_plan;
+    nev=3,
+    workspace=spectral_work,
+    krylovdim=48,
+    outer_restart=:iram,
+    inner_rtol=1e-9,
+    inner_initial_rtol=1e-3,
+    adaptive_inner=true,
+    mode_diagnostics=true,
+    vectors=true,
+)
+```
+
+The adaptive inner solve begins at the explicitly reported loose tolerance
+and tightens monotonically after outer restarts. Its forcing signal is a fresh
+residual for the original Liouvillian, rather than the transformed Ritz
+residual. Inspect `inner_tolerance_history`, `inner_iterations`, and
+`maximum_inner_residual_ratio` when tuning the nested calculation; the latter
+is the worst achieved inner residual divided by the tolerance requested for
+that solve. Set
+`adaptive_inner=false` to use the final `inner_atol` and `inner_rtol` from the
+first solve. The default `inner_recycle_dim=0` avoids treating different
+Arnoldi right-hand sides as one linear sequence. Enabling recycling is an
+explicit heuristic and requires both a positive `inner_recycle_dim` and
+`reuse_inner=true`. When a prepared workspace is supplied, leaving either
+inner-capacity keyword as `nothing` uses that workspace's fixed capacity.
+
+Every returned eigenpair is re-evaluated against the original, undeflated
+Liouvillian and must pass the physical residual and trace-null tests. Thus
+inner-GMRES convergence and transformed Ritz convergence are candidate
+criteria, not physical certificates. A complex shift does not inherit the
+positive-real contraction guarantee of [`no_jump_resolvent`](@ref), and this
+selected interior spectrum does not certify a global gap or uniqueness.
+
+### Left modes and non-normality
+
+With `mode_diagnostics=true`, the same inexact IRAM framework is applied to a
+separately deflated adjoint problem. After computing and validating a physical
+stationary state `rho_ss`, the left solve uses
+
+```math
+\left[
+\overline{\sigma}-\mathcal L^\dagger
+-\delta\lvert\mathrm{Tr}\rangle\langle\rho_{\mathrm{ss}}\rvert
+\right]^{-1}.
+```
+
+This is intentionally not the literal adjoint of the forward numerical
+deflator: the stationary-state functional preserves every nonzero left mode,
+because such modes are orthogonal to `rho_ss`. The implementation globally
+matches adjoint eigenvalues to conjugated right eigenvalues, then reports
+paired left and right modes. For a simple eigenvalue, the scale-invariant
+eigenvalue condition number is
+
+```math
+\kappa_\lambda
+=\frac{\lVert l\rVert_2\lVert r\rVert_2}
+       {\left\lvert l^\dagger r\right\rvert}.
+```
+
+After pairing, returned vectors are normalized with
+`norm(right_vectors[:,j]) == 1` and, when the overlap is numerically
+resolvable, `dot(left_vectors[:,j], right_vectors[:,j]) == 1`. Large
+`condition_numbers` or small `reciprocal_condition_numbers` indicate sensitive
+eigenvalues and non-normal dynamics. Inspect the separately recomputed
+`right_residuals`, `left_residuals`, `trace_overlaps`, and
+`stationary_overlaps` in `mode_diagnostics` before interpreting them.
+
+Near-degenerate modes are additionally grouped by numerical eigenvalue
+proximity. Each cluster reports singular values and a spectral-projector
+conditioning estimate from its left/right subspace overlap. The routine does
+not silently rotate clustered vectors, and neither a small overlap nor a
+selected iterative spectrum proves that the full Liouvillian is defective.
+`diagnostics_complete` requires successful eigenvalue pairing, resolvable
+per-mode normalization, and full-rank cluster overlaps. Off-diagonal
+biorthogonality is reported separately by `biorthogonality_error` rather than
+being silently folded into that Boolean.
+Use [`biorthogonal_mode_diagnostics`](@ref) directly when independently
+computed right and adjoint spectra are already available. For broader
+frequency-dependent non-normality probes, see [`resolvent_norm`](@ref) and
+[`pseudospectral_abscissa`](@ref).
+
 ### Implicit Euler
 
 One implicit step is
@@ -293,13 +410,13 @@ One implicit step is
 ```
 
 It is evaluated as a positive-shift resolvent with
-$\lambda=1/\Delta t$. Use [`tilloy_implicit_euler_step!`](@ref) for a
-preallocated step, or [`tilloy_implicit_euler`](@ref) for a strictly increasing
+$\lambda=1/\Delta t$. Use [`no_jump_iterative_implicit_euler_step!`](@ref) for a
+preallocated step, or [`no_jump_iterative_implicit_euler`](@ref) for a strictly increasing
 saved-time grid:
 
 ```julia
 rho0 = iid_pure_state(basis, ComplexF64[1, 0])
-evolution = tilloy_implicit_euler(
+evolution = no_jump_iterative_implicit_euler(
     plan, rho0, 0.0:0.02:0.2; workspace, atol=1e-10, rtol=1e-8)
 ```
 
@@ -331,12 +448,15 @@ use a dark-state construction when it is known analytically, or an ordinary
   metadata has been checked.
 - Inspect `physical_residual_inf`, `trace_error`, and state diagnostics for a
   stationary state; inspect original-Liouvillian residuals for slow modes.
-- Refine both inner and outer Krylov controls for nested shift-invert spectra.
+- Refine both inner and outer Krylov controls for nested shift-invert spectra;
+  for inexact IRAM, also inspect the recorded inner-tolerance schedule.
+- Treat large paired-mode condition numbers as sensitivity diagnostics, not
+  by themselves as proof of a Jordan block or defective generator.
 - Refine the saved-time grid for implicit Euler.
 - Treat `unique_steady_state=:assumed_not_certified` literally.
 
 `unique_steady_state=:not_applicable` on a bare no-jump resolvent or an
 implicit-Euler result means that no stationary-state claim was made.
-`unique_steady_state=:assumed_not_certified` on a prepared Tilloy stationary
-or spectral calculation means that uniqueness is required by the selected
+`unique_steady_state=:assumed_not_certified` on a prepared no-jump-resolvent
+iterative stationary or spectral calculation means that uniqueness is required by the selected
 route but was not established by it.

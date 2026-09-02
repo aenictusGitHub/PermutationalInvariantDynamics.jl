@@ -19,26 +19,31 @@ liouvillian_eigenvalues
 liouvillian_gap
 ```
 
-## No-jump resolvents and Tilloy methods
+## No-jump-resolvent iterative solvers
 
 ```@docs
 NoJumpResolventPlan
 NoJumpResolventWorkspace
 no_jump_resolvent!
 no_jump_resolvent
-TilloyPlan
-TilloyWorkspace
-tilloy_resolvent!
-tilloy_resolvent
-tilloy_steady_state
-tilloy_liouvillian_spectrum
-tilloy_implicit_euler_step!
-tilloy_implicit_euler
+NoJumpIterativePlan
+NoJumpIterativeWorkspace
+no_jump_iterative_resolvent!
+no_jump_iterative_resolvent
+no_jump_iterative_steady_state
+no_jump_iterative_liouvillian_spectrum
+TraceDeflatedShiftInvertPlan
+TraceDeflatedShiftInvertWorkspace
+trace_deflated_shiftinvert_spectrum
+biorthogonal_mode_diagnostics
+no_jump_iterative_implicit_euler_step!
+no_jump_iterative_implicit_euler
 ```
 
 The mathematical assumptions, dark-state branch, trace-deflation convention,
-and nested-solver workflow are described in [No-jump resolvents and Tilloy
-iterative methods](../no_jump_iterative_solvers.md).
+complex-shift inexact-IRAM workflow, and left/right conditioning diagnostics
+are described in [No-jump-resolvent iterative
+solvers](../no_jump_iterative_solvers.md).
 
 ## PI spectra
 

@@ -1015,6 +1015,34 @@ function _arnoldi_expand!(L,V,H,first_column,last_column,tmp)
     k
 end
 
+# Private feedback hook for nested/inexact operators.  Ordinary linear
+# operators keep the exact historical behavior.  A specialized wrapper may
+# inspect full-space Ritz vectors after each implicit-QR cycle, tighten an
+# inner solve, and veto early acceptance until its original-operator
+# certificates pass.  The hook is intentionally not a public callback API:
+# public solvers must own and memory-account every mutable controller they use.
+_implicit_arnoldi_restart_feedback!(operator,V,Y,values,residuals,cycle,
+    tolerance)=nothing
+_implicit_arnoldi_feedback_accept(::Nothing)=true
+_implicit_arnoldi_feedback_accept(feedback)=feedback.accept
+
+function _normalize_arnoldi_start!(vector)
+    R=_real_float_type(eltype(vector));scale=zero(R)
+    @inbounds for value in vector
+        scale=max(scale,abs(real(value)),abs(imag(value)))
+    end
+    isfinite(scale)&&scale>zero(R)||throw(ArgumentError(
+        "initial_vector must have a finite, nonzero component scale; " *
+        "rescale it or use a wider supported scalar type"))
+    vector ./= scale
+    nrm=R(norm(vector))
+    isfinite(nrm)&&nrm>zero(R)||throw(ArgumentError(
+        "initial_vector could not be normalized finitely; rescale it or " *
+        "use a wider supported scalar type"))
+    vector ./= nrm
+    vector
+end
+
 """
     implicitly_restarted_arnoldi_spectrum(L; nev=6, krylovdim=40,
                                            retained_dimension=nev,
@@ -1060,7 +1088,7 @@ function implicitly_restarted_arnoldi_spectrum(L;nev::Integer=6,
         length(initial_vector)==n||throw(DimensionMismatch("initial_vector has wrong length"))
         q.=initial_vector
     end
-    nq=norm(q);nq>0||throw(ArgumentError("initial_vector must be nonzero"));V[:,1].=q./nq
+    _normalize_arnoldi_start!(q);V[:,1].=q
     RT=typeof(real(zero(eltype(V))));history=NamedTuple[];applications=0
     k=_arnoldi_expand!(L,V,H,1,m,tmp);applications+=k;best=nothing
     for cycle in 0:maxrestarts
@@ -1069,16 +1097,21 @@ function implicitly_restarted_arnoldi_spectrum(L;nev::Integer=6,
         vals=E.values[sel];Y=E.vectors[:,sel];residuals=abs.(H[k+1,k].*Y[end,:])
         scale=max(maximum((norm(view(H,1:k+1,j)) for j in 1:k);init=zero(RT)),floatmin(RT))
         tolerance=RT(atol)+RT(rtol)*scale;converged=residuals .<= tolerance
+        feedback=_implicit_arnoldi_restart_feedback!(
+            L,view(V,:,1:k),Y,vals,residuals,cycle,tolerance)
         push!(history,(cycle,subspace_dimension=k,converged=count(converged),
-                       maximum_residual=maximum(residuals),residual_scale=scale))
+                       maximum_residual=maximum(residuals),residual_scale=scale,
+                       nested_feedback=feedback))
         best=(values=vals,residuals=residuals,converged=converged,
               iterations=applications,restarts=cycle,krylov_dimension=m,
               retained_dimension=keep,dimension=n,which=which,target=requested_target,
               algorithm=:implicit_qr_arnoldi,residual_scale=scale,
               residual_tolerance=tolerance,restart_history=copy(history),
+              nested_feedback=feedback,
               workspace_reused=workspace!==nothing)
-        if length(vals)>=nev&&all(converged)
-            return vectors ? merge(best,(vectors=Matrix(view(V,:,1:k))*Y,)) : best
+        if length(vals)>=nev&&all(converged)&&
+                _implicit_arnoldi_feedback_accept(feedback)
+            return vectors ? merge(best,(vectors=view(V,:,1:k)*Y,)) : best
         end
         cycle==maxrestarts&&break
         k>keep||break
@@ -1104,7 +1137,7 @@ function implicitly_restarted_arnoldi_spectrum(L;nev::Integer=6,
     require_convergence&&throw(ArgumentError("implicitly restarted Arnoldi did not converge in $maxrestarts restarts; maximum requested Ritz residual=$(maximum(best.residuals))"))
     if vectors
         E=_projected_eigen(Matrix(view(H,1:k,1:k)));order=_selected_ritz_order(E.values,which,target===nothing ? nothing : Complex{RT}(target))
-        sel=order[1:min(nev,k)];return merge(best,(vectors=Matrix(view(V,:,1:k))*E.vectors[:,sel],))
+        sel=order[1:min(nev,k)];return merge(best,(vectors=view(V,:,1:k)*E.vectors[:,sel],))
     end
     best
 end

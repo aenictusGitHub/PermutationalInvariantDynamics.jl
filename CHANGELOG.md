@@ -57,10 +57,14 @@ Initial public release candidate.
 - Block, multi-shift, and recycled GMRES, plus adaptive matrix-free Krylov
   exponential actions and an autonomous high-level `ExpvAlgorithm` dynamics
   route with saved-state or observable-only output.
-- Sectorwise no-jump resolvents and the Tilloy iterative solver family for
+- Sectorwise no-jump resolvents and the no-jump-resolvent iterative solver family for
   autonomous PI GKSL models, including robust Schur and guarded eigen
   backends, CPTP fixed-point and right-preconditioned stationary states,
-  nested shift-invert slow modes, and implicit-Euler propagation.
+  nested shift-invert slow modes, and implicit-Euler propagation. A dedicated
+  complex-shift, trace-deflated inexact shift-invert route now uses true
+  implicit-QR IRAM with adaptive inner GMRES tolerances, original-Liouvillian
+  certification, and optional globally paired left/right-mode conditioning
+  and cluster diagnostics.
 - PI hierarchy equations of motion for finite-exponential bosonic bath
   correlations, including propagation, stationary solving, and hierarchy-depth
   convergence reports.

@@ -1,6 +1,6 @@
-# Tilloy PI steady-state comparison with QuTiP PIQS
+# No-jump-resolvent iterative PI steady-state comparison with QuTiP PIQS
 
-This optional cross-language benchmark compares the prepared Tilloy solver in
+This optional cross-language benchmark compares the prepared No-jump-resolvent iterative solver in
 `PermutationalInvariantDynamics.jl` with a sparse direct solve built from the
 public QuTiP 5.2 PIQS Liouvillian. It records raw setup and warmed-solve
 samples, versions, machine information, dimensions, tolerances, true
@@ -65,8 +65,8 @@ same physical equation-(7) coordinates.
 count in primary PID/QuTiP rows, but the full `nds^2` ambient count in
 `QuTiP-public` rows.
 
-The PID adapter prepares `TilloyPlan` and one fixed-capacity
-`TilloyWorkspace`, then defaults to the restarted-Arnoldi fixed-point route.
+The PID adapter prepares `NoJumpIterativePlan` and one fixed-capacity
+`NoJumpIterativeWorkspace`, then defaults to the restarted-Arnoldi fixed-point route.
 Use `--pid-method gmres` to benchmark trace-deflated right-preconditioned
 GMRES instead. The fixed-point task workspace uses only its required scalar
 GMRES-scratch capacity (`krylovdim=1`, `recycle_dim=0`), while its distinct
@@ -87,7 +87,7 @@ floor for some sizes.
 
 The `time_to_solution` and warmed-solve clocks follow the public calls being
 compared. In
-particular, `tilloy_steady_state(...; return_info=true)` computes its true
+particular, `no_jump_iterative_steady_state(...; return_info=true)` computes its true
 physical residual and state diagnostics before returning, so that work is
 inside the PID time. The primary SciPy clock stops when `spsolve` returns; the
 same residual, trace, positivity, Hermiticity, observable, and generator
@@ -109,16 +109,16 @@ Create an optional Python virtual environment without changing the Julia
 package environment:
 
 ```sh
-python3 -m venv benchmark/comparison/tilloy_qutip/.venv
-benchmark/comparison/tilloy_qutip/.venv/bin/pip install -r \
-  benchmark/comparison/tilloy_qutip/requirements.txt
+python3 -m venv benchmark/comparison/no_jump_iterative_qutip/.venv
+benchmark/comparison/no_jump_iterative_qutip/.venv/bin/pip install -r \
+  benchmark/comparison/no_jump_iterative_qutip/requirements.txt
 ```
 
 Run the conservative matrix on one numerical thread:
 
 ```sh
-PYTHON=benchmark/comparison/tilloy_qutip/.venv/bin/python \
-  julia --startup-file=no benchmark/comparison/tilloy_qutip/run_all.jl \
+PYTHON=benchmark/comparison/no_jump_iterative_qutip/.venv/bin/python \
+  julia --startup-file=no benchmark/comparison/no_jump_iterative_qutip/run_all.jl \
   --mode quick
 ```
 
@@ -130,14 +130,14 @@ versions are always written to the output.
 Useful controls are:
 
 ```sh
-julia --startup-file=no benchmark/comparison/tilloy_qutip/run_all.jl \
+julia --startup-file=no benchmark/comparison/no_jump_iterative_qutip/run_all.jl \
   --mode full --samples 7 --warmups 2 \
   --sizes 8,16,24,32,40,48 \
-  --pid-method fixed_point --python python3 --output /tmp/tilloy-qutip
+  --pid-method fixed_point --python python3 --output /tmp/no-jump-iterative-qutip
 ```
 
 Generated files are ignored under
-`benchmark/comparison/results/tilloy_qutip/`:
+`benchmark/comparison/results/no_jump_iterative_qutip/`:
 
 - `pid_raw.tsv` and `qutip_raw.tsv` retain every timing sample;
 - `raw.tsv` combines the identically shaped records; and
@@ -147,7 +147,7 @@ Generated files are ignored under
   that independent probe succeeded.
 
 A ratio above one means PID was faster for that phase on that run. Quote the
-fresh-setup `time_to_solution` ratio first. Prepared Tilloy,
+fresh-setup `time_to_solution` ratio first. Prepared no-jump-resolvent iterative,
 refactor-each-call `spsolve`, and prepared-`splu` solve-only ratios answer
 different repeated-workload questions and must retain those labels. Never
 quote a ratio without the raw table: small problems are dominated by fixed

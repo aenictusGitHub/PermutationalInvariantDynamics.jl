@@ -51,7 +51,8 @@ include("progress.jl")
 # Iterative solvers, spectra, symmetries, and state analysis.
 include("krylov.jl")
 include("krylov_extensions.jl")
-include("tilloy.jl")
+include("no_jump_iterative.jl")
+include("trace_deflated_shiftinvert.jl")
 include("symmetries.jl")
 include("hierarchy_pulses.jl")
 include("spectra.jl")
@@ -309,9 +310,14 @@ export Partition, partitions, weight, length_nonzero, removable_corners,
        preconditioner_cost,
        NoJumpResolventPlan, NoJumpResolventWorkspace,
        no_jump_resolvent!, no_jump_resolvent,
-       TilloyPlan, TilloyWorkspace, tilloy_resolvent!, tilloy_resolvent,
-       tilloy_steady_state, tilloy_liouvillian_spectrum,
-       tilloy_implicit_euler_step!, tilloy_implicit_euler,
+       NoJumpIterativePlan, NoJumpIterativeWorkspace,
+       no_jump_iterative_resolvent!, no_jump_iterative_resolvent,
+       no_jump_iterative_steady_state,
+       no_jump_iterative_liouvillian_spectrum,
+       no_jump_iterative_implicit_euler_step!, no_jump_iterative_implicit_euler,
+       TraceDeflatedShiftInvertPlan, TraceDeflatedShiftInvertWorkspace,
+       trace_deflated_shiftinvert_spectrum,
+       biorthogonal_mode_diagnostics,
        krylov_liouvillian_spectrum, harmonic_arnoldi_spectrum,
        implicitly_restarted_arnoldi_spectrum, jacobi_davidson_spectrum,
        liouvillian_eigenvalues, liouvillian_gap,
