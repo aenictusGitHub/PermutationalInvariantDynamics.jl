@@ -94,13 +94,14 @@ using HDF5
         @test save_result(hdf5_path,result_state;
             metadata=Dict("source"=>"optional result"))==hdf5_path
         HDF5.h5open(hdf5_path,"r") do file
-            @test HDF5.attributes(file)["schema_version"]==
+            @test HDF5.read_attribute(file,"schema_version")==
                 Int(PI_RESULT_ARCHIVE_VERSION)
-            @test HDF5.attributes(file["metadata"])["source"]==
+            @test HDF5.read_attribute(file["metadata"],"source")==
                 "optional result"
-            @test HDF5.read(file["columns/N"])==["1"]
+            @test HDF5.read(file["columns/N"])==
+                [string(checkpoint_basis.N)]
             state_group=file["states/state_000001"]
-            @test HDF5.attributes(state_group)["label"]=="state"
+            @test HDF5.read_attribute(state_group,"label")=="state"
             @test HDF5.read(state_group["real"])==real.(result_state.data)
             @test HDF5.read(state_group["imag"])==imag.(result_state.data)
         end

@@ -2063,8 +2063,12 @@
       "### A Pluto.jl notebook ###",
       "# v0.20.0",
       "",
+      // REUSE-IgnoreStart
+      // These SPDX lines describe the generated Pluto notebook, not this
+      // JavaScript source file.
       "# SPDX-FileCopyrightText: 2026 PermutationalInvariantDynamics.jl contributors",
       "# SPDX-License-Identifier: GPL-3.0-only",
+      // REUSE-IgnoreEnd
       "",
       "using Markdown",
       "using InteractiveUtils",
