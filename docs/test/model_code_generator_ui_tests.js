@@ -152,7 +152,6 @@
     assert(app.q("generated-readme").textContent.includes("julia --project"), "run guide is available");
     const original = app.saved();
     await app.edit("particle-count", "9");
-    assert(app.q("preset").value === "custom", "edited models are labelled custom");
     exportsDisabled(app, true, "input invalidates every export, including share");
     assert(!app.q("generated-code").textContent.includes("using PermutationalInvariantDynamics"), "outdated code removed");
     assert(app.q("run-guide").hidden, "outdated guide hidden");
@@ -190,7 +189,6 @@
     await app.generate();
     const spectrum = app.saved();
     app = boot(spectrum);
-    assert(app.q("preset").value === "custom", "restored model does not claim to be the starter preset");
     assert(app.q("memory-budget").value === "64", "restore preserves explicit memory budget");
     assert(app.q("spectrum-target").value === "near-zero", "manifest target maps to HTML option");
     assert(app.q("generated-code").textContent.includes("MEMORY_BUDGET = 64 * 1024^2"), "restored code preserves resource budget");
@@ -211,7 +209,7 @@
     assert(JSON.stringify(app.saved()) === JSON.stringify(spectrum), "broken share link preserves local save");
     assert(app.q("particle-count").value === "8", "broken link explicitly shows starter");
 
-    const presets = app.q("preset").querySelectorAll("option").filter((option) => !option.disabled).map((option) => option.value);
+    const presets = app.q("preset").querySelectorAll("option").map((option) => option.value);
     for (const preset of presets) {
       app = boot();
       await app.edit("preset", preset, "change");

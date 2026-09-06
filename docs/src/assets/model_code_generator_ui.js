@@ -435,7 +435,6 @@ g = 0.1`,
     }
 
     function applyConfiguration(preset, result) {
-      root.querySelector("#pid-preset").value = "custom";
       root.querySelector("#pid-architecture").value = preset.architecture || "pi";
       root.querySelector("#pid-particle-count").value =
         preset.N === undefined ? 8 : preset.N;
@@ -526,7 +525,6 @@ g = 0.1`,
 
     function loadPreset(name) {
       applyConfiguration(PRESETS[name] || PRESETS.driven);
-      root.querySelector("#pid-preset").value = PRESETS[name] ? name : "driven";
     }
 
     function readJumps() {
@@ -745,10 +743,7 @@ g = 0.1`,
       exportButtons.forEach((button) => { button.disabled = true; });
     }
 
-    function markDirty(event) {
-      if (!event || event.target.id !== "pid-preset") {
-        root.querySelector("#pid-preset").value = "custom";
-      }
+    function markDirty() {
       clearMessages();
       invalidateOutput("Inputs changed. Generate Julia code to update the program.");
       setStatus("pending", "Inputs changed. Generate Julia code before copying, downloading, or sharing.");
@@ -852,7 +847,7 @@ g = 0.1`,
         const configuration = api.configurationFromManifest(manifest);
         // Validate before changing the form, output, history, or local save.
         const result = api.generate(configuration);
-        applyConfiguration(api.configurationFromManifest(result.manifest), result);
+        applyConfiguration(configuration, result);
         setStatus("success", message);
         return true;
       } catch (error) {
@@ -1128,13 +1123,8 @@ g = 0.1`,
           return showStarterAfterError("The model share link is invalid or no longer supported.");
         }
       }
-      let stored;
       try {
-        stored = window.localStorage.getItem(STORAGE_KEY);
-      } catch (_) {
-        return false; // Browser-local persistence is optional.
-      }
-      try {
+        const stored = window.localStorage.getItem(STORAGE_KEY);
         if (stored) {
           if (loadManifestObject(
             JSON.parse(stored), "Restored the last local model.",
@@ -1142,7 +1132,7 @@ g = 0.1`,
           return showStarterAfterError(status.textContent);
         }
       } catch (_) {
-        return showStarterAfterError("The saved local model could not be restored.");
+        // Ignore unavailable or malformed local storage and use the starter.
       }
       return false;
     }

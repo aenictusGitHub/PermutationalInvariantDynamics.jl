@@ -40,7 +40,6 @@ guide, and a Pluto notebook.
         <label class="pid-field">
           <span class="pid-mini-label">Start from</span>
           <select id="pid-preset">
-            <option value="custom" disabled>Custom or restored model</option>
             <option value="driven">Driven qubits with local bath</option>
             <option value="collective">Local and collective decay</option>
             <option value="lmg">Collective LMG polynomial</option>
