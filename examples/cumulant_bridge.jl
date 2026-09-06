@@ -82,7 +82,7 @@ if makie_available()
     ]
     ordered_counts=length(local_operators) .^ orders
 
-    figure=M.Figure(size=(1080,430),fontsize=17)
+    figure=example_figure(size=(1080,430),fontsize=17)
     error_axis=M.Axis(
         figure[1,1];xlabel="moment order",
         ylabel="maximum absolute closure error",yscale=log10,

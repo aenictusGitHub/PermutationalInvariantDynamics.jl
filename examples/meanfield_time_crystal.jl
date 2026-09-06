@@ -103,7 +103,7 @@ function main()
             thermodynamic_magnetization .- exact_thermodynamic)
         pi_curve_error = abs.(pi_magnetization .- exact_finite)
 
-        figure = M.Figure(size=(1180, 470), fontsize=17)
+        figure = example_figure(size=(1180, 470), fontsize=17)
         magnetization_axis = M.Axis(
             figure[1, 1]; xlabel="time", ylabel="longitudinal magnetization",
             title="Finite and thermodynamic predictions")

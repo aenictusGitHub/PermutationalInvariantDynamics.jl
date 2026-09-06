@@ -116,7 +116,7 @@ println("Batched forward/adjoint errors: ",
 
 if makie_available()
     M = makie_module()
-    figure = M.Figure(size=(1050, 430), fontsize=17)
+    figure = example_figure(size=(1050, 430), fontsize=17)
     signal_axis = M.Axis(
         figure[1, 1];
         xlabel="state", ylabel="⟨Σᵢ σz⁽ᴬ⁾⟩",

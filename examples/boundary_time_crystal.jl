@@ -101,7 +101,7 @@ end
 
 if makie_available()
     M = makie_module()
-    figure = M.Figure(size=(1350, 430), fontsize=17)
+    figure = example_figure(size=(1350, 430), fontsize=17)
     gap_axis = M.Axis(
         figure[1, 1]; xlabel="1 / N", ylabel="gap / κ",
         title="Liouvillian gap", limits=(0, nothing, 0, nothing))

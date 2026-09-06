@@ -51,7 +51,7 @@ println("cooperative-fluorescence scan: N=$N, points=$(length(results)), " *
 if makie_available()
     M = makie_module()
     controls = [result.gamma / Omega for result in results]
-    figure = M.Figure(size=(1000, 430), fontsize=17)
+    figure = example_figure(size=(1000, 430), fontsize=17)
     spin_axis = M.Axis(
         figure[1, 1]; xlabel="γ / Ω", ylabel="collective spin / j",
         title="Finite-size stationary polarization, N=$N")
@@ -70,7 +70,7 @@ if makie_available()
     M.scatter!(spin_axis, controls, [result.Z for result in results];
                color=:firebrick, marker=:rect, markersize=6,
                label="⟨Jz⟩/j PI solve")
-    M.axislegend(spin_axis; position=:rb, labelsize=12)
+    M.axislegend(spin_axis; position=:rc, labelsize=12)
 
     error_floor = eps(Float64)
     M.lines!(error_axis, controls,

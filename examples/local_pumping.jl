@@ -30,7 +30,7 @@ println("Local pump/emission steady-state error = ",state_error)
 
 if makie_available()
     M=makie_module()
-    figure=M.Figure(size=(1120,440),fontsize=17)
+    figure=example_figure(size=(1120,440),fontsize=17)
     sector_axis=M.Axis(
         figure[1,1];xlabel="total spin j",ylabel="sector population",
         title="Multiplicity-weighted Schur sectors")

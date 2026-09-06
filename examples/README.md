@@ -73,7 +73,8 @@ Then run a figure-producing example with, for example,
 julia --project=examples examples/correlated_superradiance.jl
 ```
 
-Figures display in Makie-capable front ends and are saved as both PDF and PNG
+Figures display in interactive Julia sessions and are saved as vector PDF and
+high-resolution PNG (two pixels per layout unit)
 under the ignored `examples/figures/` directory. Set
 `PI_EXAMPLE_FIGURE_DIR=/path/to/output` to choose another destination. The
 same scripts still perform all numerical assertions when run from the root
@@ -82,6 +83,31 @@ The loader deliberately requires CairoMakie to be declared by the active
 project and does not borrow a potentially incompatible global installation.
 Set `PID_EXAMPLE_RENDER=0` to disable rendering explicitly even in the
 examples environment. This is the mode used by executable-example CI.
+
+The CairoMakie examples share figure-local typography, subtle grids, and
+readable legends through `utils/makie_support.jl`; loading the helper does not
+change Makie's global theme. Prefer the vector PDF for publications and the
+PNG for slides or web pages. Numerical controls remain independent of export
+resolution.
+
+Nine examples also write **tab-delimited source data** beside their figures:
+`getting_started`, `driven_qubits`, `independent_dephasing_coherence`,
+`one_axis_twisting`, `parameter_scan`, `steady_state_methods`,
+`quantum_trajectories`, `homodyne_pi_trajectories`, and `pi_heom`.
+Their guides describe each `.tsv` file. Column names state the normalization;
+`#` comment headers record physical parameters, solver controls, and seeds
+where applicable. Numeric values keep their precision, including exact zeros
+and errors below machine epsilon. Files are replaced only after a complete
+table has been written. A run with `PID_EXAMPLE_RENDER=0` writes neither
+figures nor data tables.
+
+When adapting a figure, show the model parameters and axis units, distinguish
+sampling uncertainty from integration or hierarchy errors, and compare with
+an exact reference where one exists. Use separate error panels when curves
+overlap. Exact zero errors cannot appear on a logarithmic axis: state any
+omission in the caption and preserve the original values in the table.
+Categorical algorithms should use markers or bars, and warm starts must be
+labeled explicitly. Avoid inferring runtime from iteration counts.
 
 Each paired guide embeds a curated expected-output snapshot from
 `docs/src/assets/example_figures/`. Those reviewed PNG/SVG files are copied

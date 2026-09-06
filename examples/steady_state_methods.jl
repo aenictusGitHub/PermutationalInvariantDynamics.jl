@@ -85,7 +85,7 @@ function main()
     matrixfree_error = norm(matrixfree.state.data - exact.data)
     @assert matrixfree_error < 2e-8
 
-    push!(solver_labels, "precond. GMRES")
+    push!(solver_labels, "precond. GMRES (warm)")
     push!(residuals, matrixfree.info.residual)
     push!(exact_errors, matrixfree_error)
     push!(iterations, matrixfree.info.iterations)
@@ -93,43 +93,52 @@ function main()
     if makie_available()
         M = makie_module()
         positions = collect(eachindex(solver_labels))
-        figure = M.Figure(size=(1220, 470), fontsize=17)
-        accuracy_axis = M.Axis(
-            figure[1, 1];
-            xlabel="stationary-state algorithm",
-            ylabel="error",
-            yscale=log10,
-            xticks=(positions, solver_labels),
-            xticklabelrotation=pi / 6,
-            title="Raw residual and exact-state distance",
-        )
-        iteration_axis = M.Axis(
-            figure[1, 2];
-            xlabel="stationary-state algorithm",
-            ylabel="reported iterations",
-            xticks=(positions, solver_labels),
-            xticklabelrotation=pi / 6,
-            title="Iterative work reported by each solver",
-        )
-        floor_value = eps(Float64)
-        M.lines!(
-            accuracy_axis, positions, max.(residuals, floor_value);
-            color=:firebrick, linewidth=2.2)
-        M.scatter!(
-            accuracy_axis, positions, max.(residuals, floor_value);
-            color=:firebrick, markersize=10, label="Liouvillian residual")
-        M.lines!(
-            accuracy_axis, positions, max.(exact_errors, floor_value);
-            color=:royalblue, linewidth=2.2, linestyle=:dash)
-        M.scatter!(
-            accuracy_axis, positions, max.(exact_errors, floor_value);
-            color=:royalblue, marker=:diamond, markersize=10,
-            label="distance to exact state")
-        M.axislegend(accuracy_axis; position=:lb, labelsize=12)
-        M.barplot!(
-            iteration_axis, positions, iterations;
-            color=:slateblue, width=0.65)
+        figure = example_figure(size=(1260, 550))
+        M.Label(figure[0, 1:2], "Stationary-state solvers  •  N=$N, pump/decay=$(up/down)";
+                fontsize=22, font=:bold, halign=:left)
+        accuracy_axis = M.Axis(figure[1, 1];
+            xlabel="raw error / residual", xscale=log10, xticks=10.0 .^ (-16:2:-10),
+            yticks=(positions, solver_labels), yreversed=true,
+            title="(a) Accuracy against the exact thermal state")
+        iteration_axis = M.Axis(figure[1, 2];
+            xlabel="reported iterations",
+            yticks=(positions, solver_labels), yreversed=true,
+            title="(b) Solver diagnostics")
+        # Categories have no continuous interpolation. Retain sub-epsilon
+        # values and omit exact zeros only from the logarithmic axis.
+        for (values, offset, color, marker, label) in (
+                (residuals, -0.13, example_colors.red, :circle, "Liouvillian residual"),
+                (exact_errors, 0.13, example_colors.blue, :diamond, "PI-state distance"))
+            positive = findall(>(0), values)
+            M.scatter!(accuracy_axis, values[positive], positions[positive] .+ offset;
+                       color, marker, markersize=10, label)
+        end
+        M.axislegend(accuracy_axis; position=:rb, labelsize=12)
+        for index in positions
+            if index <= 3
+                M.text!(iteration_axis, 0.2, index; text="factorization / decomposition",
+                        align=(:left, :center), fontsize=13, color=example_colors.gray)
+            else
+                M.barplot!(iteration_axis, [index], [iterations[index]];
+                           direction=:x, color=index == last(positions) ?
+                           example_colors.orange : example_colors.blue, width=0.55)
+                M.text!(iteration_axis, iterations[index] + 0.2, index;
+                        text=string(iterations[index]), align=(:left, :center), fontsize=14)
+            end
+        end
+        M.ylims!(accuracy_axis, length(positions)+0.5, 0.5)
+        M.ylims!(iteration_axis, length(positions)+0.5, 0.5)
+        M.xlims!(iteration_axis, 0, max(10, maximum(iterations)+2))
+        M.Label(figure[2, 1:2],
+            "Warm preconditioned GMRES starts from the direct solution.  •  Iterations do not measure speed; no categorical lines or error floors.";
+            fontsize=13, color=example_colors.gray)
         save_example_figure(figure, "steady_state_methods")
+        save_example_data("steady_state_methods", (
+            solver=solver_labels, residual=residuals, state_error=exact_errors,
+            iterations=iterations, initial_guess=[fill("default", 5); "direct solution"],
+            iteration_count_applicable=[false, false, false, true, true, true]);
+            metadata=(; N, down, up, iterative_atol=1e-12, iterative_rtol=1e-10,
+                      note="Reported iterations have algorithm-specific meanings; last solve is warm."))
     end
 end
 

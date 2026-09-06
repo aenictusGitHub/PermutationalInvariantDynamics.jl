@@ -132,7 +132,7 @@ println("  peak Schur-sector populations = ", peak_sector_populations)
 
 if makie_available()
     M = makie_module()
-    figure = M.Figure(size=(1450, 450), fontsize=17)
+    figure = example_figure(size=(1450, 450), fontsize=17)
     small_axis = M.Axis(
         figure[1, 1]; xlabel="γ₀t", ylabel="I / γ₀",
         title="Two-atom analytical benchmark")

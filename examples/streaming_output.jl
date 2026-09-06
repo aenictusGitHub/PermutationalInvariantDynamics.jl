@@ -72,7 +72,7 @@ println("PI-coordinate bytes avoided for sampled trajectory states: ",
 
 if makie_available()
     M = makie_module()
-    figure = M.Figure(size=(880, 460), fontsize=17)
+    figure = example_figure(size=(880, 460), fontsize=17)
     axis = M.Axis(
         figure[1, 1];
         xlabel="time",

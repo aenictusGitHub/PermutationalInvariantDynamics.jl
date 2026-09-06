@@ -254,7 +254,7 @@ println("weak-PI stationary batch means: ",
 
 if render_plots && ExampleMakie.makie_available()
     M = ExampleMakie.makie_module()
-    figure = M.Figure(size=(1250, 850), fontsize=17)
+    figure = ExampleMakie.example_figure(size=(1250, 850), fontsize=17)
     cavity_axis = M.Axis(
         figure[1, 1]; xlabel="time", ylabel="Γc ⟨J₊J₋⟩",
         title="(a) Collective cavity channel")
@@ -297,7 +297,7 @@ if render_plots && ExampleMakie.makie_available()
     M.lines!(error_axis, times, max.(population_state_errors, error_floor);
              color=:black, linewidth=1.8, linestyle=:dot,
              label="population vs full PI")
-    M.axislegend(error_axis; position=:rb, labelsize=11)
+    M.axislegend(error_axis; position=:rc, labelsize=11)
 
     heatmap = M.heatmap!(
         transition_axis, sector_spins, sector_spins, transition_rates;
@@ -307,7 +307,7 @@ if render_plots && ExampleMakie.makie_available()
     ExampleMakie.save_example_figure(
         figure, "weak_pi_decay_trajectory_comparison")
 
-    comparison = M.Figure(size=(1650, 480), fontsize=17)
+    comparison = ExampleMakie.example_figure(size=(1650, 480), fontsize=17)
     scaling_axis = M.Axis(
         comparison[1, 1]; xlabel="number of qubits N",
         ylabel="coordinates in one stored state", yscale=log10,
@@ -325,7 +325,7 @@ if render_plots && ExampleMakie.makie_available()
              color=:dodgerblue, linewidth=2.7,
              label="weak-PI ket ∑ν dim(Uν)")
     M.vlines!(scaling_axis, [N]; color=(:black, 0.35), linewidth=1.5)
-    M.axislegend(scaling_axis; position=:lt, labelsize=11)
+    M.axislegend(scaling_axis; position=(0.3, 1.0), labelsize=11)
 
     timing_axis = M.Axis(
         comparison[1, 2]; xlabel="prepared trajectory backend",

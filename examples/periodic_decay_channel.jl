@@ -119,7 +119,7 @@ ground = iid_pure_state(basis, ComplexF64[1, 0])
 
 if makie_available()
     M = makie_module()
-    figure = M.Figure(size=(1320, 400), fontsize=16)
+    figure = example_figure(size=(1320, 400), fontsize=16)
     convergence_axis = M.Axis(
         figure[1, 1];
         xlabel="RK4 steps per period", ylabel="‖Fsteps − Fexact‖",

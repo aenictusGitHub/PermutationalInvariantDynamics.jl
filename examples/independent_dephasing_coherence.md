@@ -39,9 +39,13 @@ positivity of the final numerical state without altering it.
 When CairoMakie is available, the script creates a two-panel figure. The first
 panel overlays the normalized PI coherence with the analytical exponential
 as a function of the dimensionless time `gamma*t`. The second shows the
-pointwise absolute discrepancy used in the printed convergence report. Vector
+pointwise absolute discrepancy **in the same normalized observable**. The
+linear scale preserves exact zeros and shows the remaining roundoff. The
+unnormalized error printed to the console must be below `1e-10`. Vector
 PDF and raster PNG copies are saved as
-`independent_dephasing_coherence.pdf` and `.png`.
+`independent_dephasing_coherence.pdf` and `.png`. The companion `.tsv`
+exports the time, dimensionless time, normalized PI and exact coherences, and
+raw normalized error, with `N`, rate, and RK4 controls in comment headers.
 
 ## Run and validation
 

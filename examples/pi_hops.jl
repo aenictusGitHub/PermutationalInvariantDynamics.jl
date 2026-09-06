@@ -84,7 +84,7 @@ println("maximum HOPS mean trace error = ", trace_error)
 
 if makie_available()
     M = makie_module()
-    figure = M.Figure(size=(1120, 440), fontsize=17)
+    figure = example_figure(size=(1120, 440), fontsize=17)
     signal_axis = M.Axis(
         figure[1, 1];
         xlabel="time", ylabel="2⟨Jx⟩ / N",
@@ -113,6 +113,6 @@ if makie_available()
         max.(abs.(heom_signal .- analytic_signal), eps(Float64));
         color=:darkorange2, linewidth=2, label="HEOM")
     M.axislegend(signal_axis; position=:lb)
-    M.axislegend(error_axis; position=:lt)
+    M.axislegend(error_axis; position=:rc)
     save_example_figure(figure, "pi_hops")
 end

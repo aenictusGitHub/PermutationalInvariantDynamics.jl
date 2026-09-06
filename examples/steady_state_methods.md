@@ -66,6 +66,19 @@ structure and retains the coordinate-probing fallback.
 
 ![Expected steady-state solver residuals, exact-state errors, and iterations](../docs/src/assets/example_figures/steady_state_methods.png)
 
-The accuracy panel is portable across machines. Reported iteration counts
+The accuracy panel uses categorical markers without connecting unrelated
+algorithms. It retains positive errors below machine epsilon and omits only
+exact zeros on the logarithmic axis. The iteration panel marks direct, SVD,
+and eigen solves as factorization/decomposition methods rather than drawing
+misleading zero-work bars. The final preconditioned GMRES solve is explicitly
+labeled **warm**: it starts from the direct solution, so it is not a cold-start
+speed comparison.
+
+`steady_state_methods.tsv` preserves the residuals, state distances, reported
+iterations, initial-guess descriptions, and flags indicating whether an
+iteration count applies. Solver controls are recorded in comment headers.
+
+The accuracy comparison is portable across machines; exact values vary with
+floating-point arithmetic. Reported iteration counts
 depend on the chosen tolerances and implementation; elapsed wall times remain
 console diagnostics and are deliberately not used in the snapshot.

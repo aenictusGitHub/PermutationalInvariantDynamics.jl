@@ -61,7 +61,7 @@ if makie_available()
         real(expectation(output, E1)),
     ]
     sampled_probabilities = sample.counts ./ sum(sample.counts)
-    figure = M.Figure(size=(820, 450), fontsize=17)
+    figure = example_figure(size=(820, 450), fontsize=17)
     axis = M.Axis(
         figure[1, 1];
         xlabel="POVM outcome",

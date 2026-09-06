@@ -93,32 +93,46 @@ if makie_available()
     streamed_fractions = [row.excited_fraction for row in streamed]
     streamed_residuals = [row.residual for row in streamed]
     exact_fractions = streamed_pumps ./ (1 .+ streamed_pumps)
-    residual_floor = max(
-        maximum(streamed_residuals) * 1e-6, eps(Float64)^2)
-    displayed_residuals = max.(streamed_residuals, residual_floor)
+    fraction_errors = abs.(streamed_fractions .- exact_fractions)
 
-    figure = M.Figure(size=(1080, 420), fontsize=17)
+    figure = example_figure(size=(1200, 510))
+    M.Label(figure[0, 1:3], "Thermal stationary scan  •  N=$(basis.N), $(length(pump_rates)) pump rates";
+            fontsize=22, font=:bold, halign=:left)
     fraction_axis = M.Axis(
         figure[1, 1];
-        xlabel="pump rate r", ylabel="stationary excited fraction",
-        title="Prepared continuation scan")
+        xlabel="pump / decay rate r", ylabel="stationary excited fraction",
+        title="(a) Prepared continuation")
     residual_axis = M.Axis(
         figure[1, 2];
-        xlabel="pump rate r", ylabel="stationary residual",
-        yscale=log10, title="Matrix-free recycled-GMRES check")
+        xlabel="pump / decay rate r", ylabel="stationary residual",
+        yscale=log10, title="(b) Solver residual")
+    error_axis = M.Axis(figure[1, 3]; xlabel="pump / decay rate r",
+        ylabel="absolute fraction error", title="(c) Observable accuracy")
 
     M.lines!(
         fraction_axis, streamed_pumps, exact_fractions;
         color=:black, linewidth=2.7, label="exact r / (1 + r)")
     M.scatter!(
         fraction_axis, streamed_pumps, streamed_fractions;
-        color=:dodgerblue3, markersize=10, label="PI scan")
+        color=example_colors.blue, markersize=8, label="PI scan")
     M.lines!(
-        residual_axis, streamed_pumps, displayed_residuals;
-        color=:darkorange2, linewidth=2.2)
+        residual_axis, streamed_pumps, [iszero(r) ? NaN : r for r in streamed_residuals];
+        color=example_colors.orange)
     M.scatter!(
-        residual_axis, streamed_pumps, displayed_residuals;
-        color=:darkorange2, markersize=8)
+        residual_axis, streamed_pumps, [iszero(r) ? NaN : r for r in streamed_residuals];
+        color=example_colors.orange, markersize=7)
+    M.lines!(error_axis, streamed_pumps, fraction_errors; color=example_colors.red)
+    M.scatter!(error_axis, streamed_pumps, fraction_errors; color=example_colors.red, markersize=6)
     M.axislegend(fraction_axis; position=:lt)
+    M.Label(figure[2, 1:3], "Recycled GMRES: atol=10⁻¹¹, rtol=10⁻⁸  •  $(count(iszero, streamed_residuals)) zero residuals omitted only on the log axis; raw values are exported.";
+            fontsize=13, color=example_colors.gray)
     save_example_figure(figure, "parameter_scan")
+    save_example_data("parameter_scan", (;
+        pump_over_decay=streamed_pumps, excited_fraction=streamed_fractions,
+        exact_fraction=exact_fractions, fraction_error=fraction_errors,
+        stationary_residual=streamed_residuals,
+        warm_started=[point.warm_started for point in result],
+        workspace_reused=[point.workspace_reused for point in result]);
+        metadata=(; N=basis.N, decay_rate=1.0, atol=1e-11, rtol=1e-8,
+                  continuation=true, restart_after=3))
 end

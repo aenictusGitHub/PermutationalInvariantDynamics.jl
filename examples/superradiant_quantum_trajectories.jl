@@ -117,7 +117,7 @@ dominant_local_decay = run_decay_case(
 
 if makie_available()
     M = makie_module()
-    figure = M.Figure(size=(1200, 480), fontsize=17)
+    figure = example_figure(size=(1200, 480), fontsize=17)
     cases = ((comparable_rates, 1), (dominant_local_decay, 10))
     for (column, (case, ratio)) in enumerate(cases)
         axis = M.Axis(

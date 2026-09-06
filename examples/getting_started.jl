@@ -72,28 +72,38 @@ println("8-versus-16-step excitation difference: ", step_error)
 # still run there and this optional block is skipped.
 if makie_available()
     M = makie_module()
-    figure = M.Figure(size=(1080, 430), fontsize=17)
+    figure = example_figure(size=(1120, 490))
+    M.Label(figure[0, 1:2], "Prepared PI dynamics  •  N=$N, Ω=0.7, decay=0.12, pump=0.02";
+            fontsize=22, font=:bold, halign=:left)
     dynamics_axis = M.Axis(
         figure[1, 1]; xlabel="time", ylabel="excited fraction",
-        title="Prepared PI dynamics and stationary value")
+        title="(a) Excitation and stationary value")
     convergence_axis = M.Axis(
         figure[1, 2]; xlabel="time",
         ylabel="|8-step − 16-step result|",
-        yscale=log10, title="RK4 output-grid refinement")
+        title="(b) RK4 step refinement")
 
     M.lines!(dynamics_axis, times, excited_fraction;
-             color=:royalblue, linewidth=2.7, label="16 steps / interval")
+             color=example_colors.blue, linewidth=2.7, label="16 steps / interval")
     M.scatter!(dynamics_axis, times, coarse_excited_fraction;
-               color=:darkorange, markersize=6, label="8 steps / interval")
+               color=example_colors.orange, markersize=6, label="8 steps / interval")
     M.hlines!(dynamics_axis, [steady_excited_fraction];
               color=:black, linewidth=2, linestyle=:dash,
               label="stationary state")
     M.axislegend(dynamics_axis; position=:rt, labelsize=11)
 
-    shown_error = max.(pointwise_step_error, eps(Float64))
-    M.lines!(convergence_axis, times, shown_error;
-             color=:firebrick, linewidth=2.4)
-    M.scatter!(convergence_axis, times, shown_error;
-               color=:firebrick, markersize=6)
+    M.lines!(convergence_axis, times, pointwise_step_error;
+             color=example_colors.red, linewidth=2.4)
+    M.scatter!(convergence_axis, times, pointwise_step_error;
+               color=example_colors.red, markersize=6)
+    M.Label(figure[2, 1:2], "Step difference is a refinement diagnostic, not an error bound.  •  Output spacing: Δt=0.1.";
+            fontsize=13, color=example_colors.gray)
     save_example_figure(figure, "getting_started")
+    save_example_data("getting_started", (;
+        time=times, excited_fraction, coarse_excited_fraction,
+        step_difference=pointwise_step_error,
+        steady_fraction=fill(steady_excited_fraction, length(times)));
+        metadata=(; N, drive=0.7, decay=0.12, pump=0.02,
+                  steps_per_interval=16, coarse_steps_per_interval=8,
+                  stationary_residual=steady.info.residual))
 end

@@ -160,7 +160,7 @@ plot_N = get(ENV, "PID_EXAMPLE_QUICK", "0") == "1" ? 8 : 10
 if makie_available()
     M = makie_module()
     controls = [result.control for result in results]
-    figure = M.Figure(size=(1350, 430), fontsize=17)
+    figure = example_figure(size=(1350, 430), fontsize=17)
     gap_axis = M.Axis(
         figure[1, 1]; ylabel="Liouvillian gap",
         title="Finite-N relaxation")

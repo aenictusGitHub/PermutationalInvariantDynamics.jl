@@ -94,7 +94,7 @@ function main()
             maximum(evolution_errors) * 1e-3, eps(Float64)^2)
         displayed_errors = max.(evolution_errors, error_floor)
 
-        figure = M.Figure(size=(1080, 420), fontsize=17)
+        figure = example_figure(size=(1080, 420), fontsize=17)
         population_axis = M.Axis(
             figure[1, 1];
             xlabel="time", ylabel="excited fraction",

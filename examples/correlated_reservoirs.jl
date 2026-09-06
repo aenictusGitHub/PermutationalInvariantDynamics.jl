@@ -70,7 +70,7 @@ println("PI dimension: ", length(BASIS),
 
 if makie_available()
     M = makie_module()
-    figure = M.Figure(size=(1040, 420), fontsize=17)
+    figure = example_figure(size=(1040, 420), fontsize=17)
     population_axis = M.Axis(
         figure[1, 1];
         xlabel="time", ylabel="excited fraction",

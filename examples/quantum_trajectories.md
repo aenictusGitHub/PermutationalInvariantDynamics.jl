@@ -96,12 +96,24 @@ excitation laws tested here are the same.
 
 ## Makie figure
 
-When CairoMakie is available, the script creates a two-panel figure. The first
+When CairoMakie is available, the script creates a four-panel figure. The first
 panel overlays the exact excited fraction with the trajectory mean and its
 one-standard-error band. The second shows, on a logarithmic scale, the PI-state
-error of the trajectory average and deterministic RK4 solution. Vector PDF
+error of the trajectory average and deterministic RK4 solution. Exact zero
+errors are omitted from this logarithmic panel without flooring other values.
+The lower panels expose the difference between the sampled and exact mean
+with its measured standard error, and the complete final photon-count
+histogram against the exact binomial law, including the tails. All time axes
+use $\gamma t$.
+
+The bands are pointwise one-standard-error intervals, not simultaneous
+confidence bounds and not integration-error estimates. Vector PDF
 and raster PNG copies are written as `independent_emitter_quantum_trajectories.*` in the
-configured example-figure directory.
+configured example-figure directory. The matching `.tsv` file contains
+sampled and exact means, sampled and analytic standard errors, and both state
+errors. `independent_emitter_photon_counts.tsv` contains the complete sampled
+and exact count distributions. Headers record the seed, parameters, and
+solver controls.
 
 ## Run and convergence
 

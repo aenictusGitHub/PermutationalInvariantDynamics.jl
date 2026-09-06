@@ -63,7 +63,7 @@ println("resolved frequencies = ", frequencies)
 if makie_available()
     M = makie_module()
     plotted_sizes = collect(sizes)
-    figure = M.Figure(size=(1050, 450), fontsize=17)
+    figure = example_figure(size=(1050, 450), fontsize=17)
     decay_axis = M.Axis(
         figure[1, 1]; xlabel="particle number N", ylabel="decay rate -Re(λ)",
         title="Slow oscillatory-mode decay")

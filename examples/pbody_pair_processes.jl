@@ -56,7 +56,7 @@ println("initial trace derivative: ", trace_derivative)
 
 if makie_available()
     M=makie_module()
-    figure=M.Figure(size=(1050,430),fontsize=17)
+    figure=example_figure(size=(1050,430),fontsize=17)
     storage_axis=M.Axis(
         figure[1,1];xlabel="Appendix-D representation",
         ylabel="stored path entries",

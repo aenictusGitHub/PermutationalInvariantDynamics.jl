@@ -128,7 +128,7 @@ println("maximum mean trace error = ", trace_error)
 
 if makie_available()
     M = makie_module()
-    figure = M.Figure(size=(1120, 440), fontsize=17)
+    figure = example_figure(size=(1120, 440), fontsize=17)
     signal_axis = M.Axis(
         figure[1, 1];
         xlabel="time", ylabel="2⟨Jx⟩ / N",

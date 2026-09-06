@@ -18,28 +18,38 @@ exact=[independent_dephasing_coherence_exact(N,t;gamma=gamma) for t in times]
 @assert maximum(abs,imag.(numeric)) < 1e-10
 errors=abs.(numeric.-exact)
 maximum_error=maximum(errors)
+@assert maximum_error < 1e-10
 println("Independent-dephasing coherence maximum error = ",maximum_error)
 
 if makie_available()
     M=makie_module()
     scaled_times=gamma .* collect(times)
-    figure=M.Figure(size=(1080,430),fontsize=17)
+    figure=example_figure(size=(1120,490))
+    M.Label(figure[0,1:2], "Independent dephasing  •  N=$N, γ=$gamma";
+            fontsize=22,font=:bold,halign=:left)
     signal_axis=M.Axis(
         figure[1,1];xlabel="γt",ylabel="⟨Jx⟩ / (N/2)",
-        title="Coherence under local dephasing")
+        title="(a) Coherence decay")
     error_axis=M.Axis(
-        figure[1,2];xlabel="γt",ylabel="|⟨Jx⟩PI − ⟨Jx⟩exact|",
-        title="Pointwise PI-space error")
+        figure[1,2];xlabel="γt",ylabel="absolute normalized coherence error",
+        title="(b) Accuracy of the plotted observable")
 
     M.lines!(signal_axis,scaled_times,exact ./ (N/2);
              color=:black,linewidth=2.7,label="analytic exponential")
     M.scatter!(signal_axis,scaled_times,real.(numeric) ./ (N/2);
-               color=:royalblue,markersize=8,label="PI dynamics")
+               color=example_colors.blue,markersize=7,label="PI dynamics")
     M.axislegend(signal_axis;position=:rt,labelsize=13)
 
-    M.lines!(error_axis,scaled_times,errors;
-             color=:firebrick,linewidth=2.2)
-    M.scatter!(error_axis,scaled_times,errors;
-               color=:firebrick,markersize=6)
+    M.lines!(error_axis,scaled_times,errors ./ (N/2);
+             color=example_colors.red)
+    M.scatter!(error_axis,scaled_times,errors ./ (N/2);
+               color=example_colors.red,markersize=6)
+    M.Label(figure[2,1:2], "RK4: 64 steps per interval  •  Linear error scale retains exact zeros; roundoff is visible.";
+            fontsize=13,color=example_colors.gray)
     save_example_figure(figure, "independent_dephasing_coherence")
+    save_example_data("independent_dephasing_coherence", (;
+        time=collect(times), gamma_t=scaled_times,
+        normalized_coherence=real.(numeric) ./ (N/2), exact_coherence=exact ./ (N/2),
+        absolute_normalized_error=errors ./ (N/2));
+        metadata=(; N,gamma,steps_per_interval=64))
 end

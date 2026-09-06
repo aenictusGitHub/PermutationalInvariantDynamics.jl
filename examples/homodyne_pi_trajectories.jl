@@ -56,21 +56,40 @@ println("max ensemble/master |Δ<Jz>| = ", maximum(abs.(ensemble_mz .- master_mz
 
 if makie_available()
     M = makie_module()
-    figure = M.Figure(size=(1050, 760), fontsize=17)
-    axis1 = M.Axis(figure[1, 1]; xlabel="time", ylabel="<Jz>",
-                   title="Conditional and unconditional PI dynamics")
-    M.lines!(axis1, times, conditional_mz; color=:royalblue,
+    figure = example_figure(size=(1150, 790))
+    M.Label(figure[0, 1:2], "Homodyne fluorescence  •  N=$N, η=$efficiency, $ntrajectories paths";
+            fontsize=22, font=:bold, halign=:left)
+    axis1 = M.Axis(figure[1, 1:2]; xlabel="time", ylabel="⟨Jz⟩ / (N/2)",
+                   title="(a) Conditional and unconditional dynamics")
+    M.lines!(axis1, times, conditional_mz ./ (N/2); color=example_colors.blue,
              label="one homodyne record")
-    M.band!(axis1, times, ensemble_mz .- ensemble_se,
-            ensemble_mz .+ ensemble_se; color=(:firebrick, 0.20))
-    M.lines!(axis1, times, ensemble_mz; color=:firebrick,
+    M.band!(axis1, times, (ensemble_mz .- ensemble_se) ./ (N/2),
+            (ensemble_mz .+ ensemble_se) ./ (N/2);
+            color=(example_colors.red, 0.20), label="mean ±1 SE")
+    M.lines!(axis1, times, ensemble_mz ./ (N/2); color=example_colors.red,
              label="trajectory mean")
-    M.lines!(axis1, times, master_mz; color=:black, linestyle=:dash,
+    M.lines!(axis1, times, master_mz ./ (N/2); color=:black, linestyle=:dash,
              label="master equation")
-    M.axislegend(axis1; position=:rb)
+    M.axislegend(axis1; position=:lb)
 
     axis2 = M.Axis(figure[2, 1]; xlabel="time", ylabel="integrated Y(t)",
-                   title="Cumulative homodyne measurement record")
-    M.lines!(axis2, times, vec(conditional.records); color=:darkgreen)
+                   title="(b) Cumulative measurement record")
+    M.lines!(axis2, times, vec(conditional.records); color=example_colors.green)
+    error_axis = M.Axis(figure[2, 2]; xlabel="time", ylabel="Δ⟨Jz⟩ / (N/2)",
+                       title="(c) Ensemble minus master equation")
+    difference = (ensemble_mz .- master_mz) ./ (N/2)
+    M.band!(error_axis, times, difference .- ensemble_se ./ (N/2),
+            difference .+ ensemble_se ./ (N/2); color=(example_colors.red, 0.20))
+    M.lines!(error_axis, times, difference; color=example_colors.red)
+    M.hlines!(error_axis, [0]; color=:black, linestyle=:dash)
+    M.Label(figure[3, 1:2], "Pointwise ±1 SE bands describe sampling only.  •  Fixed dt=$dt; converge the time step separately.  •  Seed=1985.";
+            fontsize=13, color=example_colors.gray)
     save_example_figure(figure, "homodyne_pi_trajectories")
+    save_example_data("homodyne_pi_trajectories", (
+        time=times, conditional_magnetization=conditional_mz ./ (N/2),
+        ensemble_magnetization=ensemble_mz ./ (N/2),
+        standard_error=ensemble_se ./ (N/2), master_magnetization=master_mz ./ (N/2),
+        ensemble_minus_master=difference, integrated_record=vec(conditional.records));
+        metadata=(; N,gamma,efficiency,ntrajectories,dt,seed=1985,
+                  magnetization_normalization="N/2", master_steps_per_interval=4))
 end

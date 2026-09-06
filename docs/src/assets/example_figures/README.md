@@ -10,6 +10,11 @@ produced by the paired scripts in `examples/`. They let GitHub render the
 expected numerical result directly in each example guide without running a
 solver during documentation builds.
 
+CairoMakie exports use vector PDFs and PNGs at two pixels per layout unit.
+Keep only the reviewed PNG snapshots here; source-data TSV companions remain
+in the selected example output directory. The paired guides describe their
+columns and the controls recorded in their comment headers.
+
 The numerical assertions in the Julia scripts are the regression tests. The
 images are explanatory snapshots, not pixel-level test or convergence
 certificates. Stochastic snapshots use the seed recorded in their script;

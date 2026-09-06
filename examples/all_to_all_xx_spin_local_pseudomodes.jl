@@ -848,7 +848,7 @@ results=merge(results,(;boundary_data_paths))
 
 if makie_available()
     M=makie_module()
-    figure=M.Figure(size=(1540,480),fontsize=17)
+    figure=example_figure(size=(1540,480),fontsize=17)
     dynamics_axis=M.Axis(
         figure[1,1];xlabel="ωc t",ylabel="Cxx(t)",
         title="Identical-pair dynamics, L = σ−")
@@ -935,7 +935,7 @@ if makie_available()
     save_example_figure(
         figure,"all_to_all_xx_spin_local_pseudomodes")
 
-    cutoff_figure=M.Figure(size=(1050,430),fontsize=17)
+    cutoff_figure=example_figure(size=(1050,430),fontsize=17)
     cutoff_axis=M.Axis(
         cutoff_figure[1,1];xlabel="ωc t",ylabel="Cxx(t)",
         title="Pseudomode-cutoff comparison")
@@ -956,7 +956,7 @@ if makie_available()
     save_example_figure(
         cutoff_figure,"all_to_all_xx_spin_local_pseudomodes_cutoff")
 
-    ghz_figure=M.Figure(size=(900,600),fontsize=17)
+    ghz_figure=example_figure(size=(900,600),fontsize=17)
     ghz_axis=M.Axis(
         ghz_figure[1,1];xlabel="J / ωc",ylabel="κ / ωc",
         yscale=log10,

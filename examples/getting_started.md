@@ -35,8 +35,9 @@ operators, and compares 8 with 16 RK4 steps between output times.
 The left panel compares the excitation fraction obtained with 16 RK4 steps
 per saved-time interval against the coarser 8-step result and the independently
 computed stationary value. The right panel shows the pointwise difference
-between the two time-step resolutions on a logarithmic scale. The preview was
-generated with the default rates, particle number, time grid, and tolerances;
+between the two time-step resolutions on a linear scale, preserving exact
+zeros. It is a refinement diagnostic, not a certified error bound. The preview
+was generated with the default rates, particle number, time grid, and tolerances;
 for quantitative use, repeat the refinement with smaller steps and check the
 stationary residual and state diagnostics independently.
 
@@ -55,5 +56,7 @@ resolution; it is separate from the stationary residual and state-validity
 checks.
 
 Use the examples environment described in [`README.md`](README.md) to write
-the optional PDF and PNG figure. A root-project run remains dependency-free
-and skips only the rendering block when CairoMakie is unavailable.
+the optional vector PDF, high-resolution PNG, and `getting_started.tsv` table.
+The table retains both time-step resolutions, their unmodified difference,
+the stationary fraction, and the solver controls. A root-project run skips
+only the rendering block when CairoMakie is unavailable.

@@ -16,7 +16,7 @@ where the corresponding package API is available.
 The assistant deliberately does **not** send formulas to a server or a
 language model. Translation is deterministic and restricted: unsupported or
 ambiguous notation produces an error instead of guessed physics.
-Besides a single Julia file, it can download a dependency-free experiment
+Besides a single Julia file, it can download an experiment ZIP
 bundle containing the program, a normalized JSON manifest, a plain-text run
 guide, and a Pluto notebook.
 
@@ -34,12 +34,13 @@ guide, and a Pluto notebook.
   </div>
 
   <div class="pid-layout">
-    <form id="pid-generator-form" class="pid-panel">
+    <form id="pid-generator-form" class="pid-panel" novalidate>
       <div class="pid-panel-heading">
         <h2>1. Describe the model</h2>
         <label class="pid-field">
           <span class="pid-mini-label">Start from</span>
           <select id="pid-preset">
+            <option value="custom" disabled>Custom or restored model</option>
             <option value="driven">Driven qubits with local bath</option>
             <option value="collective">Local and collective decay</option>
             <option value="lmg">Collective LMG polynomial</option>
@@ -494,6 +495,9 @@ guide, and a Pluto notebook.
       <button type="submit" class="pid-button pid-button-primary">
         Generate Julia code
       </button>
+      <p id="pid-form-status" class="pid-form-status">
+        Generate Julia code after editing the model.
+      </p>
     </form>
 
     <section class="pid-panel" aria-labelledby="pid-output-heading">
@@ -505,20 +509,20 @@ guide, and a Pluto notebook.
           <input id="pid-manifest-file" type="file"
                  accept=".json,application/json" hidden>
           <button id="pid-copy-share-link" type="button"
-                  class="pid-button pid-button-quiet">Copy share link</button>
+                  class="pid-button pid-button-quiet" disabled>Copy share link</button>
           <button id="pid-undo-model" type="button"
                   class="pid-button pid-button-quiet" disabled>Undo</button>
           <button id="pid-reset-model" type="button"
                   class="pid-button pid-button-quiet">Reset</button>
           <button id="pid-copy-code" type="button"
-                  class="pid-button pid-button-quiet">Copy</button>
+                  class="pid-button pid-button-quiet" disabled>Copy</button>
           <button id="pid-download-code" type="button"
-                  class="pid-button pid-button-quiet">Download .jl</button>
+                  class="pid-button pid-button-quiet" disabled>Download .jl</button>
           <button id="pid-download-pluto" type="button"
-                  class="pid-button pid-button-quiet">Download Pluto</button>
+                  class="pid-button pid-button-quiet" disabled>Download Pluto</button>
           <button id="pid-download-bundle" type="button"
-                  class="pid-button pid-button-quiet">
-            Download experiment bundle
+                  class="pid-button pid-button-quiet" disabled>
+            Download experiment ZIP
           </button>
         </div>
       </div>
@@ -527,6 +531,10 @@ guide, and a Pluto notebook.
            role="status" aria-live="polite">
         Loading the generator…
       </div>
+      <details id="pid-run-guide" class="pid-run-guide" hidden>
+        <summary>How to run this program</summary>
+        <pre id="pid-generated-readme" class="pid-run-guide-text"></pre>
+      </details>
       <div class="pid-code-shell" role="region" tabindex="0"
            aria-labelledby="pid-output-heading">
         <pre id="pid-generated-code" class="pid-code"
@@ -862,7 +870,8 @@ calculation. For example, a selected spectrum uses
 `generated_pi_liouvillian_spectrum.jl`; enabling its parameter grid produces
 `generated_pi_liouvillian_spectrum_scan.jl`.
 
-“Download experiment bundle” creates four local files with a common stem:
+**Download experiment ZIP** creates one archive with four files sharing a
+common stem. Extract it before running the program:
 
 - the executable `.jl` program;
 - a machine-readable `.json` manifest containing the normalized typed model,
@@ -879,10 +888,20 @@ the page on the same browser restores that normalized manifest; no formula is
 sent over the network. **Reset** returns to the starter preset and **Undo**
 restores the preceding successfully generated model.
 
+Editing any field, adding a channel or scan axis, or removing one invalidates
+the displayed program. Press **Generate Julia code** to refresh it before
+copying, downloading, or sharing. Errors appear beside the relevant field;
+submission focuses that field. Explicitly cleared numerical settings and jump
+fields are errors: enter a value or remove the channel. An empty Hamiltonian
+still means no Hamiltonian term. **How to run this program** shows the same
+run guide included in the ZIP.
+
 Use **Load manifest** to reopen a downloaded model-assistant JSON file. The
 loaded data is converted back to the typed form and passed through the same
 whitelist parser and physical validation as hand-entered input. Loading never
 evaluates JavaScript, Julia, or arbitrary expressions from the JSON file.
+Invalid imports leave the current form and last successful local save intact.
+Memory budgets and spectral targets are preserved when reopening a model.
 
 **Copy share link** puts the normalized manifest in the URL fragment. URL
 fragments are not part of the HTTP request, so the documentation server does
@@ -911,11 +930,11 @@ The JSON manifest is descriptive metadata: it records normalized user model
 inputs and generated resource information, but embeds no Julia or JavaScript
 program template. It does not receive a source-code header. The downloaded
 `_README.txt` repeats both points so the licensing status remains explicit
-when browsers save the four bundle files separately. Users remain responsible
+when the bundle files are extracted or shared separately. Users remain responsible
 for rights in formulas, comments, data, or other material they supply to the
 assistant.
 
-No archive library or remote service is used. Some browsers ask once for
-permission to download multiple files from the page; allow it to receive all
-four artifacts. The JSON manifest is descriptive and contains no executable
+No archive library or remote service is used. The ZIP is assembled locally
+and requires only one download. The JSON manifest is descriptive and contains
+no executable
 JavaScript or Julia expression beyond the separately reviewed program.

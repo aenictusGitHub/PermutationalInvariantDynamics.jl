@@ -84,6 +84,18 @@ use 495, 825, and 1155 complex hierarchy coordinates, respectively.
 
 ## Results
 
+The three-panel figure distinguishes coherence, observable error, and the
+stronger full-root-state convergence check. The last panel compares successive
+depths at the final time against the requested `1e-7` Hilbert–Schmidt tolerance.
+The caption explicitly states that this full-state check has **not converged**,
+even though the plotted coherence is accurate. Exact zeros are omitted only
+from logarithmic axes; positive errors are not floored.
+
+`pi_heom.tsv` exports all depth/time samples, exact coherences, and raw errors.
+`pi_heom_depth_check.tsv` exports successive-depth root-state differences with
+the final time and tolerance. Both files are written beside the PDF and PNG
+only when optional rendering is enabled.
+
 The script evaluates depths 2, 4, and 6 on the same time grid and checks that
 the pointwise error decreases monotonically. With the supplied settings,
 typical maximum errors are approximately
@@ -130,8 +142,8 @@ Passing `scaling=:scaled` to the depth study ensures every prefix uses the
 same pole factors.
 
 When CairoMakie is available in the examples environment, the script writes a
-two-panel figure showing the analytic coherence and the pointwise depth
-errors. Numerical validation runs even without Makie.
+three-panel figure showing the analytic coherence, pointwise depth errors,
+and full-state convergence check. Numerical validation runs even without Makie.
 
 ## Matrix-free and stationary use
 

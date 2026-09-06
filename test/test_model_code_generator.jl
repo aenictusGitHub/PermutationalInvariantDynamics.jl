@@ -11,6 +11,10 @@
     page=joinpath(root,"docs","src","model_code_generator.md")
     javascript_tests=joinpath(
         root,"docs","test","model_code_generator_tests.js")
+    ui_tests=joinpath(
+        root,"docs","test","model_code_generator_ui_tests.js")
+    reliability_tests=joinpath(
+        root,"docs","test","model_code_generator_reliability_tests.js")
     fixture=joinpath(
         root,"docs","test","model_code_generator_fixture.js")
     local_pseudomode_fixture=joinpath(
@@ -68,7 +72,7 @@
         "model_code_generator_global_pseudomode_analysis_fixture.js")
 
     for path in (
-            core,ui,stylesheet,page,javascript_tests,fixture,
+            core,ui,stylesheet,page,javascript_tests,ui_tests,reliability_tests,fixture,
             local_pseudomode_fixture,global_pseudomode_fixture,
             trajectory_fixture,local_pseudomode_trajectory_fixture,
             dynamics_fixture,local_pseudomode_dynamics_fixture,
@@ -185,7 +189,11 @@
                 r"getElementById\(\"(pid-[A-Za-z0-9_-]+)\"",ui_source)
         ],
     ))
-    @test all(selector->selector in page_ids,ui_id_selectors)
+    dynamic_ids=[
+        match.captures[1]
+        for match in eachmatch(r"\.id = \"(pid-[A-Za-z0-9_-]+)\"",ui_source)
+    ]
+    @test all(selector->selector in union(page_ids,dynamic_ids),ui_id_selectors)
     @test occursin(
         "html.pid-generator-page #documenter .docs-main",
         stylesheet_source)
@@ -222,6 +230,16 @@
             `$runner $core $ui` :
             `$runner --check $ui`
         @test success(ui_command)
+
+        ui_test_command=node===nothing ?
+            `$runner $core $ui_tests` : `$runner $ui_tests`
+        ui_test_output=read(Cmd(ui_test_command;dir=root),String)
+        @test occursin("model code generator UI tests: 63 passed",ui_test_output)
+
+        reliability_command=node===nothing ?
+            `$runner $core $reliability_tests` : `$runner $reliability_tests`
+        reliability_output=read(reliability_command,String)
+        @test occursin("model code generator reliability tests: 124 passed",reliability_output)
 
         fixture_command=node===nothing ?
             `$runner $core $fixture` :

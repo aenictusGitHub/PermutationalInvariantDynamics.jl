@@ -22,7 +22,17 @@ normalization and checks ensemble/master agreement against the measured Monte
 Carlo standard error.  No $2^N$ state or Liouville matrix is constructed.
 
 The Makie figure shows the conditional and unconditional magnetization in the
-upper panel and the cumulative homodyne record in the lower panel.
+upper panel, normalized by `N/2`, and the cumulative homodyne record below.
+A third panel shows the normalized ensemble-minus-master difference with a
+pointwise one-standard-error band around the measured difference. This makes
+sampling fluctuations visible even when the two main curves overlap.
+The parameter banner and caption record efficiency, path count, seed, and
+fixed time step. These bands quantify sampling only; they do not bound
+integration bias.
+
+`homodyne_pi_trajectories.tsv` exports the conditional, ensemble, and master
+magnetizations, standard errors, their difference, and the integrated record,
+with the physical parameters and numerical controls in comment headers.
 
 Run with:
 

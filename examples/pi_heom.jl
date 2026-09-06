@@ -170,29 +170,56 @@ println("HEOM batched forward/adjoint errors = ",
 
 if makie_available()
     M = makie_module()
-    figure = M.Figure(size=(1120, 440), fontsize=17)
+    figure = example_figure(size=(1260, 520))
+    M.Label(figure[0, 1:3], "PI–HEOM collective dephasing  •  N=$N";
+            fontsize=22, font=:bold, halign=:left)
     signal_axis = M.Axis(
         figure[1, 1]; xlabel="νt", ylabel="2⟨Jx⟩ / N",
-        title="PI–HEOM collective dephasing (N=$N)")
+        title="(a) Normalized coherence")
     error_axis = M.Axis(
         figure[1, 2]; xlabel="νt", ylabel="absolute error",
-        yscale=log10, title="Hierarchy-depth convergence")
+        yscale=log10, title="(b) Observable error")
+    state_axis = M.Axis(figure[1, 3]; xlabel="hierarchy depth",
+        ylabel="successive-depth root-state distance", yscale=log10,
+        xticks=collect(depths), title="(c) Full-state convergence")
 
     scaled_times = frequency .* collect(times)
     M.lines!(signal_axis, scaled_times, exact;
              color=:black, linewidth=3, label="analytic")
-    colors = (:firebrick, :royalblue, :seagreen)
+    colors = (example_colors.red, example_colors.blue, example_colors.green)
     for (curve, color) in zip(curves, colors)
         label = "depth $(curve.depth)"
         M.lines!(signal_axis, scaled_times, curve.normalized_Jx;
                  color, linewidth=2, linestyle=:dash, label)
         pointwise_error = abs.(curve.normalized_Jx .- exact)
         # A zero at t=0 cannot be displayed on a logarithmic axis.
-        shown_error = max.(pointwise_error, eps(Float64))
+        shown_error = [iszero(error) ? NaN : error for error in pointwise_error]
         M.lines!(error_axis, scaled_times, shown_error;
                  color, linewidth=2.3, label)
     end
     M.axislegend(signal_axis; position=:lb, labelsize=12)
     M.axislegend(error_axis; position=:rb, labelsize=12)
+    root_errors = collect(skipmissing(depth_report.pairwise_errors))
+    M.scatterlines!(state_axis, collect(depths[2:end]), root_errors;
+                    color=example_colors.purple, marker=:diamond,
+                    label="successive depths at final time")
+    M.hlines!(state_axis, [1e-7]; color=:black, linestyle=:dash,
+              label="requested state tolerance")
+    M.axislegend(state_axis; position=:rc, labelsize=11)
+    M.Label(figure[2, 1:3], "The coherence is accurate; the stronger root-state test has not converged.  •  Exact zeros omitted only on log axes.";
+            fontsize=13, color=example_colors.gray)
     save_example_figure(figure, "pi_heom")
+    save_example_data("pi_heom", (
+        depth=vcat([fill(curve.depth, length(times)) for curve in curves]...),
+        time=repeat(collect(times), length(curves)),
+        nu_t=repeat(scaled_times, length(curves)),
+        normalized_coherence=vcat([curve.normalized_Jx for curve in curves]...),
+        exact_coherence=repeat(exact, length(curves)),
+        absolute_error=vcat([abs.(curve.normalized_Jx .- exact) for curve in curves]...));
+        metadata=(; N, coefficient, frequency, depths, scaling="scaled",
+                  steps_per_interval=4, state_converged=depth_report.converged))
+    save_example_data("pi_heom_depth_check", (
+        previous_depth=collect(depths[1:end-1]), depth=collect(depths[2:end]),
+        root_state_distance=root_errors);
+        metadata=(time=last(times),atol=1e-7,rtol=0))
 end

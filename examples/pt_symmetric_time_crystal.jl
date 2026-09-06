@@ -100,7 +100,7 @@ function main()
 
     if makie_available()
         M = makie_module()
-        figure = M.Figure(size=(1150, 470), fontsize=17)
+        figure = example_figure(size=(1150, 470), fontsize=17)
         spectrum_axis = M.Axis(
             figure[1, 1]; xlabel="Re(λ)", ylabel="Im(λ)",
             title="Balanced finite-N spectrum, N=$N")

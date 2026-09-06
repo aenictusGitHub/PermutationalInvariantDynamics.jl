@@ -80,10 +80,15 @@ prepared applications, and introduces no ODE solver dependency.
 ![Expected prepared parameter-scan figure](../docs/src/assets/example_figures/parameter_scan.png)
 
 The left panel compares the streamed PI stationary values with the exact
-thermal fraction $r/(1+r)$; the right panel shows the residual returned at
-each continuation point. The plot reuses the callback records and does not
+thermal fraction $r/(1+r)$; the middle panel shows the residual returned at
+each continuation point, and the right panel shows the absolute error in the
+excited fraction. Solver residual and observable error are distinct checks. The plot reuses the callback records and does not
 retain or recompute stationary states. It is a resolved default-grid illustration:
 the pointwise solver assertions and exact curve are the quantitative checks.
+Exact zero residuals are omitted only on the logarithmic axis, with their
+count stated in the figure; positive values are never raised to a display
+floor. `parameter_scan.tsv` exports all raw values plus warm-start and
+workspace-reuse flags, and records tolerances and the restart boundary.
 
 ## Run
 

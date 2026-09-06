@@ -50,7 +50,7 @@ println("qubit Haar/sphere sanity error: ",
 
 if makie_available()
     M = makie_module()
-    figure = M.Figure(size=(900, 470), fontsize=16)
+    figure = example_figure(size=(900, 470), fontsize=16)
     axis = M.Axis(figure[1, 1]; xlabel="generator angle",
         ylabel="Haar-normalized Q", title="Generalized qutrit Husimi data")
     M.lines!(axis, angles, q.values; linewidth=2.7, color=:black,

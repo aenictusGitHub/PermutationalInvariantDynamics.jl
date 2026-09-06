@@ -98,7 +98,7 @@ if makie_available()
     deterministic_auxiliary=[
         real(expectation(state,auxiliary_excitation)) for state in deterministic]
 
-    figure=M.Figure(size=(1120,440),fontsize=17)
+    figure=example_figure(size=(1120,440),fontsize=17)
     atom_axis=M.Axis(
         figure[1,1];xlabel="time",ylabel="⟨Jz⟩",
         title="Compressed ensemble")

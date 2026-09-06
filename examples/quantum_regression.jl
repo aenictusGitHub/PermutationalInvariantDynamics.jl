@@ -83,7 +83,7 @@ println("finite-window FFT bins: ", length(fft_spectrum.frequencies),
 # assertions; plotting performs no further propagation or shifted solve.
 if makie_available()
     M = makie_module()
-    figure = M.Figure(size=(1480, 440), fontsize=17)
+    figure = example_figure(size=(1480, 440), fontsize=17)
     correlation_axis = M.Axis(
         figure[1, 1]; xlabel="delay τ", ylabel="C(τ)",
         title="First-order quantum regression")

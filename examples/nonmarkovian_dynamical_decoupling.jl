@@ -561,7 +561,7 @@ refined_infidelity = 1 - last(tedd_refined.heom_stroboscopic)
 
 if makie_available()
     M = makie_module()
-    figure = M.Figure(size=(1160, 820), fontsize=17)
+    figure = example_figure(size=(1160, 820), fontsize=17)
     scaled_times = Omega .* times
 
     for (column, result) in enumerate((cpmg, udd4))

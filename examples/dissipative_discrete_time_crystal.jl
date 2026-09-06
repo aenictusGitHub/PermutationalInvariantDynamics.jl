@@ -146,7 +146,7 @@ function main()
         plotted_periods = periods[2:end]
         deviations = sx[2:end] .- sx_stationary
 
-        figure = M.Figure(size=(1100, 470), fontsize=17)
+        figure = example_figure(size=(1100, 470), fontsize=17)
         spectrum_axis = M.Axis(
             figure[1, 1]; xlabel="Re(ε)", ylabel="Im(ε)",
             aspect=M.DataAspect(), title="Finite-N Floquet multipliers, N=$N")

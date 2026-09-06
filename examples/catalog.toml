@@ -27,7 +27,7 @@ title = "Driven qubits with independent decay"
 script = "examples/driven_qubits.jl"
 guide = "examples/driven_qubits.md"
 difficulty = "beginner"
-tasks = ["dynamics", "observables", "one-body-rdm"]
+tasks = ["dynamics", "observables", "one-body-rdm", "convergence"]
 runtime_class = "short"
 stochastic = false
 optional_dependencies = ["CairoMakie"]
@@ -37,11 +37,11 @@ expected_outputs = ["docs/src/assets/example_figures/driven_qubits.png"]
 
 [[example]]
 id = "one-axis-twisting"
-title = "One-axis twisting and spin squeezing"
+title = "One-axis twisting and one-spin purity"
 script = "examples/one_axis_twisting.jl"
 guide = "examples/one_axis_twisting.md"
 difficulty = "intermediate"
-tasks = ["dynamics", "spin-squeezing", "entanglement"]
+tasks = ["dynamics", "observables", "entanglement"]
 runtime_class = "short"
 stochastic = false
 optional_dependencies = ["CairoMakie"]

@@ -49,7 +49,7 @@ println("large-N prediction at w=N GammaC/2: Imax/GammaC = ",
 if makie_available()
     M = makie_module()
     pump_ratios = [result.pump / GammaC for result in results]
-    figure = M.Figure(size=(1350, 430), fontsize=17)
+    figure = example_figure(size=(1350, 430), fontsize=17)
     intensity_axis = M.Axis(
         figure[1, 1]; xlabel="w / Γc", ylabel="I / Γc",
         xscale=log10, title="Steady radiated intensity")
@@ -69,7 +69,7 @@ if makie_available()
     M.hlines!(intensity_axis, [large_N_maximum];
               color=:gray45, linestyle=:dash,
               label="large-N peak N²/8")
-    M.axislegend(intensity_axis; position=:lt, labelsize=12)
+    M.axislegend(intensity_axis; position=:lc, labelsize=12)
 
     M.lines!(excitation_axis, pump_ratios,
              [result.Ne / N for result in results];
@@ -87,7 +87,7 @@ if makie_available()
     M.hlines!(enhancement_axis, [1.0];
               color=:gray45, linestyle=:dash,
               label="independent emission")
-    M.axislegend(enhancement_axis; position=:rt, labelsize=12)
+    M.axislegend(enhancement_axis; position=:lt, labelsize=12)
 
     save_example_figure(figure, "steady_superradiance")
 end

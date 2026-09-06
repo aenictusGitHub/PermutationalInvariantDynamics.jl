@@ -95,7 +95,6 @@ This page is generated from [`examples/catalog.toml`](https://github.com/aenictu
       <option value="sensitivities">sensitivities</option>
       <option value="solver-selection">solver-selection</option>
       <option value="spectrum">spectrum</option>
-      <option value="spin-squeezing">spin-squeezing</option>
       <option value="spin-wigner">spin-wigner</option>
       <option value="steady-state">steady-state</option>
       <option value="streaming">streaming</option>
@@ -213,12 +212,12 @@ This page is generated from [`examples/catalog.toml`](https://github.com/aenictu
       <p><a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/cooperative_fluorescence.md">Guide</a> · <a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/cooperative_fluorescence.jl">Script</a></p>
       <pre><code>julia --project=. examples/cooperative_fluorescence.jl</code></pre>
     </article>
-    <article class="pid-example-card" data-search="driven qubits with independent decay permutationalinvariantdynamics.jl driven-qubit validation example beginner short dynamics observables one-body-rdm" data-difficulty="beginner" data-tasks="dynamics observables one-body-rdm" data-stochastic="false">
+    <article class="pid-example-card" data-search="driven qubits with independent decay permutationalinvariantdynamics.jl driven-qubit validation example beginner short dynamics observables one-body-rdm convergence" data-difficulty="beginner" data-tasks="dynamics observables one-body-rdm convergence" data-stochastic="false">
       <img loading="lazy" src="../assets/example_figures/driven_qubits.png" alt="Expected output for Driven qubits with independent decay">
       <h2>Driven qubits with independent decay</h2>
       <p><strong>beginner</strong> · short · deterministic</p>
       <p>PermutationalInvariantDynamics.jl driven-qubit validation example</p>
-      <p class="pid-example-tasks"><code>dynamics</code> <code>observables</code> <code>one-body-rdm</code></p>
+      <p class="pid-example-tasks"><code>dynamics</code> <code>observables</code> <code>one-body-rdm</code> <code>convergence</code></p>
       <p><a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/driven_qubits.md">Guide</a> · <a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/driven_qubits.jl">Script</a></p>
       <pre><code>julia --project=. examples/driven_qubits.jl</code></pre>
     </article>
@@ -348,12 +347,12 @@ This page is generated from [`examples/catalog.toml`](https://github.com/aenictu
       <p><a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/global_pseudomode_cavity.md">Guide</a> · <a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/global_pseudomode_cavity.jl">Script</a></p>
       <pre><code>julia --project=. examples/global_pseudomode_cavity.jl</code></pre>
     </article>
-    <article class="pid-example-card" data-search="one-axis twisting and spin squeezing kitagawa and ueda, phys. rev. a 47, 5138 (1993) intermediate short dynamics spin-squeezing entanglement" data-difficulty="intermediate" data-tasks="dynamics spin-squeezing entanglement" data-stochastic="false">
-      <img loading="lazy" src="../assets/example_figures/one_axis_twisting.png" alt="Expected output for One-axis twisting and spin squeezing">
-      <h2>One-axis twisting and spin squeezing</h2>
+    <article class="pid-example-card" data-search="one-axis twisting and one-spin purity kitagawa and ueda, phys. rev. a 47, 5138 (1993) intermediate short dynamics observables entanglement" data-difficulty="intermediate" data-tasks="dynamics observables entanglement" data-stochastic="false">
+      <img loading="lazy" src="../assets/example_figures/one_axis_twisting.png" alt="Expected output for One-axis twisting and one-spin purity">
+      <h2>One-axis twisting and one-spin purity</h2>
       <p><strong>intermediate</strong> · short · deterministic</p>
       <p>Kitagawa and Ueda, Phys. Rev. A 47, 5138 (1993)</p>
-      <p class="pid-example-tasks"><code>dynamics</code> <code>spin-squeezing</code> <code>entanglement</code></p>
+      <p class="pid-example-tasks"><code>dynamics</code> <code>observables</code> <code>entanglement</code></p>
       <p><a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/one_axis_twisting.md">Guide</a> · <a href="https://github.com/aenictusGitHub/PermutationalInvariantDynamics.jl/blob/main/examples/one_axis_twisting.jl">Script</a></p>
       <pre><code>julia --project=. examples/one_axis_twisting.jl</code></pre>
     </article>
