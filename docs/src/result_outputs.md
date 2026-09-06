@@ -33,6 +33,11 @@ A missing field is reported only when the result explicitly represents it.
 For example, `summarize` does not turn a selected spectrum into a certified
 global gap and does not infer physicality from a trace residual.
 
+Composite stationary results, including shared-pseudomode results, report
+`factor_count` and `factor_dimensions` in declared factor order, together with
+the total `pi_dimension`. Each factor dimension counts operator coordinates;
+the first factor varies fastest. Such a basis has no single `N` or `d`.
+
 ```julia
 steady = stationary_state(model;
     algorithm=GMRESAlgorithm(), return_info=true)
@@ -44,6 +49,15 @@ summary.algorithm
 ```
 
 ## Dependency-free tables
+
+The common history accessors also support `PISolution`: `result_times(sol)`
+borrows `sol.raw.t`, while `result_states(sol)` returns `sol` as a lazy,
+indexable history. Indexing it constructs a detached `PIState` from a saved
+coefficient vector. `result_final_state(sol)` returns the last saved state,
+or `nothing` if no vectors were saved. These accessors never interpolate or
+repeat integration; use `state_at(sol, time)` for continuous interpolation.
+Other result types return their retained histories directly, or `nothing`
+when that output is unavailable.
 
 `result_table(result)` returns a column-oriented `ResultTable`. Its columns
 borrow result-owned vectors when possible:
@@ -136,6 +150,11 @@ Large output columns are excluded unless requested. JLD2 is Julia-native and
 may require compatible package/type definitions to reload. HDF5 columns are
 normalized to text to avoid narrowing heterogeneous scan metadata; exact PI
 states are stored separately with the checkpoint payload convention.
+
+Composite states and composite stationary results support compact CSV/TSV
+exports and Julia-native JLD2 storage. The current `.pidrun` and HDF5 state
+checkpoint schemas require an ordinary PI basis and reject composite payloads
+before creating an archive.
 
 ## Plotting
 

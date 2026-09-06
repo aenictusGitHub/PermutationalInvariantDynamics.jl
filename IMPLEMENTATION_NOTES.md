@@ -1451,3 +1451,63 @@ direction overlaps. Numerical eigenvalue clusters report singular values of
 the orthonormal left/right subspace overlap and the associated projector
 condition estimate. The implementation does not rotate clustered vectors and
 does not infer defectiveness from a selected iterative spectrum.
+
+
+## Prepared resource preflight and entropy validation (2026-09-06)
+
+Dense exact-support counting now accumulates a native integer bounded by the
+stored array length, then converts once to `BigInt` before product and storage
+bounds. Exact zeros, including explicitly stored CSC zeros, keep their previous
+meaning; no dropping tolerance is introduced.
+
+Compatible fixed built-in compiled models and scalar-rate families retain
+compact geometry totals, exact sparse contribution counts, and an allowance
+for immutable record storage. Repeated preflight traverses the live model,
+operator, and workspace payloads explicitly. It does not rely on excluding a
+plan type from an entire wrapper traversal, because Julia 1.10 and 1.12 box and
+flatten immutable fields differently. Numerical arrays in a shared plan are
+counted once by its prepared storage measurement; the upper bound separately
+allows duplicate immutable records. Mutable compatibility buffers, actual batch
+capacity, sparse storage, and original input payloads remain live measurements.
+If that conservative bound exceeds the requested budget, full-source inspection
+refines it before rejection or automatic algorithm selection. This preserves
+compatibility with scan budgets based on measured operator storage. Custom
+sources, callbacks, and heap-backed plan scalars retain the original inspection
+route. Solver/output precision, worker counts, and transient buffers remain
+request-specific.
+
+Von Neumann and Rényi entropy retain trace and Hermiticity checks and reuse each
+multiplicity-weighted block spectrum to certify spectral positivity. If
+`q_min >= -(atol + rtol*q_max)` and `s = sqrt(f) >= 1`, then
+`q_min/s >= -(atol + rtol*global_coefficient_spectral_scale)`, so the weighted
+check also implies the ordinary coefficient-space spectral check. Near the
+floating-point acceptance boundary, the original positivity validation runs
+once to preserve decisions sensitive to rescaling. The large-block and generic
+shifted-Cholesky path retains its independent norm-based check. No persistent
+state-spectrum cache or numerical repair is introduced.
+
+The performance regression script now guards allocations in dense support
+counting, repeated prepared preflight, and validated entropy. Its numerical and
+threaded generator checks remain in place; wall-clock timings are not CI gates.
+
+Focused before/after measurements on Julia 1.12.6, Apple M4, one Julia thread
+and one BLAS thread used the same warmed cases, with no test process running
+during the final measurements. Times are minimum BenchmarkTools samples
+(100 for support counting, 30 for preflight and entropy):
+
+| Operation | Before | After | Allocated bytes, before → after |
+|---|---:|---:|---:|
+| Dense 129 × 129 support count, 11,094 nonzeros | 477.500 μs | 3.416 μs | 621,304 → 48 |
+| Prepared RK4 preflight, all-sector N=20 qubit model | 608.416 μs | 54.250 μs | 539,768 → 52,872 |
+| Validated entropy, N=128 symmetric full-rank block | 2,022.292 μs | 1,097.708 μs | 3,083,176 → 1,841,480 |
+
+These are improvements in the named operations, not general simulation
+speedups. The preflight model has a collective x Hamiltonian, local emission,
+and local pumping. The entropy case uses a fixed-seed positive dense Schur
+block. Matrix-free and sparse forward/adjoint actions, family specialization,
+and entropy values agreed in the measured cases. Preparation now retains
+additional metadata: N=10 family setup measured 648.375 μs before and
+722.208 μs after (minimum of three warmed samples), while specialization with
+a reused workspace remained 1.625 μs. Repeated-use savings should therefore
+be assessed separately from setup costs. Timings are machine- and
+model-dependent; the allocation gates are the reproducible regression checks.

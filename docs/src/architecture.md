@@ -458,6 +458,18 @@ bytes are measured (`:actual`), structurally bounded (`:upper_bound`), modeled
 `safe_to_run`: the latter remains `missing` when an estimate is informative but
 cannot certify a fit.
 
+For fixed built-in compiled models and scalar-rate specializations, repeated
+preflights reuse the immutable plan's storage, geometry, and exact-support
+estimates. Mutable compatibility workspaces and sparse operators are still
+inspected on each call, so batch-buffer growth remains accounted for. The
+combined retained-storage figure is labeled `:upper_bound`, since shared
+references may be counted twice. Custom sources, callbacks, and heap-backed
+scalar plans retain live inspection. Each new request separately accounts for
+its precision, worker count, solver workspace, and output.
+If the conservative cached bound exceeds the requested budget, preflight
+measures the complete source before rejecting the request or changing an
+automatic solver choice.
+
 Operation-specific accounting matters. A direct stationary solve includes a
 bordered sparse factorization bound, a dense spectrum includes matrix copies
 and eigensolver work arrays, iterative routes include their Krylov basis, and

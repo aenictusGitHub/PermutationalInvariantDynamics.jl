@@ -173,3 +173,42 @@
         end
     end
 end
+
+@testset "composite stationary summaries and compact exports" begin
+    system=PIModel(PIBasis(1,2),(LocalJump(spin_matrices().jm;rate=0.29),))
+    model=global_pseudomode_model(system,BosonicPseudomode(1;frequency=0.37,damping=0.41))
+    result=stationary_state(model;return_info=true)
+    @test result_converged(result)
+    summary=summarize(result)
+    @test summary.factor_count==2
+    @test summary.factor_dimensions==model.basis.dimensions
+    @test summary.pi_dimension==length(model.basis)
+    @test !hasproperty(summary,:N)&&!hasproperty(summary,:d)
+    table=result_table(result)
+    @test length(table)==1
+    @test table.columns.residual==[result_residual(result)]
+    @test table.columns.factor_dimensions==[model.basis.dimensions]
+    @test result_table(result;include_output=true).columns.state[1]===result.state
+    @test summarize(result.state).factor_count==2
+    @test summarize(result.state).trace≈1
+    @test length(result_table(result.state))==1
+    mktempdir() do dir
+        for (suffix,format) in (("csv",:csv),("tsv",:tsv))
+            path=joinpath(dir,"steady.$suffix")
+            @test save_result(path,result;format)==path
+            @test occursin("factor_dimensions",read(path,String))
+        end
+        for suffix in ("pidrun","h5"), payload in (result,result.state)
+            path=joinpath(dir,"unsupported.$suffix")
+            err=try
+                save_result(path,payload)
+                nothing
+            catch error
+                error
+            end
+            @test err isa ArgumentError
+            @test occursin("composite-state checkpoints",sprint(showerror,err))
+            @test !ispath(path)
+        end
+    end
+end

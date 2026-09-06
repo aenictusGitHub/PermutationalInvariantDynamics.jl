@@ -201,6 +201,9 @@ julia --startup-file=no --project=benchmark -e \
 `performance_audit.jl` is a human-readable warmed timing/allocation survey.
 `performance_regression.jl` primarily enforces allocation and numerical-
 equivalence gates and deliberately avoids fragile wall-clock thresholds.
+It also guards allocations in exact nonzero counting, repeated prepared-model
+resource preflight, and validated entropy. The audit reports timings for those
+paths separately from generator application.
 `benchmark/benchmarks.jl` remains the detailed `BenchmarkTools` workload
 collection.
 

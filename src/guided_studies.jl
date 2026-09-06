@@ -49,6 +49,9 @@ tasks are `:steady_state`, `:dynamics`, and `:spectrum`. The study delegates to
 [`stationary_state`](@ref), [`solve_dynamics`](@ref), or
 [`liouvillian_spectrum`](@ref), respectively, and therefore preserves their
 algorithms, precision rules, and memory safeguards.
+For dynamics, `observables` follows the Hilbert–Schmidt convention of
+[`solve_dynamics`](@ref): pass `adjoint(A)` to record `tr(A * rho)` for a
+non-Hermitian observable `A`.
 
 Call [`explain`](@ref) before an expensive calculation and `solve(study)` to
 obtain one [`PIStudyResult`](@ref). `validate=true` records physical
@@ -217,14 +220,7 @@ function _study_tspan_issue(tspan)
             "tspan must contain exactly two endpoints";
             suggestion="Use tspan=(t0, t1).",
             documentation="getting_started.md")
-        t0,t1=tspan
-        t0 isa Real&&t1 isa Real&&
-            !(t0 isa Bool)&&!(t1 isa Bool)&&
-            isfinite(t0)&&isfinite(t1)&&t1>=t0||return _study_issue(
-                "PID-E-INVALID-TSPAN",:error,
-                "tspan endpoints must be finite real numbers with t1 >= t0";
-                suggestion="Correct or reorder the requested time interval.",
-                documentation="getting_started.md")
+        _checked_evolution_tspan(tspan;ordered=true)
     catch
         return _study_issue(
             "PID-E-INVALID-TSPAN",:error,
@@ -372,20 +368,24 @@ function _study_recommendation(study::PIStudy)
             memory_budget=study.memory_budget,krylovdim,recycle_dim,
             T=_resource_scalar_type(study.source,study.initial_state))
     elseif study.task===:spectrum
-        requested=study.algorithm isa HarmonicArnoldiAlgorithm ?
-            study.algorithm.nev : get(options,:nev,6)
+        requested=get(options,:nev,study.algorithm isa HarmonicArnoldiAlgorithm ?
+            study.algorithm.nev : 6)
         requested isa Integer&&!(requested isa Bool)&&requested>0||
             throw(ArgumentError("nev must be a positive integer"))
         dimension=pi_dimension(study.source)
+        study.algorithm isa HarmonicArnoldiAlgorithm&&requested>dimension&&
+            throw(ArgumentError("requested harmonic-Arnoldi nev exceeds the source dimension"))
         nev=Int(min(BigInt(dimension),BigInt(requested)))
-        krylovdim=study.algorithm isa HarmonicArnoldiAlgorithm ?
-            study.algorithm.krylovdim :
-            get(options,:krylovdim,max(20,2nev+4))
+        krylovdim=get(options,:krylovdim,
+            study.algorithm isa HarmonicArnoldiAlgorithm ?
+                study.algorithm.krylovdim : max(20,2nev+4))
         return recommend_solver(
             study.source;task=:spectrum,algorithm,
             memory_budget=study.memory_budget,krylovdim,nev,
             block_size=get(options,:block_size,min(nev,4)),
-            maxrestarts=get(options,:maxrestarts,20),
+            maxrestarts=get(options,:maxrestarts,
+                study.algorithm isa HarmonicArnoldiAlgorithm ?
+                    study.algorithm.maxrestarts : 20),
             vectors=get(options,:vectors,false),
             T=_resource_scalar_type(study.source))
     end
@@ -482,11 +482,12 @@ function check(study::PIStudy)
             documentation="api/solvers.md"))
     end
     if study.source isa PIModel&&any(
-            term->term_rate(term) isa Number&&term_rate(term)<0,
+            term->term_process(term)===Val(:jump)&&
+                term_rate(term) isa Real&&term_rate(term)<0,
             study.source.terms)
         push!(issues,_study_issue(
             "PID-W-NEGATIVE-DETERMINISTIC-RATE",:warning,
-            "the model contains a negative constant rate; deterministic evolution is allowed but complete positivity is not guaranteed";
+            "the model contains a negative constant jump rate; deterministic evolution is allowed but complete positivity is not guaranteed";
             suggestion="Confirm that a time-local non-CP-divisible generator is intended.",
             documentation="framework.md"))
     end
@@ -605,6 +606,8 @@ function result_state(result)
     nothing
 end
 result_state(state::Union{PIState,CompositePIState})=state
+result_state(result::PISolution)=
+    isempty(result.raw.u) ? nothing : state(result,lastindex(result.raw.u))
 
 """
     result_final_state(result)
@@ -622,6 +625,7 @@ function result_times(result)
     hasproperty(result,:solution)&&return result_times(getproperty(result,:solution))
     nothing
 end
+result_times(result::PISolution)=result.raw.t
 
 """
     result_states(result)
@@ -629,6 +633,9 @@ end
 Return a saved state history exactly as retained by `result`, or `nothing`.
 This accessor does not wrap a stationary state in a one-element vector and
 does not reconstruct state-free streaming output.
+For a [`PISolution`](@ref), return the solution itself as a lazy, indexable
+history: each indexed entry wraps saved coefficients in a detached `PIState`.
+No interpolation or integration is performed.
 """
 function result_states(result)
     hasproperty(result,:states)&&return getproperty(result,:states)
@@ -637,6 +644,7 @@ function result_states(result)
         return result_states(getproperty(result,:solution))
     nothing
 end
+result_states(result::PISolution)=result
 
 """
     result_values(result)

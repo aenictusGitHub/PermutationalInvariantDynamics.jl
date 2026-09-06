@@ -26,6 +26,99 @@
     @test conditional_entropy(ghz,1)≈-1 atol=2e-10
 end
 
+@testset "entropy spectra retain state validation" begin
+    PID=PermutationalInvariantDynamics
+    for T in (Float32,Float64)
+        basis=PIBasis(8,2)
+        rho=iid_state(basis,T[0.75 0;0 0.25])
+        expected=-8*(T(0.75)*log2(T(0.75))+T(0.25)*log2(T(0.25)))
+        @test von_neumann_entropy(rho)≈expected rtol=20eps(T)
+        @test von_neumann_entropy(rho) isa T
+        original=copy(rho.data)
+        @test renyi_entropy(rho,1)===von_neumann_entropy(rho)
+        @test rho.data==original
+        rho.data.*=2
+        @test_throws ArgumentError von_neumann_entropy(rho)
+        @test_throws ArgumentError renyi_entropy(rho,2)
+        @test_throws ArgumentError renyi_entropy(rho,Inf)
+    end
+
+    basis=PIBasis(8,2)
+    rho=PIState(basis)
+    coefficient_block(rho,first(basis.sectors))[1,1]=1
+    sector=Partition((5,3))
+    block=coefficient_block(rho,sector)
+    atol=1e-10
+    # This negative block passes the coefficient-space absolute tolerance,
+    # but must fail the stricter multiplicity-weighted entropy check.
+    block[1,1]=-atol/2
+    block[2,2]=atol/2
+    @test validate_state(rho;atol,rtol=0)===rho
+    original=copy(rho.data)
+    @test_throws ArgumentError von_neumann_entropy(rho;atol,rtol=0)
+    @test_throws ArgumentError renyi_entropy(rho,2;atol,rtol=0)
+    @test_throws ArgumentError renyi_entropy(rho,Inf;atol,rtol=0)
+    @test rho.data==original
+    fill!(block,0)
+    @test von_neumann_entropy(rho;atol,rtol=0)≈0 atol=1e-12
+    block[1,2]=1e-3
+    @test_throws ArgumentError von_neumann_entropy(rho;atol,rtol=0)
+    block[1,2]=NaN
+    @test_throws ArgumentError renyi_entropy(rho,2;atol,rtol=0)
+
+    # Preserve the original two-stage validation decision near roundoff,
+    # including strict zero tolerances, where rescaling can change eigvals.
+    v=ComplexF64[1,2im,1+im]
+    for scale in (1e-3,1e-12),tolerance in (0.0,1e-20,1e-14)
+        fill!(rho.data,0)
+        block.=scale*(v*v')
+        coefficient_block(rho,first(basis.sectors))[1,1]=
+            1-sqrt(Float64(symmetric_group_dimension(sector)))*real(tr(block))
+        accepted=try
+            validate_state(rho;atol=tolerance,rtol=0)
+            for p in basis.sectors
+                PID._weighted_sector_eigvals(rho,p;atol=tolerance,rtol=0)
+            end
+            true
+        catch error
+            error isa ArgumentError||rethrow()
+            false
+        end
+        for entropy in (von_neumann_entropy,
+                        state->renyi_entropy(state,2;atol=tolerance,rtol=0),
+                        state->renyi_entropy(state,Inf;atol=tolerance,rtol=0))
+            current=try
+                entropy===von_neumann_entropy ?
+                    entropy(rho;atol=tolerance,rtol=0) : entropy(rho)
+                true
+            catch error
+                error isa ArgumentError||rethrow()
+                false
+            end
+            @test current==accepted
+        end
+    end
+
+    # The automatic large-block Cholesky check uses entry-norm scaling.
+    # Its negative direction must not be accepted by substituting the looser
+    # spectral relative tolerance. This is a bounded, 257-dimensional Schur
+    # block, not a reconstruction of the full 2^256 Hilbert space.
+    n=257
+    basis=PIBasis(n-1,2;sectors=[(n-1,0)])
+    u=fill(inv(sqrt(n)),n)
+    v=zeros(n);v[1]=inv(sqrt(2));v[2]=-v[1]
+    delta=1e-6
+    density=(1+delta)*(u*u')-delta*(v*v')
+    rho=PIState(basis,ComplexF64.(vec(density)))
+    @test PID._automatic_positivity_method(rho)===:cholesky
+    @test minimum(PID._weighted_sector_eigvals(
+        rho,only(basis.sectors);atol=1e-12,rtol=1e-4).values)<0
+    @test_throws ArgumentError validate_state(rho;atol=1e-12,rtol=1e-4)
+    @test_throws ArgumentError von_neumann_entropy(rho;atol=1e-12,rtol=1e-4)
+    @test_throws ArgumentError renyi_entropy(rho,2;atol=1e-12,rtol=1e-4)
+    @test_throws ArgumentError renyi_entropy(rho,Inf;atol=1e-12,rtol=1e-4)
+end
+
 @testset "rank-deficient fidelity and relative-entropy support" begin
     basis=PIBasis(1,3)
     sector=only(basis.sectors)
@@ -112,4 +205,24 @@ end
     qdicke=sector_density_matrix(b3,p3,v3*v3');q=Diagonal([0,1,2])
     qr=charge_resolved_negativity(qdicke,1,q)
     @test sum(x->x.negativity,qr)≈negativity(qdicke,1) atol=2e-9
+end
+
+@testset "entropy controls remain in-domain at state precision" begin
+    rho=iid_state(PIBasis(1,2),Float32[0.7 0;0 0.3])
+    for alpha in (1+1e-8,1-1e-8,1e-50,1e50)
+        @test_throws ArgumentError renyi_entropy(rho,alpha)
+    end
+    for base in (1+1e-8,1-1e-8,1e-50,1e50,Inf,NaN)
+        @test_throws ArgumentError von_neumann_entropy(rho;base)
+        @test_throws ArgumentError renyi_entropy(rho,2;base)
+        @test_throws ArgumentError renyi_entropy(rho,Inf;base)
+    end
+    @test renyi_entropy(rho,1)===von_neumann_entropy(rho)
+    @test renyi_entropy(rho,2) isa Float32
+    @test renyi_entropy(rho,Inf) isa Float32
+    # A wider, exactly normalized state supports the original near-one request.
+    wide=iid_state(PIBasis(1,2),[0.7 0;0 0.3])
+    entropy=-(0.7log(0.7)+0.3log(0.3))
+    @test renyi_entropy(wide,1+1e-8)≈entropy/log(2) rtol=1e-7
+    @test von_neumann_entropy(wide;base=1+1e-8)≈entropy/log(1+1e-8)
 end

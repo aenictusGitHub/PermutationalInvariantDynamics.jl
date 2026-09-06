@@ -433,14 +433,14 @@ end
 
 function _saved_times(tspan,saveat;
         memory_budget=Inf)
-    t0,t1=tspan;t1>=t0||throw(ArgumentError("tspan must be ordered"))
+    t0,t1=_checked_evolution_tspan(tspan;ordered=true)
     if saveat===nothing
         T=promote_type(typeof(float(t0)),typeof(float(t1)))
         _guard_saved_time_storage(2,T,memory_budget)
         return T[float(t0),float(t1)]
     end
     if saveat isa Real
-        isfinite(saveat)&&saveat>0||throw(ArgumentError(
+        !(saveat isa Bool)&&isfinite(saveat)&&saveat>0||throw(ArgumentError(
             "saveat must be finite and positive"))
         grid=float(t0):float(saveat):float(t1)
         append_endpoint=isempty(grid)||last(grid)<t1
@@ -459,6 +459,8 @@ function _saved_times(tspan,saveat;
         end
     end
     ts=float.(collect(saveat));isempty(ts)&&throw(ArgumentError("saveat cannot be empty"))
+    all(t->t isa Real&&isfinite(t),ts)||throw(ArgumentError(
+        "saveat times must be finite real numbers"))
     first(ts)==t0&&last(ts)==t1||throw(ArgumentError("explicit saveat times must include both endpoints of tspan"))
     all(diff(ts).>=0)||throw(ArgumentError("saveat times must be nondecreasing"))
     ts
@@ -488,23 +490,23 @@ end
 
 function _highlevel_expv_setup(source,rho0::PIState,options)
     prepared=_evolution_liouvillian(source)
-    source_basis=_operator_basis(prepared)
-    source_basis===nothing||source_basis===rho0.basis||throw(ArgumentError(
-        "Liouvillian source and initial state use incompatible PI bases"))
+    current=_prepare_evolution_state(prepared,rho0)
     n=length(rho0.data)
-    size(prepared)==(n,n)||throw(DimensionMismatch(
-        "Liouvillian and initial state dimensions differ"))
-    T=_complex_float_type(_resource_scalar_type(prepared,rho0))
-    _check_liouvillian_source_precision(
-        prepared,T,"exponential-action state")
-    current=eltype(rho0.data)===T ? copy(rho0) :
-        PIState(rho0.basis,T.(rho0.data))
+    T=eltype(current.data)
     action_workspace=_linear_operator_workspace(prepared)
     operator=_HighLevelExpvOperator{T,typeof(prepared),
         typeof(action_workspace)}(prepared,action_workspace)
     workspace=KrylovExpvWorkspace(
         T,n,get(options,:krylovdim,30))
     current,operator,workspace
+end
+
+function _highlevel_dynamics_setup(prepared,rho0,algorithm,options)
+    if algorithm===:rk4
+        current=_prepare_evolution_state(prepared,rho0)
+        return current,nothing,EvolutionWorkspace(prepared,current)
+    end
+    _highlevel_expv_setup(prepared,rho0,options)
 end
 
 function _highlevel_expv_interval!(current::PIState,operator,
@@ -538,6 +540,10 @@ autonomous generator. Use [`ExpvAlgorithm`](@ref) to set its Krylov dimension,
 tolerances, and step controls. The result carries saved times and PI states and
 supports indexing and iteration. Use `dynamics_problem` directly for general
 adaptive SciML algorithms.
+The source and initial state must use the same exact PI basis when the source
+retains basis metadata. Initial coefficients are promoted to a common scalar
+type with the generator; a prepared matrix-free source must support that type.
+Time endpoints and saved times must be finite real numbers.
 
 Pass a named tuple, dictionary, pair collection, or one local matrix/
 `PIOperator` as `observables`. This returns a [`DynamicsStreamResult`](@ref).
@@ -546,6 +552,10 @@ state is propagated, and no sampled state history is constructed. A local
 `d`-by-`d` matrix denotes its collective sum. Non-Hermitian observables are
 accepted and retain complex expectation values. A state-free call without an
 observable is rejected because it would return no dynamics output.
+Like [`expectation`](@ref), streaming contracts `tr(O' * rho)` for the
+supplied operator `O`. To record `tr(A * rho)` for a non-Hermitian `A`, pass
+`adjoint(A)`. This differs from [`collective_expectation`](@ref), which
+contracts the supplied observable without taking its adjoint.
 
 Before compiling a raw model, this command accounts for the matrix-free plan,
 the selected RK4 or Krylov exponential workspace, task-owned source-action
@@ -566,6 +576,7 @@ function solve_dynamics(x,rho0::PIState,tspan;saveat=nothing,
     steps_per_interval>0||throw(ArgumentError("steps_per_interval must be positive"))
     requested_algorithm,algorithm_options=
         _dynamics_algorithm_options(algorithm)
+    _check_evolution_basis(x,rho0)
     ts=_saved_times(tspan,saveat;memory_budget)
     progress_context=_prepare_progress(:solve_dynamics;
         progress,on_event,cancellation_token)
@@ -617,12 +628,12 @@ function _solve_dynamics_output(::Nothing,source,rho0,ts;
     save_states||throw(ArgumentError(
         "save_states=false requires at least one observable"))
     total=max(length(ts)-1,0)
-    current=copy(rho0)
+    prepared=_evolution_liouvillian(source)
+    current,operator,workspace=_highlevel_dynamics_setup(
+        prepared,rho0,algorithm,algorithm_options)
     states=Vector{typeof(current)}(undef,length(ts))
     states[1]=copy(current)
     if algorithm===:rk4
-        prepared=_evolution_liouvillian(source)
-        workspace=EvolutionWorkspace(prepared,current)
         for time_index in 2:length(ts)
             ts[time_index]==ts[time_index-1]||evolve!(
                 current,prepared,current,
@@ -639,9 +650,6 @@ function _solve_dynamics_output(::Nothing,source,rho0,ts;
             end
         end
     else
-        current,operator,workspace=_highlevel_expv_setup(
-            source,rho0,algorithm_options)
-        states[1]=copy(current)
         for time_index in 2:length(ts)
             _highlevel_expv_interval!(current,operator,workspace,
                 ts[time_index]-ts[time_index-1],algorithm_options)
@@ -687,17 +695,11 @@ end
 function _solve_dynamics_output(observables,source,rho0,ts;
                                 steps_per_interval,parameters,save_states,
                                 algorithm,algorithm_options,progress_context)
+    prepared=_evolution_liouvillian(source)
+    current,operator,workspace=_highlevel_dynamics_setup(
+        prepared,rho0,algorithm,algorithm_options)
     ops=_prepare_streaming_observables(rho0.basis,observables;
                                        require_hermitian=false)
-    prepared=_evolution_liouvillian(source)
-    current,workspace,operator = if algorithm===:rk4
-        state=copy(rho0)
-        (state,EvolutionWorkspace(prepared,state),nothing)
-    else
-        state,expv_operator,expv_workspace=_highlevel_expv_setup(
-            prepared,rho0,algorithm_options)
-        (state,expv_workspace,expv_operator)
-    end
     states=save_states ? Vector{typeof(current)}(undef,length(ts)) : nothing
     save_states&&(states[1]=copy(current))
     buffers=_dynamics_observable_buffers(ops,current,length(ts))
@@ -734,7 +736,7 @@ end
 
 function _spectrum_algorithm(algorithm,target,n,nev)
     if algorithm isa HarmonicArnoldiAlgorithm
-        return (:harmonic,(;nev=algorithm.nev,krylovdim=algorithm.krylovdim,
+        return (:harmonic,(;nev=Int(nev),krylovdim=algorithm.krylovdim,
             thickdim=algorithm.thickdim,maxrestarts=algorithm.maxrestarts))
     elseif algorithm isa Symbol && algorithm!==:auto
         return (_canonical_spectrum_algorithm(algorithm),(;nev=Int(nev)))
@@ -758,10 +760,13 @@ before choosing dense or matrix-free Arnoldi. Explicit dense requests exceeding
 the structural bound throw before materialization. `memory_budget=Inf` opts out.
 An explicit `algorithm=:block_arnoldi` uses the thick-restarted batched solver;
 its `block_size` is part of the resource preflight.
+`HarmonicArnoldiAlgorithm` supplies `nev`, `krylovdim`, `thickdim`, and
+`maxrestarts`. Explicit keywords override those fields consistently in both
+resource preflight and execution. Without a typed algorithm, `nev` defaults to 6.
 With `return_info=true`, solver metadata and `resource_preflight` are returned
 without computing right eigenvectors unless `vectors=true`.
 """
-function liouvillian_spectrum(x;target=:largest_real,nev::Integer=6,
+function liouvillian_spectrum(x;target=:largest_real,nev::Union{Nothing,Integer}=nothing,
                               algorithm=:auto,vectors::Bool=false,
                               memory_budget=_DEFAULT_HIGHLEVEL_MEMORY_BUDGET,
                               return_info::Bool=false,kwargs...)
@@ -770,14 +775,16 @@ function liouvillian_spectrum(x;target=:largest_real,nev::Integer=6,
     algorithm isa Union{Symbol,AutoAlgorithm,HarmonicArnoldiAlgorithm}||
         throw(ArgumentError(
         "unsupported spectrum algorithm $(typeof(algorithm))"))
+    nev=nev===nothing ?
+        (algorithm isa HarmonicArnoldiAlgorithm ? algorithm.nev : 6) : nev
     nev isa Bool&&throw(ArgumentError("nev must be an integer, not a Bool"))
     nev>0||throw(ArgumentError("nev must be positive"))
     source=x;n=pi_dimension(source)
     n>0||throw(ArgumentError("the spectral source must have positive dimension"))
     requested_nev=if algorithm isa HarmonicArnoldiAlgorithm
-        algorithm.nev<=n||throw(ArgumentError(
-            "HarmonicArnoldiAlgorithm.nev exceeds the source dimension"))
-        algorithm.nev
+        nev<=n||throw(ArgumentError(
+            "requested harmonic-Arnoldi nev exceeds the source dimension"))
+        Int(nev)
     else
         Int(min(BigInt(n),BigInt(nev)))
     end
@@ -788,14 +795,16 @@ function liouvillian_spectrum(x;target=:largest_real,nev::Integer=6,
         _canonical_spectrum_algorithm(algorithm)
     default_krylovdim=Int(min(BigInt(typemax(Int)),
         max(BigInt(20),2BigInt(requested_nev)+4)))
-    report_krylovdim=algorithm isa HarmonicArnoldiAlgorithm ?
-        algorithm.krylovdim : get(kwargs,:krylovdim,default_krylovdim)
+    report_krylovdim=get(kwargs,:krylovdim,
+        algorithm isa HarmonicArnoldiAlgorithm ?
+            algorithm.krylovdim : default_krylovdim)
     report_krylovdim=_checked_algorithm_int(
         report_krylovdim,"krylovdim")
     report_block_size=_checked_algorithm_int(
         get(kwargs,:block_size,min(requested_nev,4)),"block_size")
     report_maxrestarts=_checked_algorithm_int(
-        get(kwargs,:maxrestarts,20),"maxrestarts";minimum=0)
+        get(kwargs,:maxrestarts,algorithm isa HarmonicArnoldiAlgorithm ?
+            algorithm.maxrestarts : 20),"maxrestarts";minimum=0)
     report_type=_resource_scalar_type(source,
         get(kwargs,:initial_vector,nothing),get(kwargs,:initial_subspace,nothing),
         get(kwargs,:operator_scale,nothing),get(kwargs,:shift,nothing))
@@ -806,7 +815,8 @@ function liouvillian_spectrum(x;target=:largest_real,nev::Integer=6,
     _enforce_memory_budget(preflight,"liouvillian_spectrum")
     selected_algorithm=auto_requested ? preflight.algorithm : report_algorithm
     method,options=_spectrum_algorithm(
-        selected_algorithm,target,n,requested_nev)
+        algorithm isa HarmonicArnoldiAlgorithm ? algorithm : selected_algorithm,
+        target,n,requested_nev)
     method===:jd&&target!==:near_zero&&throw(ArgumentError(
         "Jacobi--Davidson is a near-target solver; use target=:near_zero or call jacobi_davidson_spectrum with a numeric target"))
     sortby=target===:largest_real ? :real : :magnitude
@@ -1176,13 +1186,6 @@ function _recommended_geometry_policy(x,basis)
      kind=:onebody)
 end
 
-_resource_prepared_sparse_plan(::Any)=nothing
-_resource_prepared_sparse_plan(plan::LiouvillianPlan)=plan
-_resource_prepared_sparse_plan(model::CompiledPIModel)=model.plan
-_resource_prepared_sparse_plan(model::SpecializedPIModel)=model.plan
-_resource_prepared_sparse_plan(operator::MatrixFreeLiouvillian)=
-    operator.plan isa LiouvillianPlan ? operator.plan : nothing
-
 """
     recommend_solver(x; task=:steady_state, algorithm=:auto,
                      memory_budget=512*1024^2, krylovdim=30, recycle_dim=0,
@@ -1222,6 +1225,15 @@ per-action materialization transient and any first-use batched Schur buffer;
 `operator_action_per_worker_upper_bytes` reports that part separately.
 Prepared dynamics additionally includes the mutable propagation state and the
 fresh task-owned application workspace constructed by the propagator.
+
+Fixed built-in compiled models and scalar-rate specializations reuse prepared
+geometry and exact-support estimates. Their immutable plan storage is combined
+with live inspection of the original model, operator, and mutable workspace
+capacity. This retained-storage result is a conservative `:upper_bound` because
+shared references may be counted twice. Custom/callback sources and heap-backed
+scalar plans retain full live inspection; output and solver requests are always
+accounted anew. A cached bound that exceeds the budget is refined by measuring
+the complete source before rejection or automatic algorithm selection.
 """
 function recommend_solver(x;task=:steady_state,algorithm=:auto,
                           memory_budget=_DEFAULT_HIGHLEVEL_MEMORY_BUDGET,
@@ -1270,10 +1282,8 @@ function recommend_solver(x;task=:steady_state,algorithm=:auto,
     dense_bytes=_dense_matrix_structural_bytes(n,T;bigfloat_precision)
     dense_sparse_bytes=_sparse_csc_structural_upper_bytes(
         n,T;bigfloat_precision)
-    prepared_sparse_plan=_resource_prepared_sparse_plan(x)
-    prepared_sparse_bounds=prepared_sparse_plan===nothing ? nothing :
-        _performance_sparse_materialization_bounds(
-            prepared_sparse_plan;bigfloat_precision)
+    prepared_sparse_bounds=_performance_prepared_sparse_bounds(
+        x;bigfloat_precision)
     actual_sparse_bytes=_resource_sparse_operator_actual_bytes(x)
     sparse_bytes=actual_sparse_bytes!==nothing ? actual_sparse_bytes :
         prepared_sparse_bounds!==nothing ? prepared_sparse_bounds.operator_bytes :
@@ -1301,7 +1311,10 @@ function recommend_solver(x;task=:steady_state,algorithm=:auto,
     geometry_policy=_recommended_geometry_policy(x,basis)
     geometry_model=x isa PIModel ? x :
         x isa Union{CompiledPIModel,SpecializedPIModel} ? x.model : nothing
-    geometry = if geometry_model!==nothing
+    prepared_geometry=_performance_prepared_geometry(x;bigfloat_precision)
+    geometry = if prepared_geometry!==nothing
+        prepared_geometry
+    elseif geometry_model!==nothing
         _estimate_model_geometry(
             geometry_model;bigfloat_precision)
     elseif !geometry_policy.include
@@ -1323,7 +1336,8 @@ function recommend_solver(x;task=:steady_state,algorithm=:auto,
     observable_operator_bytes=big(observable_series)*big(n)*
         observable_scalar_bytes
     prepared_source=_resource_source_prepared(x)
-    input_retained=big(Base.summarysize(x))
+    input_storage=_performance_source_retained_storage(x)
+    input_retained=input_storage.bytes
     term_count=x isa PIModel ? length(x.terms) : 0
 
     algorithm isa Symbol||throw(ArgumentError(
@@ -1394,7 +1408,7 @@ function recommend_solver(x;task=:steady_state,algorithm=:auto,
             extra=chosen_backend===:sparse&&!_resource_source_has_sparse_operator(x) ?
                 sparse_bytes : big(0)
             provenance=iszero(extra)&&iszero(observable_operator_bytes) ?
-                :actual : :upper_bound
+                input_storage.provenance : :upper_bound
             _resource_component(input_retained+extra+observable_operator_bytes,
                 provenance;includes=(:prepared_source,:prepared_observables,
                                       :requested_operator_representation),
@@ -1474,6 +1488,19 @@ function recommend_solver(x;task=:steady_state,algorithm=:auto,
             includes=(:returned_states,:returned_values,:saved_times,
                       :observable_series),excludes=(:container_metadata,))
         peak_info=_resource_peak(setup,retained,solve,output)
+        if prepared_source&&input_storage.provenance===:upper_bound&&
+                !budget.disabled&&peak_info.known_peak_bytes>budget.bytes
+            # Fast prepared accounting deliberately allows duplicate immutable
+            # records. Refine near the budget boundary before rejecting a
+            # request or changing an automatic choice. This also keeps nested
+            # scan budgets, which use measured source storage, consistent.
+            actual_input=BigInt(Base.summarysize(x))
+            extra_retained=retained.bytes-input_retained
+            retained=_resource_component(actual_input+extra_retained,
+                iszero(extra_retained) ? :actual : :upper_bound;
+                includes=retained.includes,excludes=retained.excludes)
+            peak_info=_resource_peak(setup,retained,solve,output)
+        end
         (;setup,retained,solve,output,
           solver_workspace_single,operator_action_single,peak_info...)
     end

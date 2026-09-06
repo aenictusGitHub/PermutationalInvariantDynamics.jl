@@ -3,6 +3,126 @@
 # Keep this protocol deliberately private: public source types retain their
 # existing APIs, while downstream algorithms avoid duplicating type switches.
 
+# Reuse only immutable built-in preparation data. Mutable callback captures,
+# custom lowering, and heap-backed scalar payloads keep live inspection. The
+# original model and all compatibility scratch are measured on every call,
+# so growing batch buffers (or caller-owned input arrays) cannot go stale.
+_resource_plain_operator(::Any)=false
+_resource_plain_operator(operator::Union{Matrix,SparseMatrixCSC})=
+    isbitstype(eltype(operator))||eltype(operator)<:Union{BigInt,Rational{BigInt}}
+_resource_plain_operator(operator::Diagonal{T,Vector{T}}) where T=
+    _resource_plain_operator(operator.diag)
+_resource_plain_operator(operator::Vector)=
+    isbitstype(eltype(operator))||eltype(operator)<:Union{BigInt,Rational{BigInt}}
+_resource_plain_operator(operator::Union{Adjoint,Transpose})=
+    _resource_plain_operator(parent(operator))
+_resource_plain_operator(operator::PIOperator)=isbitstype(eltype(operator.data))
+_resource_plain_operator(operators::Tuple)=all(_resource_plain_operator,operators)
+_resource_fixed_scalar(value)=isbitstype(typeof(value))||
+    value isa Union{BigInt,Rational{BigInt}}
+function _resource_cacheable_term(term)
+    term isa Union{_BuiltinPITerm,_CorrelatedOneBodyJumps}||return false
+    term_isautonomous(term)&&_resource_plain_operator(term_operator(term))&&
+        _resource_fixed_scalar(term_rate(term))&&
+        (!(term isa _HamiltonianPITerm)||_resource_fixed_scalar(term_hbar(term)))
+end
+
+function _prepared_resource_metadata(model::PIModel,plan::LiouvillianPlan,
+        sparse_bounds,geometry_estimate;
+        bigfloat_precision::Integer=precision(BigFloat))
+    reusable=isbitstype(eltype(plan))&&plan.kernels!==nothing&&
+        all(_resource_cacheable_term,model.terms)
+    reusable||return nothing
+    geometry=geometry_estimate===nothing ?
+        _estimate_model_geometry(model;bigfloat_precision) : geometry_estimate
+    (;geometry=(retained_bytes=geometry.retained_bytes,
+                setup_bytes=geometry.setup_bytes),
+      bigfloat_precision,
+      inline_bytes=Base.summarysize((model,plan);exclude=Union{
+          AbstractArray,DataType,Core.TypeName,Core.MethodInstance}),
+      sparse_contributions=sparse_bounds.structured ?
+          sparse_bounds.contribution_upper_bound : nothing)
+end
+
+_prepared_resource_metadata(::Any)=nothing
+function _prepared_resource_metadata(
+        source::Union{CompiledPIModel,SpecializedPIModel})
+    get(source.estimates,:resource_metadata,nothing)
+end
+
+_resource_prepared_sparse_plan(::Any)=nothing
+_resource_prepared_sparse_plan(plan::LiouvillianPlan)=plan
+_resource_prepared_sparse_plan(model::CompiledPIModel)=model.plan
+_resource_prepared_sparse_plan(model::SpecializedPIModel)=model.plan
+_resource_prepared_sparse_plan(operator::MatrixFreeLiouvillian)=
+    operator.plan isa LiouvillianPlan ? operator.plan : nothing
+
+function _performance_prepared_sparse_bounds(source;
+        bigfloat_precision::Integer=precision(BigFloat))
+    plan=_resource_prepared_sparse_plan(source)
+    plan===nothing&&return nothing
+    metadata=_prepared_resource_metadata(source)
+    metadata===nothing ? _performance_sparse_materialization_bounds(
+        plan;bigfloat_precision) : _performance_sparse_materialization_bounds(
+        length(plan.basis),eltype(plan),metadata.sparse_contributions;
+        bigfloat_precision)
+end
+
+function _performance_prepared_geometry(source;
+        bigfloat_precision::Integer=precision(BigFloat))
+    metadata=_prepared_resource_metadata(source)
+    metadata!==nothing&&metadata.bigfloat_precision==bigfloat_precision ?
+        metadata.geometry : nothing
+end
+
+_resource_operator_payload(operator)=operator
+_resource_operator_payload(operator::PIOperator)=operator.data
+_resource_operator_payload(operator::Union{Adjoint,Transpose})=
+    _resource_operator_payload(parent(operator))
+_resource_operator_payload(operators::Tuple)=map(_resource_operator_payload,operators)
+function _resource_term_payload(term::_BuiltinPITerm)
+    (_resource_operator_payload(term_operator(term)),term_rate(term),
+     term isa _HamiltonianPITerm ? term_hbar(term) : nothing)
+end
+_resource_term_payload(term::_CorrelatedOneBodyJumps)=
+    (_resource_operator_payload(term.operators),term.kossakowski,
+     term.factor,term.rate,term.atol,term.rtol)
+_resource_model_payload(model)=map(_resource_term_payload,model.terms)
+_resource_compiled_operator_payload(operator::SparseMatrixCSC)=operator
+function _resource_compiled_operator_payload(operator::MatrixFreeLiouvillian)
+    work=operator.workspace
+    (work.blocks,work.kernel_workspaces,work.batch,operator.tracevec,operator.lock)
+end
+_resource_live_payload(source::CompiledPIModel)=
+    (source.estimates,_resource_model_payload(source.model),
+     _resource_compiled_operator_payload(source.operator))
+_resource_live_payload(source::SpecializedPIModel)=
+    (source.estimates,source.rates,source.family.estimates,
+     source.family.rate_indices,source.family.default_rates,
+     _resource_model_payload(source.model),
+     _resource_model_payload(source.family.model),
+     _resource_compiled_operator_payload(source.operator))
+
+function _performance_source_retained_storage(source)
+    metadata=_prepared_resource_metadata(source)
+    metadata===nothing&&return (bytes=BigInt(Base.summarysize(source)),
+                                provenance=:actual)
+    # Traverse only the live payload, not an entire compiled wrapper with
+    # type exclusions: Julia versions flatten immutable fields differently,
+    # so excluding a plan type need not exclude its underlying arrays. Shared
+    # references with the cached graph can be counted twice; this is an upper
+    # bound, not an exact-size claim. Batch capacity is always inspected live.
+    live_bytes=Base.summarysize(_resource_live_payload(source))
+    # Julia 1.10 can box the same immutable plan/basis separately in the
+    # source, family, and four compatibility callbacks. Their shared arrays
+    # are already counted, but their inline records need an allowance. Sixteen
+    # copies cover these fixed wrapper paths, including PI operators retained
+    # inline in the original model. Do not cache or approximate mutable buffers.
+    inline_bytes=BigInt(sizeof(source))+16BigInt(metadata.inline_bytes)
+    (;bytes=BigInt(source.estimates.plan_bytes)+live_bytes+inline_bytes,
+      provenance=:upper_bound)
+end
+
 # Physical traces are sparse in PI coefficient coordinates: only the diagonal
 # of each Schur block contributes.  Keep that structure through prepared
 # matrix-free workflows instead of retaining a coordinate-sized dense vector.

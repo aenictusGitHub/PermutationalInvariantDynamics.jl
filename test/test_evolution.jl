@@ -236,3 +236,51 @@ end
     @test from_model[end].data≈from_compiled[end].data atol=3e-12
     @test isempty(Test.detect_ambiguities(PID;recursive=true))
 end
+
+@testset "evolution validates representation and storage before mutation" begin
+    basis=PIBasis(1,2);spin=spin_matrices()
+    model=PIModel(basis,(LocalJump(spin.jm;rate=0.7),))
+    rho32=computational_product_state(basis,2;T=Float32)
+    for backend in (:sparse,:matrixfree)
+        source=compile(model;backend)
+        dest=copy(rho32)
+        @test_throws ArgumentError evolve!(dest,source,rho32,(0.0,0.1))
+        @test dest.data==rho32.data
+        @test_throws ArgumentError EvolutionWorkspace(source,rho32)
+        wider=PIState(basis,ComplexF64.(rho32.data))
+        @test_throws ArgumentError evolve!(wider,source,rho32,(0.0,0.1);
+            workspace=EvolutionWorkspace(rho32))
+        evolve!(wider,source,rho32,(0.0,0.1))
+        @test collective_expectation(wider,spin.jp*spin.jm)≈exp(-0.07) atol=2e-10
+        @test eltype(time_evolve(source,rho32,(0.0,0.1)).data)===ComplexF64
+        @test eltype(last(time_evolution(source,rho32,[0.0,0.1])).data)===ComplexF64
+        problem=dynamics_problem(source,rho32,(0.0,0.1))
+        @test eltype(problem.u0)===ComplexF64
+        @test problem.u0!==rho32.data
+        derivative=similar(problem.u0)
+        problem.f(derivative,problem.u0,nothing,0.0)
+        @test derivative≈source*ComplexF64.(rho32.data)
+    end
+
+    model2=PIModel(PIBasis(2,2),(LocalJump(spin.jm),))
+    wrong=PIBasis(4,2;sectors=[(3,1),(2,2)])
+    other=sector_maximally_mixed_state(wrong,(3,1))
+    for source in (model2,compile(model2;backend=:sparse),compile(model2;backend=:matrixfree))
+        @test_throws ArgumentError evolve!(copy(other),source,other,(0.0,0.1))
+        @test_throws ArgumentError time_evolution(source,other,[0.0])
+        @test_throws ArgumentError dynamics_problem(source,other,(0.0,0.1))
+    end
+    source=compile(model);rho=time_evolve(source,rho32,(0.0,0.0))
+    for tspan in ((0.0,Inf),(NaN,1.0),(false,1.0),(0.0,1im),
+                  (-floatmax(Float64),floatmax(Float64)))
+        dest=copy(rho)
+        @test_throws ArgumentError evolve!(dest,source,rho,tspan)
+        @test dest.data==rho.data
+    end
+    @test_throws ArgumentError dynamics_problem(source,rho,(0.0,Inf))
+    @test_throws ArgumentError time_evolution(source,rho,[Inf])
+    # Backward propagation remains an explicit low-level capability.
+    forward=time_evolve(source,rho,(0.0,0.1))
+    backward=time_evolve(source,forward,(0.1,0.0))
+    @test backward.data≈rho.data atol=2e-12
+end

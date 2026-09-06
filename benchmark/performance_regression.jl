@@ -6,6 +6,32 @@ using SparseArrays
 # Stable regression gates deliberately avoid wall-clock thresholds. They guard
 # allocation behavior, backend equivalence, and shared-operator correctness;
 # benchmark/performance_audit.jl remains the human-readable timing report.
+support_probe=ones(ComplexF64,129,129)
+support_count=PermutationalInvariantDynamics._performance_matrix_nonzeros
+support_count(support_probe)
+support_count_alloc=@allocated support_count(support_probe)
+@assert support_count(support_probe)==big(length(support_probe))
+@assert support_count_alloc<=1024 "dense support counting allocated $support_count_alloc bytes"
+
+preflight_basis=PIBasis(20,2)
+preflight_spin=spin_matrices()
+preflight_source=compile(PIModel(preflight_basis,(
+    CollectiveHamiltonian(preflight_spin.jx;rate=0.15),
+    LocalJump(preflight_spin.jm;rate=0.7),
+    LocalJump(preflight_spin.jp;rate=0.2)));backend=:matrixfree)
+recommend_solver(preflight_source;task=:dynamics,algorithm=:rk4)
+preflight_alloc=@allocated recommend_solver(
+    preflight_source;task=:dynamics,algorithm=:rk4)
+@assert preflight_alloc<=256*1024 "prepared resource preflight allocated $preflight_alloc bytes"
+
+entropy_basis=PIBasis(128,2;sectors=[(128,0)])
+entropy_state=symmetric_maximally_mixed_state(entropy_basis)
+entropy_value=von_neumann_entropy(entropy_state)
+entropy_alloc=@allocated von_neumann_entropy(entropy_state)
+@assert entropy_value≈log2(129) atol=2e-11
+@assert entropy_alloc<=2400*1024 "validated entropy allocated $entropy_alloc bytes"
+println("Preparation/analysis gates: support_count_alloc=$support_count_alloc, preflight_alloc=$preflight_alloc, entropy_alloc=$entropy_alloc")
+
 b=PIBasis(6,2)
 sm=ComplexF64[0 1;0 0]
 sx=ComplexF64[0 1;1 0]

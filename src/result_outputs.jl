@@ -114,6 +114,10 @@ The exact fields depend on the result type; `result_type` and
 """
 summarize(result)=_base_result_summary(result)
 
+_result_basis_summary(basis::PIBasis)=(N=basis.N,d=basis.d)
+_result_basis_summary(basis::CompositePIBasis)=(
+    factor_count=length(basis.factors),factor_dimensions=basis.dimensions)
+
 function summarize(state::PIState)
     merge(_base_result_summary(state),(
         result_type="PIState",N=state.basis.N,d=state.basis.d,
@@ -121,16 +125,22 @@ function summarize(state::PIState)
         trace=trace(state)))
 end
 
+function summarize(state::CompositePIState)
+    merge(_base_result_summary(state),_result_basis_summary(state.basis),(
+        result_type="CompositePIState",pi_dimension=length(state.data),
+        trace=trace(state)))
+end
+
 function summarize(result::SteadyStateResult)
     state=result.state
-    merge(_base_result_summary(result),(
+    merge(_base_result_summary(result),(;
         result_type="SteadyStateResult",
         algorithm=_result_algorithm_name(result),
         method=_result_info_property(result,:method),
         converged=_result_converged(result),
         residual=_result_info_property(result,:residual),
         trace_error=_result_info_property(result,:trace_error),
-        N=state.basis.N,d=state.basis.d,
+        _result_basis_summary(state.basis)...,
         pi_dimension=length(state.data)))
 end
 
@@ -313,7 +323,7 @@ function _result_table(columns::NamedTuple,result)
     ResultTable(columns;metadata=summarize(result))
 end
 
-function result_table(state::PIState;include_output::Bool=false)
+function result_table(state::Union{PIState,CompositePIState};include_output::Bool=false)
     summary=summarize(state)
     names=propertynames(summary)
     columns=NamedTuple{names}(Tuple([getproperty(summary,name)] for name in names))
@@ -594,7 +604,7 @@ end
 function _result_state_records(result)
     NamedTuple[]
 end
-_result_state_records(state::PIState)=[
+_result_state_records(state::Union{PIState,CompositePIState})=[
     (label="state",time=nothing,state=state)]
 _result_state_records(result::SteadyStateResult)=[
     (label="steady_state",time=nothing,state=result.state)]
@@ -709,6 +719,9 @@ Export a supported result through one consistent interface. `.csv` and
 versioned directory containing `metadata.tsv`, `table.tsv`, and exact portable
 PI-state checkpoints when the result directly owns PI states. Existing
 `.pidrun` paths are never replaced.
+Composite states support compact CSV/TSV output and Julia-native JLD2 output.
+The `.pidrun` and HDF5 state-checkpoint schemas do not yet support composite
+bases; those formats reject composite state payloads before creating files.
 
 Loading JLD2 or HDF5 activates their optional backends. JLD2 stores the Julia
 result plus its normalized summary and table; HDF5 stores the normalized
@@ -723,6 +736,12 @@ format can use those nested entries.
 function save_result(path,result;format=:auto,include_output::Bool=false,
                      metadata=Dict())
     selected=_result_format(path,format)
+    if selected in (:pidrun,:hdf5)
+        any(record->record.state isa CompositePIState,
+            _result_state_records(result))&&throw(ArgumentError(
+                "$selected result archives do not support composite-state checkpoints; " *
+                "use CSV/TSV for compact output or JLD2 for Julia-native storage"))
+    end
     table=result_table(result;include_output)
     summary=summarize(result)
     normalized_metadata=_result_metadata(metadata)

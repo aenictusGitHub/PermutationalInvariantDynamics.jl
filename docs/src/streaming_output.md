@@ -25,6 +25,20 @@ sums. With `save_states=false`, one mutable PI state is propagated and no
 sampled state vector is copied into the result. Set `save_states=true` to
 retain states and expectations in the same run.
 
+Deterministic streaming uses the Hilbert–Schmidt convention of `expectation`:
+the supplied operator `O` records $\mathrm{tr}(O^\dagger\rho)$. Hermitian
+observables need no adjustment. For a non-Hermitian observable `A`, pass its
+adjoint to obtain $\mathrm{tr}(A\rho)$, matching `collective_expectation`:
+
+```julia
+lowering = spin_matrices().jm
+coherences = solve_dynamics(prepared, rho0, (0.0, 1.0);
+    observables=(lowering=adjoint(lowering),), save_states=false)
+```
+
+The same convention applies to `PIStudy(...; task=:dynamics, observables=...)`.
+Non-Hermitian output retains its complex values.
+
 ## Trajectory ensembles
 
 For trajectories, the corresponding call returns online Monte Carlo means,

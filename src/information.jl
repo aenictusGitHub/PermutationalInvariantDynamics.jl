@@ -1,14 +1,54 @@
-"""Return the von Neumann entropy of a PI state, with logarithm base `base`."""
+function _entropy_parameter(::Type{T},value,label;exclude_one::Bool=false) where T
+    isfinite(value)&&value>0&&(!exclude_one||value!=1)||throw(ArgumentError(
+        "$label must be finite and positive" * (exclude_one ? " and different from one" : "")))
+    converted=T(value)
+    isfinite(converted)&&converted>0&&(!exclude_one||converted!=1)||throw(ArgumentError(
+        "$label is outside its valid domain after conversion to $T; use a state with wider scalar precision"))
+    converted
+end
+
+# Entropy already checks every multiplicity-weighted sector spectrum. Since
+# sqrt(f) >= 1, its sector-local eigenvalue tolerance implies the global
+# coefficient-space spectral positivity tolerance used by validate_state.
+# Keep trace/Hermiticity validation, but do not diagonalize those same sectors
+# twice. The large-block/generic shifted-Cholesky path uses a different scale
+# and remains an independent check. Nothing is cached across mutable states.
+function _validate_entropy_state(rho::PIState;atol,rtol)
+    spectral_validation=_automatic_positivity_method(rho)===:eigen
+    validate_state(rho;positive=!spectral_validation,atol,rtol)
+    !spectral_validation
+end
+
+function _validate_entropy_roundoff(rho,E,positive_checked;atol,rtol)
+    positive_checked&&return true
+    # Rescaling before diagonalization can change the last few eigenvalue
+    # bits. Near the acceptance boundary (including zero tolerances), retain
+    # the original coefficient-space check once per call. Ordinary spectra
+    # have enough margin to use the implication above without a second solve.
+    if minimum(E.values)+E.tolerance<=2E.zero_tolerance
+        validate_state(rho;atol,rtol)
+        return true
+    end
+    false
+end
+
+"""
+Return the von Neumann entropy of a PI state, with logarithm base `base`.
+The base must remain finite, positive, and different from one in the state's
+scalar precision; otherwise use a state with wider scalar precision.
+"""
 function von_neumann_entropy(rho::PIState;base::Real=2,
                             atol::Real=_analysis_atol(rho),
                             rtol::Real=_state_rtol(rho))
-    base>0&&base!=1||throw(ArgumentError("invalid logarithm base"))
-    validate_state(rho;atol=atol,rtol=rtol)
     Rtype=_real_float_type(eltype(rho.data))
+    baseR=_entropy_parameter(Rtype,base,"logarithm base";exclude_one=true)
+    positive_checked=_validate_entropy_state(rho;atol,rtol)
     s=zero(Rtype)
     for p in rho.basis.sectors
         E=_weighted_sector_eigvals(rho,p;atol=atol,rtol=rtol,
             operation="von Neumann entropy")
+        positive_checked=_validate_entropy_roundoff(
+            rho,E,positive_checked;atol,rtol)
         probability=zero(Rtype)
         for q in E.values
             q>zero(q)||(continue)
@@ -17,24 +57,32 @@ function von_neumann_entropy(rho::PIState;base::Real=2,
         end
         s+=probability*_log_schur_multiplicity(Rtype,p)
     end
-    s/log(Rtype(base))
+    s/log(baseR)
 end
 
-"""Return the order-`alpha` Rényi entropy of a PI state."""
+"""
+Return the order-`alpha` Rényi entropy of a PI state. Positive orders and
+`alpha=Inf` are supported; exactly `alpha=1` uses von Neumann entropy.
+A finite nonunit order must remain finite, positive, and different from one
+in the state's scalar precision, as must the logarithm base.
+"""
 function renyi_entropy(rho::PIState,alpha::Real;base::Real=2,
                        atol::Real=_analysis_atol(rho),
                        rtol::Real=_state_rtol(rho))
     alpha>0||throw(ArgumentError("Rényi order must be positive"))
     alpha==1&&return von_neumann_entropy(rho;base=base,atol=atol,rtol=rtol)
-    base>0&&base!=1||throw(ArgumentError("invalid logarithm base"))
-    validate_state(rho;atol=atol,rtol=rtol)
     Rtype=_real_float_type(eltype(rho.data))
-    base_log=log(Rtype(base))
+    base_log=log(_entropy_parameter(Rtype,base,"logarithm base";exclude_one=true))
+    alphaR=isinf(alpha) ? Rtype(Inf) :
+        _entropy_parameter(Rtype,alpha,"Rényi order";exclude_one=true)
+    positive_checked=_validate_entropy_state(rho;atol,rtol)
     if isinf(alpha)
         maximum_log_eigenvalue=Rtype(-Inf)
         for p in rho.basis.sectors
             E=_weighted_sector_eigvals(rho,p;atol=atol,rtol=rtol,
                 operation="infinite-order Rényi entropy")
+            positive_checked=_validate_entropy_roundoff(
+                rho,E,positive_checked;atol,rtol)
             logf=_log_schur_multiplicity(Rtype,p)
             for q in E.values
                 q>zero(q)&&(maximum_log_eigenvalue=max(maximum_log_eigenvalue,
@@ -45,9 +93,6 @@ function renyi_entropy(rho::PIState,alpha::Real;base::Real=2,
             "Rényi entropy found no positive density eigenvalue"))
         return -maximum_log_eigenvalue/base_log
     end
-    alphaR=Rtype(alpha)
-    isfinite(alphaR)||throw(ArgumentError(
-        "Rényi order is not representable in $Rtype"))
     # log Tr(rho^alpha) is accumulated with streaming log-sum-exp.  This
     # avoids both f^(1-alpha) overflow and the corresponding underflow of
     # physical block eigenvalues.
@@ -56,6 +101,8 @@ function renyi_entropy(rho::PIState,alpha::Real;base::Real=2,
     for p in rho.basis.sectors
         E=_weighted_sector_eigvals(rho,p;atol=atol,rtol=rtol,
             operation="Rényi entropy")
+        positive_checked=_validate_entropy_roundoff(
+            rho,E,positive_checked;atol,rtol)
         logf=_log_schur_multiplicity(Rtype,p)
         for q in E.values
             q>zero(q)||continue

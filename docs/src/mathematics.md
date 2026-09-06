@@ -481,6 +481,16 @@ Numerical-rank decisions are relative to each sector's own weighted spectrum,
 so a small but physically relevant sector is not discarded by a tolerance set
 by another sector.
 
+For ordinary Float32/Float64 states using spectral positivity validation,
+von Neumann and Rényi entropy use the same sector eigenvalues to certify
+positivity and evaluate the entropy. Trace and Hermiticity are still checked
+on every call. The multiplicity-weighted sector tolerance also implies the
+global coefficient-space spectral tolerance because `sqrt(f^nu) >= 1`.
+Spectra near the floating-point acceptance boundary retain the original
+coefficient-space positivity check. Large-block and generic-scalar Cholesky
+validation retains its separate check and its original norm-based tolerance.
+No spectrum is cached across state mutations.
+
 Every density spectrum used by these functions is first checked for positivity
 with the requested `atol` and `rtol`. Accepted nonpositive roundoff values may
 then be treated as numerical zeros only inside a square root, logarithm, or

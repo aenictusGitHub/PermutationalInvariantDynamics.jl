@@ -283,9 +283,11 @@
     @test_throws ArgumentError HarmonicArnoldiAlgorithm(
         nev=big(typemax(Int))+1)
 
+    # A zero budget forces refinement to live source storage, so the later
+    # precision comparison cannot spend slack from a conservative estimate.
     narrow_dynamics=recommend_solver(prepared;task=:dynamics,
         algorithm=:rk4,samples=5,saved_states=5,observable_series=1,
-        observable_type=ComplexF64,time_type=Float64,memory_budget=Inf)
+        observable_type=ComplexF64,time_type=Float64,memory_budget=0)
     wide_dynamics=recommend_solver(prepared;task=:dynamics,
         algorithm=:rk4,samples=5,saved_states=5,observable_series=1,
         observable_type=Complex{BigFloat},time_type=BigFloat,
@@ -307,10 +309,18 @@
     @test expv_recommendation.selected_solver_bytes==
           expected_expv_bytes+expv_recommendation.state_bytes+
           expv_recommendation.operator_action_per_worker_upper_bytes
+    # Prepared storage is initially a conservative bound. Tight budgets
+    # refine it to the measured source before accepting or rejecting a solve.
+    measured_expv_peak=expv_recommendation.known_peak_bytes-
+        expv_recommendation.retained_bytes+Base.summarysize(prepared)
+    @test length(solve_dynamics(
+        prepared,rho0,(0.0,0.2);saveat=sol.times,
+        algorithm=ExpvAlgorithm(krylovdim=8),
+        memory_budget=measured_expv_peak))==length(sol.times)
     @test_throws ArgumentError solve_dynamics(
         prepared,rho0,(0.0,0.2);saveat=sol.times,
         algorithm=ExpvAlgorithm(krylovdim=8),
-        memory_budget=expv_recommendation.known_peak_bytes-1)
+        memory_budget=measured_expv_peak-1)
     wide_observable=Complex{BigFloat}[1 0;0 -1]
     wide_times=BigFloat[0,0.05,0.1,0.15,0.2]
     @test_throws ArgumentError solve_dynamics(
@@ -367,4 +377,100 @@
     badH=PIOperator(b)
     coefficient_block(badH,b.sectors[1])[1,2]=1
     @test_throws ArgumentError thermal_state(badH,1.0)
+end
+
+@testset "dynamics basis, precision, and time contracts" begin
+    spin=spin_matrices()
+    basis=PIBasis(1,2)
+    model=PIModel(basis,(LocalJump(spin.jm;rate=0.7),))
+    rho32=computational_product_state(basis,2;T=Float32)
+    original=copy(rho32.data)
+    number=spin.jp*spin.jm
+    for backend in (:sparse,:matrixfree), algorithm in (:rk4,:expv),
+            streamed in (false,true)
+        prepared=compile(model;backend)
+        result=solve_dynamics(prepared,rho32,(0.0,0.1);algorithm,
+            observables=streamed ? (excited=number,) : nothing)
+        @test all(state->eltype(state.data)===ComplexF64,result.states)
+        @test result[1].data==original
+        @test collective_expectation(result[end],number)≈exp(-0.07) atol=2e-10
+        @test trace(result[end])≈1 atol=2e-10
+        if streamed
+            @test result.observables[:excited][end]≈exp(-0.07) atol=2e-10
+            statefree=solve_dynamics(prepared,rho32,(0.0,0.1);algorithm,
+                observables=(excited=number,),save_states=false)
+            @test statefree.states===nothing
+            @test statefree.observables[:excited]≈result.observables[:excited]
+        end
+    end
+    @test rho32.data==original
+
+    wrong=PIBasis(4,2;sectors=[(3,1),(2,2)])
+    other=sector_maximally_mixed_state(wrong,(3,1))
+    model2=PIModel(PIBasis(2,2),(LocalJump(spin.jm),))
+    @test length(model2.basis)==length(wrong)
+    for source in (model2,compile(model2;backend=:sparse),
+                   compile(model2;backend=:matrixfree)),
+            algorithm in (:rk4,:expv), observables in (nothing,(excited=number,))
+        @test_throws ArgumentError solve_dynamics(
+            source,other,(0.0,0.1);algorithm,observables)
+        @test_throws ArgumentError solve_dynamics(
+            source,other,(0.0,0.0);algorithm,observables)
+    end
+
+    tiny=PIModel(basis,(LocalHamiltonian(spin.jx;rate=1e-50),))
+    for backend in (:sparse,:matrixfree)
+        result=solve_dynamics(compile(tiny;backend),rho32,(0.0,1.0))
+        @test maximum(abs,result[end].data-original)≈5e-51 rtol=1e-12
+    end
+    prepared=compile(model)
+    for tspan in ((0.0,Inf),(-Inf,0.0),(0.0,NaN),(0.0,1im),
+                  (false,1.0),(0.0,0.5,1.0))
+        @test_throws ArgumentError solve_dynamics(prepared,rho32,tspan)
+    end
+    for saveat in ([0.0,Inf,1.0],[0.0,NaN,1.0],[0.0,1im,1.0],true)
+        @test_throws ArgumentError solve_dynamics(
+            prepared,rho32,(0.0,1.0);saveat)
+    end
+
+    # Streaming intentionally follows expectation's Hilbert–Schmidt pairing.
+    coherent=iid_pure_state(basis,ComplexF64[1,im]/sqrt(2))
+    values=solve_dynamics(prepared,coherent,(0.0,0.0);
+        observables=(physical=adjoint(spin.jm),dual=spin.jm,number=number))
+    @test values.observables[:physical][1]≈collective_expectation(coherent,spin.jm)
+    @test values.observables[:dual][1]≈conj(values.observables[:physical][1])
+    @test values.observables[:number][1]≈collective_expectation(coherent,number)
+end
+
+@testset "typed harmonic-Arnoldi controls survive high-level dispatch" begin
+    spin=spin_matrices();basis=PIBasis(4,2)
+    model=PIModel(basis,(LocalHamiltonian(spin.jx;rate=0.3),
+        LocalJump(spin.jm;rate=0.7),LocalJump(spin.jp;rate=0.2)))
+    prepared=compile(model;backend=:matrixfree)
+    algorithm=HarmonicArnoldiAlgorithm(nev=2,krylovdim=8,thickdim=2,maxrestarts=0)
+    typed=liouvillian_spectrum(prepared;algorithm,return_info=true,
+        require_convergence=false,rng=MersenneTwister(91))
+    explicit=liouvillian_spectrum(prepared;algorithm=:harmonic,
+        nev=2,krylovdim=8,thickdim=2,maxrestarts=0,return_info=true,
+        require_convergence=false,rng=MersenneTwister(91))
+    @test typed.info.restarts==explicit.info.restarts==0
+    @test typed.values≈explicit.values
+    @test typed.info.resource_preflight.known_peak_bytes==
+          explicit.info.resource_preflight.known_peak_bytes
+    defaults=HarmonicArnoldiAlgorithm(nev=3,krylovdim=10,thickdim=4,maxrestarts=2)
+    overridden=liouvillian_spectrum(prepared;algorithm=defaults,
+        nev=2,krylovdim=8,thickdim=2,maxrestarts=0,return_info=true,
+        require_convergence=false,rng=MersenneTwister(91))
+    @test overridden.info.restarts==0
+    @test length(overridden.values)==2
+    @test overridden.values≈explicit.values
+    @test overridden.info.resource_preflight.known_peak_bytes==
+          explicit.info.resource_preflight.known_peak_bytes
+
+    study=PIStudy(prepared;task=:spectrum,algorithm=defaults,
+        nev=2,krylovdim=8,thickdim=2,maxrestarts=0)
+    reference=PIStudy(prepared;task=:spectrum,algorithm=:harmonic,
+        nev=2,krylovdim=8,thickdim=2,maxrestarts=0)
+    @test check(study).recommendation.known_peak_bytes==
+          check(reference).recommendation.known_peak_bytes
 end

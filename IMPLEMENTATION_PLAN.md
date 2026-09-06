@@ -68,5 +68,7 @@ generator.
   implicit-QR Arnoldi and hard-locking preconditioned Jacobi--Davidson paths.
 - Matrix-free PSD oracles beyond the implemented shifted-Cholesky certificate
   for a single extremely large Schur block.
-- Broader scalar-generic representation geometry beyond the current
-  Float64-based CG convention.
+- Wider-precision alternatives for remaining LAPACK/SPQR-dependent analysis
+  and geometry backends. Default uncached CG queries use Float64; explicit
+  `cgc(...; T=...)`, typed geometries, and coefficient caches already support
+  checked wider precision while preserving the same real phase convention.

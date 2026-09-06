@@ -3729,11 +3729,9 @@ end
 # zeros are not charged as nonzeros because every sparse materializer below
 # applies the same exact `iszero` rule; no numerical tolerance is involved.
 function _performance_matrix_nonzeros(matrix)
-    count=big(0)
-    @inbounds for value in matrix
-        iszero(value)||(count+=1)
-    end
-    count
+    # The count fits the stored array's Int length. Convert once before any
+    # squared/product bound, rather than allocating a BigInt per nonzero.
+    BigInt(count(!iszero,matrix))
 end
 # Iterating an `AbstractArray` visits every logical entry.  Avoid turning this
 # setup estimate into an O(m^2) scan when the symmetric collective fast path
@@ -3835,13 +3833,20 @@ The prepared plan itself is not included in either quantity.
 """
 function _performance_sparse_materialization_bounds(plan::LiouvillianPlan;
         bigfloat_precision::Integer=precision(BigFloat))
-    n=BigInt(length(plan.basis));dense_entries=n^2
     contributions=plan.kernels===nothing ? nothing :
         _performance_sparse_plan_contributions(plan.kernels)
+    _performance_sparse_materialization_bounds(
+        length(plan.basis),plan.Ttype,contributions;bigfloat_precision)
+end
+
+function _performance_sparse_materialization_bounds(
+        dimension::Integer,::Type{T},contributions;
+        bigfloat_precision::Integer=precision(BigFloat)) where T
+    n=BigInt(dimension);dense_entries=n^2
     structured=contributions!==nothing
     contribution_upper=structured ? contributions : dense_entries
     retained_entries=min(contribution_upper,dense_entries)
-    scalar_bytes=_scalar_retained_bytes(plan.Ttype;bigfloat_precision)
+    scalar_bytes=_scalar_retained_bytes(T;bigfloat_precision)
     int_bytes=BigInt(sizeof(Int));column_bytes=(n+1)*int_bytes
     operator_bytes=retained_entries*(scalar_bytes+int_bytes)+column_bytes
     assembly_bytes=contribution_upper*(scalar_bytes+2int_bytes)+column_bytes
@@ -3977,7 +3982,7 @@ end
 function _model_preparation_bytes(model::PIModel;
         linear_arrays::Integer=16,
         bigfloat_precision::Integer=precision(BigFloat),
-        coefficient_cache=nothing)
+        coefficient_cache=nothing,geometry_estimate=nothing)
     n=length(model.basis);R=_model_geometry_type(model)
     P=R
     for term in model.terms
@@ -3987,8 +3992,8 @@ function _model_preparation_bytes(model::PIModel;
     end
     T=Complex{P}
     requirements=_model_onebox_requirements(model,R)
-    geometry=_estimate_model_geometry(
-        model;bigfloat_precision).setup_bytes
+    geometry=(geometry_estimate===nothing ? _estimate_model_geometry(
+        model;bigfloat_precision) : geometry_estimate).setup_bytes
     automatic_coefficients=coefficient_cache===nothing&&
         requirements.geometry_families>1&&_small_onebox_autocache(model.basis) ?
         _estimate_onebox_cache_upper(model.basis,requirements.required_depth,R;
@@ -4000,9 +4005,9 @@ end
 function _require_model_preparation_budget(model::PIModel,memory_budget;
         operation::AbstractString="PI model preparation",
         bigfloat_precision::Integer=precision(BigFloat),
-        coefficient_cache=nothing)
+        coefficient_cache=nothing,geometry_estimate=nothing)
     estimate=_model_preparation_bytes(
-        model;bigfloat_precision,coefficient_cache)
+        model;bigfloat_precision,coefficient_cache,geometry_estimate)
     _require_performance_budget(operation,estimate,memory_budget;guidance=
         "Reduce the retained basis/model size or increase the budget.")
 end
@@ -4041,9 +4046,10 @@ function compile(model::PIModel;backend=:auto,memory_budget=512*1024^2,
                  bigfloat_precision::Integer=precision(BigFloat),
                  coefficient_cache=nothing)
     backend in (:auto,:sparse,:matrixfree)||throw(ArgumentError("backend must be :auto, :sparse, or :matrixfree"))
+    geometry_estimate=_estimate_model_geometry(model;bigfloat_precision)
     _require_model_preparation_budget(model,memory_budget;
         operation="compiled PI model preparation",bigfloat_precision,
-        coefficient_cache)
+        coefficient_cache,geometry_estimate)
     budget=_memory_budget_bytes(memory_budget)
     plan=LiouvillianPlan(model;coefficient_cache)
     n=length(model.basis)
@@ -4093,7 +4099,10 @@ function compile(model::PIModel;backend=:auto,memory_budget=512*1024^2,
                matrixfree_workspace_upper_bound=Int(min(
                    matrixfree_workspace_big,BigInt(typemax(Int)))),
                matrixfree_compiled_estimate=matrixfree_total,memory_budget=budget,
-               requested_backend=backend,chosen_backend=chosen)
+               requested_backend=backend,chosen_backend=chosen,
+               resource_metadata=_prepared_resource_metadata(
+                   model,plan,sparse_bounds,geometry_estimate;
+                   bigfloat_precision))
     CompiledPIModel(model,plan,operator,chosen,estimates)
 end
 

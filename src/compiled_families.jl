@@ -92,7 +92,7 @@ function _family_parameterized_model(model::PIModel,indices)
     _family_replace_rates(model,indices,rates)
 end
 
-function _family_estimates(plan::LiouvillianPlan,indices,bigfloat_precision)
+function _family_estimates(model::PIModel,plan::LiouvillianPlan,indices,bigfloat_precision)
     n=length(plan.basis);T=plan.Ttype
     scalar_bytes=_scalar_retained_bytes(T;bigfloat_precision)
     plan_bytes=Base.summarysize(plan)
@@ -127,7 +127,9 @@ function _family_estimates(plan::LiouvillianPlan,indices,bigfloat_precision)
       sparse_assembly_upper_bound=Int(min(
           sparse_bounds.assembly_bytes,BigInt(typemax(Int)))),
       sparse_specialization_peak_upper_bound=sparse_peak_bytes,
-      geometry_reused=true)
+      geometry_reused=true,
+      resource_metadata=_prepared_resource_metadata(
+          model,plan,sparse_bounds,nothing;bigfloat_precision))
 end
 
 """
@@ -167,7 +169,7 @@ function compile_family(model::PIModel;rate_indices=nothing,
     plan=LiouvillianPlan(parameterized;coefficient_cache)
     plan.kernels===nothing&&throw(ArgumentError(
         "compile_family supports only fixed-operator terms that lower to prepared kernels"))
-    estimates=_family_estimates(plan,indices,bigfloat_precision)
+    estimates=_family_estimates(model,plan,indices,bigfloat_precision)
     CompiledPIModelFamily(model,plan,indices,defaults,estimates)
 end
 

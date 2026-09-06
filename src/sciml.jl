@@ -4,20 +4,20 @@
 Construct an in-place `SciMLBase.ODEProblem` for PI coefficient dynamics.
 `source` may be a `PIModel`, compiled model, Liouvillian plan, or compatible
 matrix/matrix-free operator. The initial coefficients are copied, and prepared
-sources reuse one problem-owned Liouvillian workspace. Choose an adaptive or
+sources reuse one problem-owned Liouvillian workspace. Coefficients are
+promoted to the generator's precision when supported. Endpoints must be finite
+real numbers; backward integration is allowed. Choose an adaptive or
 stiff solver from the SciML ecosystem separately.
 """
 function dynamics_problem(x,rho0::PIState,tspan;parameters=nothing)
-    source_basis=_operator_basis(x)
-    source_basis===nothing||source_basis===rho0.basis||throw(ArgumentError(
-        "Liouvillian source and initial state use incompatible PI bases"))
+    _checked_evolution_tspan(tspan)
+    _check_evolution_basis(x,rho0)
     L=x isa PIModel ? compile(x) : x
-    size(L)==(length(rho0.data),length(rho0.data)) ||
-        throw(DimensionMismatch("Liouvillian and initial state dimensions differ"))
+    current=_prepare_evolution_state(L,rho0)
     work=_linear_operator_workspace(L)
     f! = work===nothing ? ((du,u,p,t)->_liouvillian_action!(du,L,u,t,p)) :
                          ((du,u,p,t)->apply!(du,L,u,t,p,work))
-    SciMLBase.ODEProblem(f!,copy(rho0.data),tspan,parameters)
+    SciMLBase.ODEProblem(f!,current.data,tspan,parameters)
 end
 """
     PISolution(raw, basis)
@@ -25,6 +25,9 @@ end
 Attach a `PIBasis` to a SciML solution whose state vectors are PI
 coefficients. Use `state` to reconstruct `PIState` objects at saved indices or
 interpolated times.
+`result_times` borrows `raw.t`; `result_states` returns this solution as a
+lazy saved-state history. `result_final_state` wraps the last saved vector,
+or returns `nothing` for an empty history. These accessors never interpolate.
 """
 struct PISolution{S,B<:PIBasis};raw::S;basis::B;end
 

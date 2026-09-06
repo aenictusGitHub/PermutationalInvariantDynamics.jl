@@ -458,6 +458,12 @@ function _scalar_generic_psd_check(A::Hermitian{Complex{R},<:AbstractMatrix},
     true
 end
 
+function _automatic_positivity_method(a::AbstractPIOperator,dense_threshold=256)
+    largest=maximum(length,a.basis.patterns;init=0)
+    R=_real_float_type(eltype(a.data))
+    largest<=dense_threshold&&(R===Float32||R===Float64) ? :eigen : :cholesky
+end
+
 """
     positivity_diagnostics(A; method=:auto, dense_threshold=256,
                            atol=_analysis_atol(A), rtol=0)
@@ -493,10 +499,9 @@ function positivity_diagnostics(a::AbstractPIOperator;method::Symbol=:auto,
         certified_lower_bound=missing,scale=h.scale,tolerance=missing,
         factorized_sectors=0,fallback_eigensolves=0)
 
-    largest=maximum(length(patterns) for patterns in a.basis.patterns;init=0)
     R=_real_float_type(eltype(a.data))
     lapack_scalar=R===Float32||R===Float64
-    selected=method===:auto ? (largest<=dense_threshold&&lapack_scalar ? :eigen : :cholesky) : method
+    selected=method===:auto ? _automatic_positivity_method(a,dense_threshold) : method
     if selected===:eigen
         p=_spectral_positivity_metrics(a);tol=atol+rtol*p.scale
         return (;positive=p.minimum_eigenvalue>=-tol,hermitian=true,method=:eigen,

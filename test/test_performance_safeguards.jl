@@ -91,3 +91,109 @@
     @test_throws ArgumentError diffusive_trajectories(
         diffusive_batch,rho0,2;save_states=false,memory_budget=110)
 end
+
+@testset "exact support counts and reusable resource preflight" begin
+    PID=PermutationalInvariantDynamics
+    dense=ComplexF64[0 -0.0 1e-300; -2im 0 3]
+    stored=sparse(dense)
+    stored[1,1]=1
+    stored[1,1]=0 # a deliberately retained explicit CSC zero
+    for (matrix,expected) in ((dense,3),(stored,3),
+                              (view(dense,:,2:3),2),(transpose(dense),3))
+        count=PID._performance_matrix_nonzeros(matrix)
+        @test count isa BigInt
+        @test count==expected
+    end
+    @test PID._performance_matrix_nonzeros(zeros(0,3))==0
+    huge=big(typemax(Int))+1
+    bounds=PID._performance_sparse_materialization_bounds(
+        typemax(Int),ComplexF64,huge)
+    @test bounds.retained_nnz_upper_bound==huge
+    @test bounds.operator_bytes>typemax(Int)
+
+    basis=PIBasis(6,2)
+    spin=spin_matrices()
+    model=PIModel(basis,(LocalJump(spin.jm;rate=0.4),
+                         CollectiveHamiltonian(spin.jx;rate=0.1)))
+    family=compile_family(model)
+    for source in (compile(model;backend=:matrixfree),
+                   specialize(family,(0.4,0.1)))
+        @test PID._prepared_resource_metadata(source)!==nothing
+        for precision_bits in (128,512)
+            @test PID._performance_prepared_sparse_bounds(
+                source;bigfloat_precision=precision_bits)==
+                PID._performance_sparse_materialization_bounds(
+                    source.plan;bigfloat_precision=precision_bits)
+            report=recommend_solver(source;task=:dynamics,
+                bigfloat_precision=precision_bits)
+            geometry=PID._estimate_model_geometry(source.model;
+                bigfloat_precision=precision_bits)
+            @test report.geometry_setup_upper_bytes==geometry.setup_bytes
+            @test report.geometry_retained_upper_bytes==geometry.retained_bytes
+        end
+        before=recommend_solver(source;task=:spectrum,
+            algorithm=:block_arnoldi,nev=4,block_size=4,krylovdim=8)
+        before_actual=Base.summarysize(source)
+        @test before.retained_bytes>=before_actual
+        @test before.resources.retained.provenance===:upper_bound
+        input=ones(ComplexF64,length(basis),4)
+        output=similar(input)
+        mul!(output,source,input)
+        after=recommend_solver(source;task=:spectrum,
+            algorithm=:block_arnoldi,nev=4,block_size=4,krylovdim=8)
+        after_actual=Base.summarysize(source)
+        @test after_actual>before_actual
+        @test after.retained_bytes>=after_actual
+        # The cached inline-record allowance can already cover new wrapper
+        # records. Require live growth for all three numerical batch buffers;
+        # the total upper-bound checks above cover their container storage.
+        batch_payload=3maximum(length,basis.patterns)^2*
+            size(input,2)*sizeof(eltype(input))
+        @test after.retained_bytes-before.retained_bytes>=
+              batch_payload
+        @test after.operator_action_per_worker_upper_bytes<
+              before.operator_action_per_worker_upper_bytes
+        @test recommend_solver(source;task=:dynamics,
+            memory_budget=after_actual-1).budget_status===:exceeds
+        # A conservative cached record must not reject a budget that fits
+        # the measured source plus the requested workspace and output.
+        measured_peak=after.known_peak_bytes-after.retained_bytes+after_actual
+        tight=recommend_solver(source;task=:spectrum,
+            algorithm=:block_arnoldi,nev=4,block_size=4,krylovdim=8,
+            memory_budget=measured_peak)
+        @test tight.budget_status===:fits
+        @test tight.retained_bytes==after_actual
+        one_worker=recommend_solver(source;task=:dynamics,samples=2,saved_states=0)
+        two_workers=recommend_solver(source;task=:dynamics,
+            samples=2,saved_states=0,workers=2)
+        @test two_workers.retained_bytes==one_worker.retained_bytes
+        @test two_workers.solve_workspace_bytes==2one_worker.solve_workspace_bytes
+    end
+
+    # Sparse storage and mutable callback captures must be inspected live.
+    source=compile(model;backend=:sparse)
+    before=recommend_solver(source)
+    for column in 1:8,row in 1:8
+        source.operator[row,column]=1
+    end
+    after=recommend_solver(source)
+    @test after.retained_bytes>before.retained_bytes
+    @test after.retained_bytes>=Base.summarysize(source)
+    captured=ones(1)
+    rate=let values=captured
+        (time,parameters)->values[1]
+    end
+    driven=compile(PIModel(basis,(LocalJump(spin.jm;rate),));backend=:matrixfree)
+    @test PID._prepared_resource_metadata(driven)===nothing
+    before=recommend_solver(driven;task=:dynamics)
+    resize!(captured,4096)
+    after=recommend_solver(driven;task=:dynamics)
+    @test after.retained_bytes>before.retained_bytes
+    @test after.retained_bytes==Base.summarysize(driven)
+
+    wide=compile(PIModel(PIBasis(1,2),(
+        LocalJump(Complex{BigFloat}.(spin.jm);rate=big"0.4"),));backend=:matrixfree)
+    @test PID._prepared_resource_metadata(wide)===nothing
+    @test recommend_solver(wide;task=:dynamics,bigfloat_precision=512).
+        retained_bytes==Base.summarysize(wide)
+end

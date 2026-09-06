@@ -165,3 +165,31 @@ import SciMLBase
     @test occursin("PermutationalInvariantDynamics doctor",
         sprint(show,MIME"text/plain"(),smoke))
 end
+
+@testset "guided Hamiltonian signs and SciML retained output" begin
+    basis=PIBasis(1,2);spin=spin_matrices()
+    model=PIModel(basis,(LocalHamiltonian(spin.jz;rate=-1),))
+    rho=computational_product_state(basis,2)
+    report=check(PIStudy(model;task=:dynamics,initial_state=rho,tspan=(0.0,1.0)))
+    @test Symbol("PID-W-NEGATIVE-DETERMINISTIC-RATE") ∉
+        Set(issue.code for issue in report.issues)
+    for tspan in ((0.0,Inf),(NaN,1.0),(0.0,1im),(true,2.0),(1.0,0.0))
+        invalid=check(PIStudy(model;task=:dynamics,initial_state=rho,tspan))
+        @test Symbol("PID-E-INVALID-TSPAN") in Set(issue.code for issue in invalid.issues)
+    end
+    saved=(t=[0.0,1.0],u=[copy(rho.data),copy(rho.data)])
+    sol=PISolution(saved,basis)
+    @test result_times(sol)===saved.t
+    @test result_states(sol)===sol
+    @test length(result_states(sol))==2
+    @test result_states(sol)[2].data==saved.u[2]
+    final=result_final_state(sol)
+    @test final.basis===basis
+    @test final.data==saved.u[end]
+    @test final.data!==saved.u[end]
+    @test result_state(sol).data==final.data
+    empty=PISolution((t=Float64[],u=Vector{ComplexF64}[]),basis)
+    @test isempty(result_times(empty))
+    @test isempty(result_states(empty))
+    @test result_final_state(empty)===nothing
+end
