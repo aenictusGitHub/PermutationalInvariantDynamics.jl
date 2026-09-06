@@ -280,11 +280,17 @@ g = 0.1`,
     const shareButton = root.querySelector("#pid-copy-share-link");
     const undoButton = root.querySelector("#pid-undo-model");
     const resetButton = root.querySelector("#pid-reset-model");
+    const formStatus = root.querySelector("#pid-form-status");
+    const runGuide = root.querySelector("#pid-run-guide");
+    const readme = root.querySelector("#pid-generated-readme");
+    const exportButtons = [copyButton, downloadButton, plutoButton, bundleButton, shareButton];
     let generatedCode = "";
     let generatedBundle = null;
     let generatedManifest = null;
     let undoManifest = null;
     let suppressHistory = false;
+    let suppressAutosave = false;
+    let currentOutput = false;
 
     function labelledControl(labelText, control) {
       const wrapper = element("label", { className: "pid-jump-control" });
@@ -339,6 +345,7 @@ g = 0.1`,
       remove.setAttribute("aria-label", "Remove this jump channel");
       remove.addEventListener("click", function () {
         row.remove();
+        markDirty();
       });
       row.append(
         labelledControl("Channel", kind),
@@ -394,6 +401,7 @@ g = 0.1`,
       remove.setAttribute("aria-label", "Remove this scan axis");
       remove.addEventListener("click", function () {
         row.remove();
+        markDirty();
       });
 
       row.append(
@@ -426,7 +434,8 @@ g = 0.1`,
       };
     }
 
-    function applyConfiguration(preset) {
+    function applyConfiguration(preset, result) {
+      root.querySelector("#pid-preset").value = "custom";
       root.querySelector("#pid-architecture").value = preset.architecture || "pi";
       root.querySelector("#pid-particle-count").value =
         preset.N === undefined ? 8 : preset.N;
@@ -471,7 +480,8 @@ g = 0.1`,
       const spectrum = Object.assign(
         {}, DEFAULT_SPECTRUM, preset.spectrum || {},
       );
-      root.querySelector("#pid-spectrum-target").value = spectrum.target;
+      root.querySelector("#pid-spectrum-target").value =
+        spectrum.target.replace(/_/g, "-");
       root.querySelector("#pid-spectrum-nev").value = spectrum.nev;
       root.querySelector("#pid-spectrum-seed").value = spectrum.seed;
       const gap = Object.assign({}, DEFAULT_GAP, preset.gap || {});
@@ -490,7 +500,9 @@ g = 0.1`,
       scanAxisContainer.replaceChildren();
       (scan.axes.length ? scan.axes : DEFAULT_SCAN.axes).forEach(addScanAxis);
       root.querySelector("#pid-memory-budget").value =
-        preset.memoryBudgetMiB || 512;
+        preset.resources && preset.resources.memoryBudgetMiB !== undefined
+          ? preset.resources.memoryBudgetMiB
+          : preset.memoryBudgetMiB === undefined ? 512 : preset.memoryBudgetMiB;
       const pseudomode = Object.assign(
         {}, DEFAULT_PSEUDOMODE, preset.pseudomode || {},
       );
@@ -508,11 +520,13 @@ g = 0.1`,
       jumpContainer.replaceChildren();
       (preset.jumps || []).forEach(addJump);
       updateVisibility();
-      generate();
+      if (result) publishResult(result);
+      else generate();
     }
 
     function loadPreset(name) {
       applyConfiguration(PRESETS[name] || PRESETS.driven);
+      root.querySelector("#pid-preset").value = PRESETS[name] ? name : "driven";
     }
 
     function readJumps() {
@@ -541,47 +555,47 @@ g = 0.1`,
     function readConfiguration() {
       return {
         architecture: root.querySelector("#pid-architecture").value,
-        N: Number(root.querySelector("#pid-particle-count").value),
-        d: Number(root.querySelector("#pid-local-dimension").value),
+        N: root.querySelector("#pid-particle-count").value,
+        d: root.querySelector("#pid-local-dimension").value,
         calculation: root.querySelector("#pid-calculation").value,
         workflow: root.querySelector("#pid-workflow").value,
         steadyMethod: root.querySelector("#pid-steady-method").value,
         initialState: {
-          level: Number(root.querySelector("#pid-initial-level").value),
+          level: root.querySelector("#pid-initial-level").value,
         },
         trajectory: {
           trajectories:
-            Number(root.querySelector("#pid-trajectory-count").value),
+            root.querySelector("#pid-trajectory-count").value,
           settlingTime:
-            Number(root.querySelector("#pid-trajectory-settling-time").value),
-          dt: Number(root.querySelector("#pid-trajectory-dt").value),
+            root.querySelector("#pid-trajectory-settling-time").value,
+          dt: root.querySelector("#pid-trajectory-dt").value,
           samplesPerTrajectory:
-            Number(root.querySelector("#pid-trajectory-samples").value),
+            root.querySelector("#pid-trajectory-samples").value,
           samplingInterval:
-            Number(root.querySelector(
-              "#pid-trajectory-sampling-interval").value),
+            root.querySelector(
+              "#pid-trajectory-sampling-interval").value,
           maxJumpProbability:
-            Number(root.querySelector(
-              "#pid-trajectory-max-jump-probability").value),
-          seed: Number(root.querySelector("#pid-trajectory-seed").value),
+            root.querySelector(
+              "#pid-trajectory-max-jump-probability").value,
+          seed: root.querySelector("#pid-trajectory-seed").value,
         },
         dynamics: {
           startTime:
-            Number(root.querySelector("#pid-dynamics-start-time").value),
+            root.querySelector("#pid-dynamics-start-time").value,
           finalTime:
-            Number(root.querySelector("#pid-dynamics-final-time").value),
-          samples: Number(root.querySelector("#pid-dynamics-samples").value),
+            root.querySelector("#pid-dynamics-final-time").value,
+          samples: root.querySelector("#pid-dynamics-samples").value,
           stepsPerInterval:
-            Number(root.querySelector("#pid-dynamics-steps").value),
+            root.querySelector("#pid-dynamics-steps").value,
         },
         spectrum: {
           target: root.querySelector("#pid-spectrum-target").value,
-          nev: Number(root.querySelector("#pid-spectrum-nev").value),
-          seed: Number(root.querySelector("#pid-spectrum-seed").value),
+          nev: root.querySelector("#pid-spectrum-nev").value,
+          seed: root.querySelector("#pid-spectrum-seed").value,
         },
         gap: {
-          nev: Number(root.querySelector("#pid-gap-nev").value),
-          krylovdim: Number(root.querySelector("#pid-gap-krylovdim").value),
+          nev: root.querySelector("#pid-gap-nev").value,
+          krylovdim: root.querySelector("#pid-gap-krylovdim").value,
         },
         analysis: {
           purity: root.querySelector("#pid-analysis-purity").checked,
@@ -596,14 +610,14 @@ g = 0.1`,
         },
         resources: {
           memoryBudgetMiB:
-            Number(root.querySelector("#pid-memory-budget").value),
+            root.querySelector("#pid-memory-budget").value,
         },
         hamiltonian: root.querySelector("#pid-hamiltonian").value,
         jumps: readJumps(),
         observable: root.querySelector("#pid-observable").value,
         parameters: root.querySelector("#pid-parameters").value,
         pseudomode: {
-          nmax: Number(root.querySelector("#pid-pseudomode-cutoff").value),
+          nmax: root.querySelector("#pid-pseudomode-cutoff").value,
           frequency: root.querySelector("#pid-pseudomode-frequency").value,
           damping: root.querySelector("#pid-pseudomode-damping").value,
           thermalOccupation:
@@ -623,10 +637,16 @@ g = 0.1`,
       summary.replaceChildren();
       root.querySelectorAll("[aria-invalid='true']").forEach((node) => {
         node.removeAttribute("aria-invalid");
+        const descriptions = (node.getAttribute("aria-describedby") || "")
+          .split(/\s+/).filter((id) => id && id !== "pid-field-error");
+        if (descriptions.length) node.setAttribute("aria-describedby", descriptions.join(" "));
+        else node.removeAttribute("aria-describedby");
       });
+      const fieldError = root.querySelector("#pid-field-error");
+      if (fieldError) fieldError.remove();
     }
 
-    function markField(field) {
+    function markField(field, message, focus) {
       const mapping = {
         architecture: "#pid-architecture",
         calculation: "#pid-calculation",
@@ -672,13 +692,14 @@ g = 0.1`,
       };
       const selector = mapping[field];
       let node = selector ? root.querySelector(selector) : null;
-      const jumpMatch = /^jump (\d+)( rate)?$/.exec(field);
+      const jumpMatch = /^jump (\d+)( rate| kind)?$/.exec(field);
       if (!node && jumpMatch) {
         const row = jumpContainer.querySelectorAll(".pid-jump-row")[
           Number(jumpMatch[1]) - 1
         ];
         if (row) {
-          node = row.querySelectorAll("input")[jumpMatch[2] ? 1 : 0];
+          node = jumpMatch[2] === " kind" ? row.querySelector("select")
+            : row.querySelectorAll("input")[jumpMatch[2] ? 1 : 0];
         }
       }
       const scanMatch =
@@ -694,7 +715,43 @@ g = 0.1`,
             : row.querySelector(`.pid-scan-${part}`);
         }
       }
-      if (node) node.setAttribute("aria-invalid", "true");
+      if (!node) return;
+      if (!node.matches("input, select, textarea")) {
+        node = node.querySelector("input, select, textarea") || node;
+      }
+      node.setAttribute("aria-invalid", "true");
+      const descriptions = (node.getAttribute("aria-describedby") || "").split(/\s+/).filter(Boolean);
+      node.setAttribute("aria-describedby", [...descriptions, "pid-field-error"].join(" "));
+      const error = element("span", { className: "pid-field-error", text: message });
+      error.id = "pid-field-error";
+      node.insertAdjacentElement("afterend", error);
+      if (focus) node.focus();
+    }
+
+    function setStatus(kind, message) {
+      status.className = `pid-status pid-status-${kind}`;
+      status.textContent = message;
+      formStatus.textContent = message;
+      formStatus.className = `pid-form-status pid-status-${kind}`;
+    }
+
+    function invalidateOutput(message) {
+      currentOutput = false;
+      generatedCode = "";
+      generatedBundle = null;
+      output.textContent = `# ${message}`;
+      readme.textContent = "";
+      runGuide.hidden = true;
+      exportButtons.forEach((button) => { button.disabled = true; });
+    }
+
+    function markDirty(event) {
+      if (!event || event.target.id !== "pid-preset") {
+        root.querySelector("#pid-preset").value = "custom";
+      }
+      clearMessages();
+      invalidateOutput("Inputs changed. Generate Julia code to update the program.");
+      setStatus("pending", "Inputs changed. Generate Julia code before copying, downloading, or sharing.");
     }
 
     function renderSummary(result) {
@@ -776,6 +833,9 @@ g = 0.1`,
     }
 
     function decodeShareManifest(encoded) {
+      if (encoded.length > 3 * 1024 * 1024) {
+        throw new Error("share link too large");
+      }
       const normalized = encoded
         .replace(/-/g, "+")
         .replace(/_/g, "/");
@@ -790,61 +850,57 @@ g = 0.1`,
     function loadManifestObject(manifest, message) {
       try {
         const configuration = api.configurationFromManifest(manifest);
-        applyConfiguration(configuration);
-        status.className = "pid-status pid-status-success";
-        status.textContent = message;
+        // Validate before changing the form, output, history, or local save.
+        const result = api.generate(configuration);
+        applyConfiguration(api.configurationFromManifest(result.manifest), result);
+        setStatus("success", message);
         return true;
       } catch (error) {
-        status.className = "pid-status pid-status-error";
-        status.textContent = error instanceof api.GeneratorError
+        setStatus("error", error instanceof api.GeneratorError
           ? `${error.field}: ${error.message}`
-          : "The manifest could not be loaded.";
+          : "The manifest could not be loaded.");
         return false;
       }
     }
 
-    function generate() {
+    function publishResult(result) {
+      clearMessages();
+      if (
+        !suppressHistory &&
+        generatedManifest &&
+        serializedManifest(generatedManifest) !==
+          serializedManifest(result.manifest)
+      ) {
+        undoManifest = generatedManifest;
+      }
+      generatedCode = result.code;
+      generatedBundle = result.bundle;
+      generatedManifest = result.manifest;
+      currentOutput = true;
+      if (!suppressAutosave) saveLocalManifest(generatedManifest);
+      output.textContent = generatedCode;
+      readme.textContent = generatedBundle.files.find(
+        (file) => file.name.endsWith("_README.txt"),
+      ).contents;
+      runGuide.hidden = false;
+      renderSummary(result);
+      renderWarnings(result.warnings);
+      setStatus("success", "Code generated locally. Review the program and run guide below.");
+      exportButtons.forEach((button) => { button.disabled = false; });
+      undoButton.disabled = undoManifest === null;
+    }
+
+    function generate(focusError) {
       clearMessages();
       try {
-        const result = api.generate(readConfiguration());
-        if (
-          !suppressHistory &&
-          generatedManifest &&
-          serializedManifest(generatedManifest) !==
-            serializedManifest(result.manifest)
-        ) {
-          undoManifest = generatedManifest;
-        }
-        generatedCode = result.code;
-        generatedBundle = result.bundle;
-        generatedManifest = result.manifest;
-        saveLocalManifest(generatedManifest);
-        output.textContent = generatedCode;
-        renderSummary(result);
-        renderWarnings(result.warnings);
-        status.className = "pid-status pid-status-success";
-        status.textContent = "Code generated locally in your browser.";
-        copyButton.disabled = false;
-        downloadButton.disabled = false;
-        plutoButton.disabled = false;
-        bundleButton.disabled = false;
-        shareButton.disabled = false;
-        undoButton.disabled = undoManifest === null;
+        publishResult(api.generate(readConfiguration()));
       } catch (error) {
-        generatedCode = "";
-        generatedBundle = null;
-        output.textContent = "# Correct the model input to generate Julia code.";
-        copyButton.disabled = true;
-        downloadButton.disabled = true;
-        plutoButton.disabled = true;
-        bundleButton.disabled = true;
-        shareButton.disabled = generatedManifest === null;
-        status.className = "pid-status pid-status-error";
+        invalidateOutput("Correct the model input to generate Julia code.");
         if (error instanceof api.GeneratorError) {
-          status.textContent = `${error.field}: ${error.message}`;
-          markField(error.field);
+          setStatus("error", `${error.field}: ${error.message}`);
+          markField(error.field, error.message, focusError);
         } else {
-          status.textContent = "Unexpected generator error. Please report this input as an issue.";
+          setStatus("error", "Unexpected generator error. Please report this input as an issue.");
         }
       }
     }
@@ -940,8 +996,7 @@ g = 0.1`,
     async function copyText(text, successMessage) {
       try {
         await navigator.clipboard.writeText(text);
-        status.className = "pid-status pid-status-success";
-        status.textContent = successMessage;
+        if (currentOutput) setStatus("success", successMessage);
       } catch (_) {
         const helper = element("textarea");
         helper.value = text;
@@ -952,9 +1007,9 @@ g = 0.1`,
         const copied = typeof document.execCommand === "function" &&
           document.execCommand("copy");
         helper.remove();
-        status.textContent = copied
+        setStatus(copied ? "success" : "error", copied
           ? successMessage
-          : "Clipboard access failed; select the code manually.";
+          : "Clipboard access failed. Download the Julia file or ZIP bundle instead.");
       }
     }
 
@@ -994,18 +1049,17 @@ g = 0.1`,
 
     function downloadBundle() {
       if (!generatedBundle) return;
-      // Keep the implementation dependency-free: each artifact is a normal
-      // local browser download rather than a remotely assembled archive.
-      for (const artifact of generatedBundle.files) {
-        downloadArtifact(artifact);
+      try {
+        downloadArtifact(api.bundleArchive(generatedBundle));
+        setStatus("success", "ZIP download started: Julia script, JSON manifest, run guide, and Pluto notebook.");
+      } catch (error) {
+        setStatus("error", error instanceof api.GeneratorError
+          ? error.message : "The experiment archive could not be created.");
       }
-      status.className = "pid-status pid-status-success";
-      status.textContent =
-        "Experiment bundle downloaded: Julia script, JSON manifest, README, and Pluto notebook.";
     }
 
     async function copyShareLink() {
-      if (!generatedManifest) return;
+      if (!currentOutput || !generatedManifest) return;
       const url = new URL(window.location.href);
       url.hash = `pid-model=${encodeShareManifest(generatedManifest)}`;
       await copyText(
@@ -1023,9 +1077,7 @@ g = 0.1`,
         const manifest = JSON.parse(await file.text());
         loadManifestObject(manifest, `Loaded ${file.name}.`);
       } catch (_) {
-        status.className = "pid-status pid-status-error";
-        status.textContent =
-          "The selected file is not a valid supported generator manifest.";
+        setStatus("error", "The selected file is not a valid supported generator manifest (maximum 2 MiB).");
       } finally {
         manifestFile.value = "";
       }
@@ -1043,8 +1095,7 @@ g = 0.1`,
         suppressHistory = false;
       }
       undoButton.disabled = undoManifest === null;
-      status.className = "pid-status pid-status-success";
-      status.textContent = "Restored the previous generated model.";
+      setStatus("success", "Restored the previous generated model.");
     }
 
     function resetModel() {
@@ -1052,11 +1103,19 @@ g = 0.1`,
       const url = new URL(window.location.href);
       url.hash = "";
       window.history.replaceState(null, "", url.toString());
-      status.className = "pid-status pid-status-success";
-      status.textContent = "Reset to the driven-qubit starter model.";
+      setStatus("success", "Reset to the driven-qubit starter model.");
     }
 
     function restoreSession() {
+      function showStarterAfterError(message) {
+        // A broken link or saved file must remain visible as an error and
+        // must not overwrite the last valid model stored in this browser.
+        suppressAutosave = true;
+        try { loadPreset("driven"); }
+        finally { suppressAutosave = false; }
+        setStatus("error", `${message} Showing the starter model; your local save has not changed.`);
+        return true;
+      }
       if (window.location.hash.startsWith(SHARE_PREFIX)) {
         try {
           const encoded = window.location.hash.slice(SHARE_PREFIX.length);
@@ -1064,38 +1123,50 @@ g = 0.1`,
             decodeShareManifest(encoded),
             "Loaded the model from the share link.",
           )) return true;
+          return showStarterAfterError(status.textContent);
         } catch (_) {
-          status.className = "pid-status pid-status-error";
-          status.textContent =
-            "The model share link is invalid or no longer supported.";
+          return showStarterAfterError("The model share link is invalid or no longer supported.");
         }
       }
+      let stored;
       try {
-        const stored = window.localStorage.getItem(STORAGE_KEY);
+        stored = window.localStorage.getItem(STORAGE_KEY);
+      } catch (_) {
+        return false; // Browser-local persistence is optional.
+      }
+      try {
         if (stored) {
           if (loadManifestObject(
             JSON.parse(stored), "Restored the last local model.",
           )) return true;
+          return showStarterAfterError(status.textContent);
         }
       } catch (_) {
-        // Ignore unavailable or malformed local storage and use the starter.
+        return showStarterAfterError("The saved local model could not be restored.");
       }
       return false;
     }
 
     form.addEventListener("submit", function (event) {
       event.preventDefault();
-      generate();
+      generate(true);
     });
+    form.addEventListener("input", markDirty);
+    // Invalidate before a selector's target listener regenerates its new
+    // configuration; this also covers controls changed with the keyboard.
+    form.addEventListener("change", markDirty, true);
     root.querySelector("#pid-add-local-jump").addEventListener("click", function () {
       addJump({ kind: "local", operator: String.raw`\sigma_-`, rate: String.raw`\gamma` });
+      markDirty();
     });
     root.querySelector("#pid-add-collective-jump").addEventListener("click", function () {
       addJump({ kind: "collective", operator: "J_-", rate: String.raw`\Gamma` });
+      markDirty();
     });
     root.querySelector("#pid-add-scan-axis").addEventListener("click", function () {
       addScanAxis({ parameter: "" });
       updateVisibility();
+      markDirty();
     });
     root.querySelector("#pid-preset").addEventListener("change", function (event) {
       loadPreset(event.target.value);

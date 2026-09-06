@@ -8,7 +8,7 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
   "use strict";
 
-  const VERSION = "1.6.0";
+  const VERSION = "1.7.0";
   const MAX_FORMULA_LENGTH = 2000;
   const MAX_SCAN_POINTS = 100000;
   const JULIA_RESERVED = new Set([
@@ -102,6 +102,14 @@
 
   function fail(field, message) {
     throw new GeneratorError(field, message);
+  }
+
+  // Defaults apply only to omitted settings. Explicit empty values, JSON
+  // null/booleans, and arrays must never become zero or a different setting.
+  function numericInput(value) {
+    if (typeof value === "number") return value;
+    if (typeof value !== "string" || value.trim() === "") return Number.NaN;
+    return Number(value);
   }
 
   function replaceUnicode(text) {
@@ -275,7 +283,7 @@
       const command = text.match(/\\[A-Za-z]+|\\/);
       fail(field, `Unsupported LaTeX fragment ${command ? command[0] : "\\"}.`);
     }
-    return text;
+    return text.trim().replace(/\s+/g, " ");
   }
 
   function token(type, value, position) {
@@ -712,20 +720,9 @@
         fail(label, `Parameter ${name} is selected by more than one scan axis.`);
       }
       names.add(name);
-      function numericAxisValue(value) {
-        if (
-          value === undefined ||
-          value === null ||
-          typeof value === "boolean" ||
-          String(value).trim() === ""
-        ) {
-          return Number.NaN;
-        }
-        return Number(value);
-      }
-      const start = numericAxisValue(raw.start);
-      const stop = numericAxisValue(raw.stop);
-      const points = numericAxisValue(raw.points);
+      const start = numericInput(raw.start);
+      const stop = numericInput(raw.stop);
+      const points = numericInput(raw.points);
       if (!Number.isFinite(start)) {
         fail(`${label} start`, "The scan start must be a finite number.");
       }
@@ -792,8 +789,8 @@
   }
 
   function parseModel(config) {
-    const particleCount = Number(config.N);
-    const localDimension = Number(config.d);
+    const particleCount = numericInput(config.N);
+    const localDimension = numericInput(config.d);
     if (!Number.isSafeInteger(particleCount) || particleCount < 1) {
       fail("N", "N must be a positive integer.");
     }
@@ -927,9 +924,7 @@
 
     function numericSetting(input, key, fallback, field, predicate, requirement) {
       const raw = input[key];
-      const value = Number(
-        raw === undefined || String(raw).trim() === "" ? fallback : raw,
-      );
+      const value = numericInput(raw === undefined ? fallback : raw);
       if (!Number.isFinite(value) || !predicate(value)) {
         fail(field, requirement);
       }
@@ -1236,13 +1231,13 @@
       const input = config.pseudomode && typeof config.pseudomode === "object"
         ? config.pseudomode
         : {};
-      const cutoff = Number(input.nmax === undefined ? 1 : input.nmax);
+      const cutoff = numericInput(input.nmax === undefined ? 1 : input.nmax);
       if (!Number.isSafeInteger(cutoff) || cutoff < 0) {
         fail("pseudomode cutoff", "The pseudomode cutoff nmax must be a nonnegative integer.");
       }
       function scalarField(value, fallback, field) {
         const parsed = parseFormula(
-          String(value === undefined || String(value).trim() === "" ? fallback : value),
+          String(value === undefined ? fallback : value),
           field,
         );
         if (analyze(parsed.ast, field).kind !== "scalar") {
@@ -1264,7 +1259,8 @@
         "pseudomode counter-rotating strength",
       );
       const couplingOperator = parseFormula(
-        String(input.couplingOperator || String.raw`\sigma_-`),
+        String(input.couplingOperator === undefined
+          ? String.raw`\sigma_-` : input.couplingOperator),
         "pseudomode coupling operator",
       );
       const couplingInfo = analyze(
@@ -1350,8 +1346,10 @@
     const inputJumps = Array.isArray(config.jumps) ? config.jumps : [];
     for (let index = 0; index < inputJumps.length; index += 1) {
       const input = inputJumps[index];
-      if (!input || !String(input.operator || "").trim()) continue;
       const field = `jump ${index + 1}`;
+      if (!input || !String(input.operator || "").trim()) {
+        fail(field, "Enter a jump operator, or remove this channel.");
+      }
       if (input.kind !== "local" && input.kind !== "collective") {
         fail(
           `${field} kind`,
@@ -1380,7 +1378,7 @@
         fail(field, "Pauli sigma symbols require d = 2. Use local j_a or collective J_a for qudits.");
       }
       const rawRate =
-        input.rate === undefined || String(input.rate).trim() === ""
+        input.rate === undefined
           ? "1"
           : String(input.rate);
       const rate = parseFormula(rawRate, `${field} rate`);
@@ -1918,7 +1916,7 @@
   }
 
   function manifestNumber(value, field) {
-    const converted = Number(value);
+    const converted = numericInput(value);
     if (!Number.isFinite(converted)) {
       fail(field, "The loaded manifest contains a non-finite numeric value.");
     }
@@ -3645,6 +3643,92 @@
     };
   }
 
+  // A small, deterministic ZIP writer for generated text artifacts. Entries
+  // are stored without compression; assembly never contacts a service and
+  // needs no browser permission for multiple simultaneous downloads.
+  function bundleArchive(bundle) {
+    const safeName = (name) => typeof name === "string" &&
+      /^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$/.test(name);
+    if (!bundle || !safeName(bundle.stem) || !Array.isArray(bundle.files) ||
+        bundle.files.length < 1 || bundle.files.length > 64) {
+      fail("bundle", "Expected a named bundle with 1–64 text files.");
+    }
+    function utf8(text) {
+      if (typeof TextEncoder !== "undefined") return new TextEncoder().encode(text);
+      const bytes = [];
+      for (const character of text) {
+        let point = character.codePointAt(0);
+        if (point >= 0xd800 && point <= 0xdfff) point = 0xfffd;
+        if (point < 0x80) bytes.push(point);
+        else if (point < 0x800) {
+          bytes.push(0xc0 | (point >> 6), 0x80 | (point & 63));
+        } else if (point < 0x10000) {
+          bytes.push(0xe0 | (point >> 12), 0x80 | ((point >> 6) & 63),
+            0x80 | (point & 63));
+        } else {
+          bytes.push(0xf0 | (point >> 18), 0x80 | ((point >> 12) & 63),
+            0x80 | ((point >> 6) & 63), 0x80 | (point & 63));
+        }
+      }
+      return Uint8Array.from(bytes);
+    }
+    const names = new Set();
+    let total = 22;
+    const limit = 16 * 1024 * 1024;
+    const files = bundle.files.map((file) => {
+      if (!file || !safeName(file.name) || names.has(file.name) ||
+          typeof file.contents !== "string") {
+        fail("bundle", "Bundle entries need unique flat filenames and text contents.");
+      }
+      names.add(file.name);
+      // At most three UTF-8 bytes per UTF-16 code unit. Guard before encoding.
+      if (total + 76 + 2 * file.name.length + 3 * file.contents.length > limit) {
+        fail("bundle", "The generated archive exceeds the 16 MiB download limit.");
+      }
+      const name = utf8(file.name);
+      const data = utf8(file.contents);
+      total += 76 + 2 * name.length + data.length;
+      return { name, data, offset: 0, crc: 0 };
+    });
+    const crcTable = Uint32Array.from({ length: 256 }, (_, index) => {
+      let value = index;
+      for (let bit = 0; bit < 8; bit += 1) {
+        value = (value >>> 1) ^ ((value & 1) ? 0xedb88320 : 0);
+      }
+      return value >>> 0;
+    });
+    const bytes = new Uint8Array(total);
+    const view = new DataView(bytes.buffer);
+    let offset = 0;
+    const word = (value) => { view.setUint16(offset, value, true); offset += 2; };
+    const long = (value) => { view.setUint32(offset, value, true); offset += 4; };
+    const append = (data) => { bytes.set(data, offset); offset += data.length; };
+    function header(file) {
+      word(20); word(0x0800); word(0); // version, UTF-8 flag, stored method
+      word(0); word(33); // reproducible DOS timestamp: 1980-01-01 00:00
+      long(file.crc); long(file.data.length); long(file.data.length);
+      word(file.name.length); word(0); // no extra fields
+    }
+    for (const file of files) {
+      let crc = 0xffffffff;
+      for (const byte of file.data) crc = (crc >>> 8) ^ crcTable[(crc ^ byte) & 255];
+      file.crc = (crc ^ 0xffffffff) >>> 0;
+      file.offset = offset;
+      long(0x04034b50); header(file); append(file.name); append(file.data);
+    }
+    const directoryOffset = offset;
+    for (const file of files) {
+      long(0x02014b50); word(20); header(file);
+      word(0); word(0); word(0); long(0); long(file.offset);
+      append(file.name);
+    }
+    const directorySize = offset - directoryOffset;
+    long(0x06054b50); word(0); word(0);
+    word(files.length); word(files.length);
+    long(directorySize); long(directoryOffset); word(0);
+    return { name: `${bundle.stem}.zip`, mediaType: "application/zip", contents: bytes };
+  }
+
   return {
     VERSION,
     GeneratorError,
@@ -3654,5 +3738,6 @@
     generate,
     configurationFromManifest,
     plutoNotebookFor,
+    bundleArchive,
   };
 });

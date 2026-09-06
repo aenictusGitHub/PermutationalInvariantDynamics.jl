@@ -417,6 +417,54 @@ html.theme--catppuccin-frappe #pid-code-generator {
   color: var(--pid-danger);
 }
 
+#pid-code-generator .pid-status-pending {
+  background: rgba(53, 89, 199, 0.1);
+  color: var(--pid-accent-strong);
+}
+
+#pid-code-generator .pid-form-status {
+  border-radius: 0.45rem;
+  font-size: 0.82rem;
+  margin: 0.65rem 0 0;
+  padding: 0.55rem 0.65rem;
+}
+
+#pid-code-generator .pid-field-error {
+  color: var(--pid-danger);
+  display: block;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  margin-top: 0.35rem;
+  overflow-wrap: anywhere;
+}
+
+#pid-code-generator .pid-run-guide {
+  background: var(--pid-panel-raised);
+  border: 1px solid var(--pid-border);
+  border-radius: 0.7rem;
+  margin: 0.65rem 0;
+  padding: 0.65rem;
+}
+
+#pid-code-generator .pid-run-guide summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+#pid-code-generator .pid-run-guide-text {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  max-height: 24rem;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  padding: 0.5rem 0;
+  white-space: pre-wrap;
+}
+
 #pid-code-generator .pid-summary {
   display: flex;
   flex-wrap: wrap;
