@@ -3654,7 +3654,6 @@
       fail("bundle", "Expected a named bundle with 1–64 text files.");
     }
     function utf8(text) {
-      if (typeof TextEncoder !== "undefined") return new TextEncoder().encode(text);
       const bytes = [];
       for (const character of text) {
         let point = character.codePointAt(0);
