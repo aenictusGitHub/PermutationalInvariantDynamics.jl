@@ -1,3 +1,10 @@
+Base.@noinline function _heom_evolve_hot_allocations(destination,plan,source,workspace)
+    # Keep testset boxing of the large prepared plan outside the measurement.
+    heom_evolve!(destination,plan,source,(0.0,0.001);steps=1,workspace)
+    @allocated heom_evolve!(
+        destination,plan,source,(0.0,0.001);steps=1,workspace)
+end
+
 @testset "PI hierarchy equations of motion" begin
     PIDHEOM=PermutationalInvariantDynamics
 
@@ -804,19 +811,28 @@
             shared_hierarchy,plan,hierarchy.data,(0.0,0.001);
             steps=1,workspace=aliased_evolution)
         allocation_destination=copy(hierarchy.data)
-        PIDHEOM.heom_evolve!(allocation_destination,plan,hierarchy.data,
-            (0.0,0.001);steps=1,workspace=evolution_workspace)
-        # Julia 1.10 retains top-level keyword/testset and bounded batched-
-        # matrix wrapper metadata beyond the local hot-call cost. This is
-        # scalar/header storage only; all hierarchy-sized RK4 arrays and
-        # Liouvillian batch buffers are reused.
-        # The shared vector/matrix ADO core adds only bounded reshape-wrapper
-        # metadata on Julia 1.10; no hierarchy-sized or batch-capacity array
-        # is allocated.
-        allocation_limit=VERSION<v"1.11" ? 4864 : 2048
-        @test (@allocated heom_evolve!(
-            allocation_destination,plan,hierarchy.data,(0.0,0.001);
-            steps=1,workspace=evolution_workspace))<=allocation_limit
+        # Measure the prepared call through a function barrier. The remaining
+        # allocations are bounded scalar/reshape metadata, not RK4 arrays.
+        allocation_limit=1024
+        @test _heom_evolve_hot_allocations(
+            allocation_destination,plan,hierarchy.data,
+            evolution_workspace)<=allocation_limit
+
+        # A hierarchy-sized temporary must exceed the same fixed limit, so
+        # small fixtures cannot hide a regression that scales with the state.
+        large_basis=PIBasis(6,2)
+        large_model=qubit_ensemble_model(large_basis;emission=0.7)
+        large_bath=PIDHEOM.HEOMBath(
+            PIOperator(large_basis;T=Float64),0.3,1.2)
+        large_plan=PIDHEOM.HEOMPlan(large_model,large_bath;max_depth=4)
+        large_hierarchy=PIDHEOM.heom_initial_state(
+            large_plan,iid_pure_state(large_basis,ComplexF64[0,1]))
+        large_workspace=PIDHEOM.HEOMEvolutionWorkspace(large_plan)
+        large_destination=copy(large_hierarchy.data)
+        @test sizeof(large_hierarchy.data)>allocation_limit
+        @test _heom_evolve_hot_allocations(
+            large_destination,large_plan,large_hierarchy.data,
+            large_workspace)<=allocation_limit
 
         evolved=PIDHEOM.heom_evolve(
             plan,hierarchy,(0.0,0.4);steps=80)
