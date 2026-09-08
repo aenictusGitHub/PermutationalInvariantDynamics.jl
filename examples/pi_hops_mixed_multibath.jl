@@ -131,39 +131,39 @@ if makie_available()
     figure = example_figure(size=(1120, 440), fontsize=17)
     signal_axis = M.Axis(
         figure[1, 1];
-        xlabel="time", ylabel="2⟨Jx⟩ / N",
-        title="Mixed PI state, two shared baths")
+        xlabel=ExampleMakie.latex("time"), ylabel=ExampleMakie.latex(raw"$2\langle J_x\rangle/N$"),
+        title=ExampleMakie.latex("Mixed PI state, two shared baths"))
     hierarchy_axis = M.Axis(
         figure[1, 2];
-        xlabel="hierarchy node", ylabel="importance score",
-        yscale=log10, title="Pruning diagnostic (not an error bound)")
+        xlabel=ExampleMakie.latex("hierarchy node"), ylabel=ExampleMakie.latex("importance score"),
+        yscale=log10, title=ExampleMakie.latex("Pruning diagnostic (not an error bound)"))
 
     lower = hops_signal .- 2signal_standard_error_bound
     upper = hops_signal .+ 2signal_standard_error_bound
     M.band!(
         signal_axis, times, lower, upper;
         color=(:dodgerblue3, 0.22),
-        label="2× state-HS standard-error bound")
+        label=ExampleMakie.latex("2× state-HS standard-error bound"))
     M.lines!(
         signal_axis, times, analytic_signal;
-        color=:black, linewidth=3, label="analytic")
+        color=:black, linewidth=3, label=ExampleMakie.latex("analytic"))
     M.scatterlines!(
         signal_axis, times, hops_signal;
         color=:dodgerblue3, markersize=5, linewidth=1.5,
-        label="$trajectories HOPS paths")
+        label=ExampleMakie.latex("$trajectories HOPS paths"))
 
     M.scatter!(
         hierarchy_axis, eachindex(importances), importances;
-        color=:gray45, markersize=7, label="complete depth 4")
+        color=:gray45, markersize=7, label=ExampleMakie.latex("complete depth 4"))
     M.hlines!(
         hierarchy_axis, [pruned_metadata.importance_cutoff];
         color=:firebrick3, linewidth=2, linestyle=:dash,
-        label="depth-10 cutoff")
+        label=ExampleMakie.latex("depth-10 cutoff"))
     M.scatter!(
         hierarchy_axis,
         1:length(pruned_importances), pruned_importances;
         color=:darkorange2, markersize=8,
-        label="retained depth 10")
+        label=ExampleMakie.latex("retained depth 10"))
     M.axislegend(signal_axis; position=:lb)
     M.axislegend(hierarchy_axis; position=:rt)
     save_example_figure(figure, "pi_hops_mixed_multibath")

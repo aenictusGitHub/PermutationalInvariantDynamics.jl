@@ -1,5 +1,6 @@
 using LinearAlgebra
 using PermutationalInvariantDynamics
+include(joinpath(@__DIR__, "utils", "makie_support.jl"))
 
 # The complete N=4 qubit PI basis has the three Schur sectors
 # (4,0), (3,1), and (2,2), with irrep dimensions 5, 3, and 1.
@@ -73,16 +74,16 @@ end
 @assert has_active_offdiagonal(local_structure)
 
 state_figure = visualize_schur_blocks(
-    state_structure; title="Thermal steady-state sector populations",
+    state_structure; title=ExampleMakie.latex("Thermal steady-state sector populations"),
     scale=:linear, show_values=true, show_young_diagrams=true)
 density_figure = visualize_density_spectrum(
-    density_spectrum; title="Thermal steady-state density spectrum",
+    density_spectrum; title=ExampleMakie.latex("Thermal steady-state density spectrum"),
     show_degeneracies=true)
 collective_figure = visualize_schur_blocks(
-    collective_structure; title="Collective decay: sector diagonal",
+    collective_structure; title=ExampleMakie.latex("Collective decay: sector diagonal"),
     scale=:log, show_young_diagrams=true)
 local_figure = visualize_schur_blocks(
-    local_structure; title="Local decay: Schur-sector coupling", scale=:log,
+    local_structure; title=ExampleMakie.latex("Local decay: Schur-sector coupling"), scale=:log,
     show_young_diagrams=true)
 
 # Keep generated artifacts out of the repository while still exercising the

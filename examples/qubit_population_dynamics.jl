@@ -97,23 +97,23 @@ function main()
         figure = example_figure(size=(1080, 420), fontsize=17)
         population_axis = M.Axis(
             figure[1, 1];
-            xlabel="time", ylabel="excited fraction",
-            title="Certified population dynamics")
+            xlabel=ExampleMakie.latex("time"), ylabel=ExampleMakie.latex("excited fraction"),
+            title=ExampleMakie.latex("Certified population dynamics"))
         error_axis = M.Axis(
             figure[1, 2];
-            xlabel="time", ylabel="‖ppop − pPI‖₂",
-            yscale=log10, title="Reduced/full-PI agreement")
+            xlabel=ExampleMakie.latex("time"), ylabel=ExampleMakie.latex(raw"$\|p_{\mathrm{pop}}-p_{\mathrm{PI}}\|_2$"),
+            yscale=log10, title=ExampleMakie.latex("Reduced/full-PI agreement"))
 
         M.lines!(
             population_axis, collect(times), excited_fraction;
-            color=:dodgerblue3, linewidth=2.7, label="full PI evolution")
+            color=:dodgerblue3, linewidth=2.7, label=ExampleMakie.latex("full PI evolution"))
         M.scatter!(
             population_axis, collect(times), excited_fraction;
             color=:dodgerblue3, markersize=7)
         M.hlines!(
             population_axis, [stationary_excited_fraction];
             color=:darkorange2, linewidth=2.2, linestyle=:dash,
-            label="stationary population solution")
+            label=ExampleMakie.latex("stationary population solution"))
         M.lines!(
             error_axis, collect(times), displayed_errors;
             color=:firebrick3, linewidth=2.3)

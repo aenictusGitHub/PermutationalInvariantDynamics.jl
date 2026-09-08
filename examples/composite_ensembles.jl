@@ -119,18 +119,18 @@ if makie_available()
     figure = example_figure(size=(1050, 430), fontsize=17)
     signal_axis = M.Axis(
         figure[1, 1];
-        xlabel="state", ylabel="⟨Σᵢ σz⁽ᴬ⁾⟩",
+        xlabel=ExampleMakie.latex("state"), ylabel=ExampleMakie.latex(raw"$\langle\sum_i\sigma_z^{(A,i)}\rangle$"),
         xticks=([1, 2], ["initial", "final"]),
-        title="Composite evolution")
+        title=ExampleMakie.latex("Composite evolution"))
     validation_axis = M.Axis(
         figure[1, 2];
-        xlabel="validation quantity", ylabel="absolute error",
+        xlabel=ExampleMakie.latex("validation quantity"), ylabel=ExampleMakie.latex("absolute error"),
         yscale=log10,
         xticks=(
             1:4,
-            ["tr(ℒρ₀)", "batch", "adjoint", "tr(ρf)−1"],
+            ExampleMakie.latex.([raw"$\mathrm{tr}(\mathcal{L}\rho_0)$", "batch", "adjoint", raw"$\mathrm{tr}(\rho_f)-1$"]),
         ),
-        title="Prepared-kernel checks (display floor ε)")
+        title=ExampleMakie.latex(raw"Prepared-kernel checks (display floor $\epsilon$)"))
 
     M.barplot!(
         signal_axis, [1, 2], [initial_signal, final_signal];

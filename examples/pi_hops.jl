@@ -87,31 +87,31 @@ if makie_available()
     figure = example_figure(size=(1120, 440), fontsize=17)
     signal_axis = M.Axis(
         figure[1, 1];
-        xlabel="time", ylabel="2⟨Jx⟩ / N",
-        title="PI--HOPS collective dephasing (N=$N)")
+        xlabel=ExampleMakie.latex("time"), ylabel=ExampleMakie.latex(raw"$2\langle J_x\rangle/N$"),
+        title=ExampleMakie.latex("PI--HOPS collective dephasing (\$N=$N\$)"))
     error_axis = M.Axis(
         figure[1, 2];
-        xlabel="time", ylabel="absolute error",
-        yscale=log10, title="Stochastic and hierarchy errors")
+        xlabel=ExampleMakie.latex("time"), ylabel=ExampleMakie.latex("absolute error"),
+        yscale=log10, title=ExampleMakie.latex("Stochastic and hierarchy errors"))
 
     M.lines!(
         signal_axis, times, analytic_signal;
-        color=:black, linewidth=3, label="analytic")
+        color=:black, linewidth=3, label=ExampleMakie.latex("analytic"))
     M.lines!(
         signal_axis, times, heom_signal;
-        color=:darkorange2, linewidth=2.2, label="PI--HEOM")
+        color=:darkorange2, linewidth=2.2, label=ExampleMakie.latex("PI--HEOM"))
     M.scatterlines!(
         signal_axis, times, hops_signal;
         color=:dodgerblue3, markersize=5, linewidth=1.4,
-        label="$trajectories PI--HOPS paths")
+        label=ExampleMakie.latex("$trajectories PI--HOPS paths"))
     M.lines!(
         error_axis, times,
         max.(abs.(hops_signal .- analytic_signal), eps(Float64));
-        color=:dodgerblue3, linewidth=2, label="HOPS")
+        color=:dodgerblue3, linewidth=2, label=ExampleMakie.latex("HOPS"))
     M.lines!(
         error_axis, times,
         max.(abs.(heom_signal .- analytic_signal), eps(Float64));
-        color=:darkorange2, linewidth=2, label="HEOM")
+        color=:darkorange2, linewidth=2, label=ExampleMakie.latex("HEOM"))
     M.axislegend(signal_axis; position=:lb)
     M.axislegend(error_axis; position=:rc)
     save_example_figure(figure, "pi_hops")

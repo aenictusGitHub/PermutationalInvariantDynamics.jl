@@ -59,42 +59,42 @@ println("final trace error: ", report.trace_error,
 if makie_available()
     M = makie_module()
     figure = example_figure(size=(1140, 780))
-    M.Label(figure[0, 1:3], "Driven independent qubits  •  N=$(basis.N), γ/Ω=$(gamma/omega)";
+    M.Label(figure[0, 1:3], ExampleMakie.latex("Driven independent qubits  •  \$N=$(basis.N),\\;\\gamma/\\Omega=$(gamma/omega)\$");
             fontsize=22, font=:bold, halign=:left)
     dynamics_axis = M.Axis(
-        figure[1, 1]; xlabel="Ωt", ylabel="excited fraction",
-        title="(a) Resolved Rabi oscillations")
-    error_axis = M.Axis(figure[1, 2]; xlabel="Ωt", ylabel="absolute fraction error",
-                        title="(b) PI versus optical Bloch solution")
+        figure[1, 1]; xlabel=ExampleMakie.latex(raw"$\Omega t$"), ylabel=ExampleMakie.latex("excited fraction"),
+        title=ExampleMakie.latex("(a) Resolved Rabi oscillations"))
+    error_axis = M.Axis(figure[1, 2]; xlabel=ExampleMakie.latex(raw"$\Omega t$"), ylabel=ExampleMakie.latex("absolute fraction error"),
+                        title=ExampleMakie.latex("(b) PI versus optical Bloch solution"))
     M.lines!(dynamics_axis, omega .* times, exact_fractions;
-             color=:black, label="optical Bloch reference")
+             color=:black, label=ExampleMakie.latex("optical Bloch reference"))
     shown = 1:4:length(times)
     M.scatter!(dynamics_axis, omega .* times[shown], excited_fractions[shown];
-               color=example_colors.blue, markersize=7, label="PI samples (every fourth)")
+               color=example_colors.blue, markersize=7, label=ExampleMakie.latex("PI samples (every fourth)"))
     M.hlines!(dynamics_axis, [steady_fraction]; color=example_colors.gray,
-              linestyle=:dash, label="stationary fraction")
+              linestyle=:dash, label=ExampleMakie.latex("stationary fraction"))
     M.ylims!(dynamics_axis, 0, 1.1)
     M.axislegend(dynamics_axis; position=:rt, labelsize=12)
     M.lines!(error_axis, omega .* times, fraction_errors; color=example_colors.red)
 
     # Signed components expose coherence phase; magnitude alone discards it.
-    for (column, component, label) in ((1, real, "(c) Re ρ₁ at Ωt = 12"),
-                                      (2, imag, "(d) Im ρ₁ at Ωt = 12"))
-        axis = M.Axis(figure[2, column]; xlabel="column state", ylabel="row state",
+    for (column, component, label) in ((1, real, raw"(c) $\mathrm{Re}\,\rho_1$ at $\Omega t=12$"),
+                                      (2, imag, raw"(d) $\mathrm{Im}\,\rho_1$ at $\Omega t=12$"))
+        axis = M.Axis(figure[2, column]; xlabel=ExampleMakie.latex("column state"), ylabel=ExampleMakie.latex("row state"),
             xticks=(1:2, ["g", "e"]), yticks=(1:2, ["g", "e"]),
-            yreversed=true, aspect=M.DataAspect(), title=label,
+            yreversed=true, aspect=M.DataAspect(), title=ExampleMakie.latex(label),
             xgridvisible=false, ygridvisible=false)
         values = component.(rho1)
         plot = M.heatmap!(axis, 1:2, 1:2, permutedims(values);
                          colormap=:RdBu, colorrange=(-1, 1))
         for row in 1:2, col in 1:2
-            M.text!(axis, col, row; text=string(round(values[row, col]; digits=4)),
+            M.text!(axis, col, row; text=ExampleMakie.latex(string(round(values[row, col]; digits=4))),
                     align=(:center, :center), fontsize=18,
                     color=abs(values[row, col]) > 0.6 ? :white : :black)
         end
-        column == 2 && M.Colorbar(figure[2, 3], plot; label="signed matrix element")
+        column == 2 && M.Colorbar(figure[2, 3], plot; label=ExampleMakie.latex("signed matrix element"))
     end
-    M.Label(figure[3, 1:3], "RK4: 32 steps per saved interval  •  All 121 samples are exported; errors are unmodified.";
+    M.Label(figure[3, 1:3], ExampleMakie.latex("RK4: 32 steps per saved interval  •  All 121 samples are exported; errors are unmodified.");
             fontsize=13, color=example_colors.gray)
     save_example_figure(figure, "driven_qubits")
     save_example_data("driven_qubits", (;

@@ -32,27 +32,27 @@ if makie_available()
     M=makie_module()
     figure=example_figure(size=(1120,440),fontsize=17)
     sector_axis=M.Axis(
-        figure[1,1];xlabel="total spin j",ylabel="sector population",
-        title="Multiplicity-weighted Schur sectors")
+        figure[1,1];xlabel=ExampleMakie.latex(raw"total spin $j$"),ylabel=ExampleMakie.latex("sector population"),
+        title=ExampleMakie.latex("Multiplicity-weighted Schur sectors"))
     spectrum_axis=M.Axis(
-        figure[1,2];xlabel="compressed Schur eigenvalue index",
-        ylabel="physical-block eigenvalue",yscale=log10,
-        title="Thermal steady-state spectrum")
+        figure[1,2];xlabel=ExampleMakie.latex("compressed Schur eigenvalue index"),
+        ylabel=ExampleMakie.latex("physical-block eigenvalue"),yscale=log10,
+        title=ExampleMakie.latex("Thermal steady-state spectrum"))
 
     ordered_spins=sector_spins[sector_order]
     M.lines!(sector_axis,ordered_spins,
              exact_sector_populations[sector_order];
-             color=:black,linewidth=2.7,label="exact product state")
+             color=:black,linewidth=2.7,label=ExampleMakie.latex("exact product state"))
     M.scatter!(sector_axis,ordered_spins,
                numeric_sector_populations[sector_order];
-               color=:royalblue,markersize=10,label="PI steady state")
+               color=:royalblue,markersize=10,label=ExampleMakie.latex("PI steady state"))
     M.axislegend(sector_axis;position=:lt,labelsize=13)
 
     spectrum_indices=collect(eachindex(exact_spectrum.values))
     M.lines!(spectrum_axis,spectrum_indices,exact_spectrum.values;
-             color=:black,linewidth=2.7,label="exact product state")
+             color=:black,linewidth=2.7,label=ExampleMakie.latex("exact product state"))
     M.scatter!(spectrum_axis,spectrum_indices,numeric_spectrum.values;
-               color=:firebrick,markersize=7,label="PI steady state")
+               color=:firebrick,markersize=7,label=ExampleMakie.latex("PI steady state"))
     M.axislegend(spectrum_axis;position=:rt,labelsize=13)
     save_example_figure(figure, "local_pumping")
 end

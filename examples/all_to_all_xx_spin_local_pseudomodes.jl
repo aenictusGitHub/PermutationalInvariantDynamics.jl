@@ -850,21 +850,21 @@ if makie_available()
     M=makie_module()
     figure=example_figure(size=(1540,480),fontsize=17)
     dynamics_axis=M.Axis(
-        figure[1,1];xlabel="ωc t",ylabel="Cxx(t)",
-        title="Identical-pair dynamics, L = σ−")
+        figure[1,1];xlabel=ExampleMakie.latex(raw"$\omega_c t$"),ylabel=ExampleMakie.latex(raw"$C_{xx}(t)$"),
+        title=ExampleMakie.latex(raw"Identical-pair dynamics, $L=\sigma_-$"))
     correlation_axis=M.Axis(
-        figure[1,2];xlabel="J / ωc",ylabel="κ / ωc",
-        yscale=log10,title="Steady identical-pair correlation")
+        figure[1,2];xlabel=ExampleMakie.latex(raw"$J/\omega_c$"),ylabel=ExampleMakie.latex(raw"$\kappa/\omega_c$"),
+        yscale=log10,title=ExampleMakie.latex("Steady identical-pair correlation"))
     negativity_axis=M.Axis(
-        figure[1,4];xlabel="J / ωc",ylabel="κ / ωc",
-        yscale=log10,title="Spin-only two-spin negativity")
+        figure[1,4];xlabel=ExampleMakie.latex(raw"$J/\omega_c$"),ylabel=ExampleMakie.latex(raw"$\kappa/\omega_c$"),
+        yscale=log10,title=ExampleMakie.latex("Spin-only two-spin negativity"))
 
     colors=(:maroon,:tomato,:steelblue)
     for (curve,color) in zip(results.dynamics,colors)
         M.lines!(dynamics_axis,
             results.omega_c .* results.dynamics_times,curve.cxx;
             color,linewidth=2.6,
-            label="κ / ωc = $(curve.kappa/results.omega_c)")
+            label=ExampleMakie.latex("\$\\kappa/\\omega_c=$(curve.kappa/results.omega_c)\$"))
     end
     M.hlines!(dynamics_axis,[0.0];color=:gray65,linestyle=:dash)
     M.axislegend(dynamics_axis;position=:rt,labelsize=12)
@@ -888,22 +888,24 @@ if makie_available()
         M.lines!(correlation_axis,
             results.cxx_zero_fit.fit_x,results.cxx_zero_fit.fit_y;
             color=:gold,linewidth=2.8,linestyle=:dash,
-            label="κ/ωc = α(J/ωc)²: α=$(round(results.cxx_zero_fit.alpha;sigdigits=4)), " *
-                  "rel. residual=$(round(results.cxx_zero_fit.relative_l2_residual;sigdigits=2))")
+            label=ExampleMakie.latex(
+                "\$\\kappa/\\omega_c=\\alpha(J/\\omega_c)^2\$: \$\\alpha=$(round(results.cxx_zero_fit.alpha;sigdigits=4))\$, " *
+                "rel. residual=$(round(results.cxx_zero_fit.relative_l2_residual;sigdigits=2))"))
         M.axislegend(correlation_axis;position=:lt,labelsize=11)
     elseif results.cxx_zero_display_model===:general_quadratic
         fit=results.cxx_zero_general_fit
         coefficients=fit.coefficients
         M.lines!(correlation_axis,fit.fit_x,fit.fit_y;
             color=:darkorange,linewidth=2.8,linestyle=:dashdot,
-            label="general quadratic fallback: " *
-                  "a=$(round(coefficients.quadratic;sigdigits=3)), " *
-                  "b=$(round(coefficients.linear;sigdigits=3)), " *
-                  "c=$(round(coefficients.constant;sigdigits=3)), " *
-                  "rel. residual=$(round(fit.relative_l2_residual;sigdigits=2))")
+            label=ExampleMakie.latex(
+                "general quadratic fallback: " *
+                "\$a=$(round(coefficients.quadratic;sigdigits=3))\$, " *
+                "\$b=$(round(coefficients.linear;sigdigits=3))\$, " *
+                "\$c=$(round(coefficients.constant;sigdigits=3))\$, " *
+                "rel. residual=$(round(fit.relative_l2_residual;sigdigits=2))"))
         M.axislegend(correlation_axis;position=:lt,labelsize=10)
     end
-    M.Colorbar(figure[1,3],correlation_plot;label="Cxx")
+    M.Colorbar(figure[1,3],correlation_plot;label=ExampleMakie.latex(raw"$C_{xx}$"))
     M.scatter!(correlation_axis,
         [results.J_dynamic/results.omega_c],[2.0/results.omega_c];
         marker=:star5,markersize=28,color=[results.weak_trajectory_cxx],
@@ -916,7 +918,7 @@ if makie_available()
         negativity_axis,results.J_values ./ results.omega_c,
         results.kappa_values ./ results.omega_c,results.negativity_map;
         colormap=:magma,colorrange=(0,negativity_limit))
-    M.Colorbar(figure[1,5],negativity_plot;label="negativity")
+    M.Colorbar(figure[1,5],negativity_plot;label=ExampleMakie.latex("negativity"))
     M.scatter!(negativity_axis,
         [results.J_dynamic/results.omega_c],[2.0/results.omega_c];
         marker=:star5,markersize=28,
@@ -925,30 +927,31 @@ if makie_available()
         strokecolor=:black,strokewidth=2)
     M.Label(
         figure[2,1:5],
-        "All-to-all PI analogue: Jpair = J/(N−1), N=$(results.N), nmax=$(results.nmax). " *
-        "Stars: $(results.weak_trajectory_stationary.trajectory_count) weak-PI paths, " *
-        "HS SE=$(round(results.weak_trajectory_stationary.standard_error;sigdigits=2)), " *
-        "Cxx=$(round(results.weak_trajectory_cxx;sigdigits=3)), " *
-        "negativity=$(round(results.weak_trajectory_negativity;sigdigits=3)); " *
-        "all unordered pairs share the same correlator.";
+        ExampleMakie.latex(
+            "All-to-all PI analogue: \$J_{\\mathrm{pair}}=J/(N-1),\\;N=$(results.N),\\;n_{\\mathrm{max}}=$(results.nmax)\$. " *
+            "Stars: $(results.weak_trajectory_stationary.trajectory_count) weak-PI paths, " *
+            "HS SE=$(round(results.weak_trajectory_stationary.standard_error;sigdigits=2)), " *
+            "\$C_{xx}=$(round(results.weak_trajectory_cxx;sigdigits=3))\$, " *
+            "negativity=$(round(results.weak_trajectory_negativity;sigdigits=3)); " *
+            "all unordered pairs share the same correlator.");
         fontsize=14,color=:gray35,tellwidth=false)
     save_example_figure(
         figure,"all_to_all_xx_spin_local_pseudomodes")
 
     cutoff_figure=example_figure(size=(1050,430),fontsize=17)
     cutoff_axis=M.Axis(
-        cutoff_figure[1,1];xlabel="ωc t",ylabel="Cxx(t)",
-        title="Pseudomode-cutoff comparison")
+        cutoff_figure[1,1];xlabel=ExampleMakie.latex(raw"$\omega_c t$"),ylabel=ExampleMakie.latex(raw"$C_{xx}(t)$"),
+        title=ExampleMakie.latex("Pseudomode-cutoff comparison"))
     boundary_axis=M.Axis(
-        cutoff_figure[1,2];xlabel="ωc t",
-        ylabel="highest retained-level population",
-        yscale=log10,title="Wider-cutoff boundary population")
+        cutoff_figure[1,2];xlabel=ExampleMakie.latex(raw"$\omega_c t$"),
+        ylabel=ExampleMakie.latex("highest retained-level population"),
+        yscale=log10,title=ExampleMakie.latex("Wider-cutoff boundary population"))
     M.lines!(cutoff_axis,results.omega_c .* results.cutoff_times,
              results.cutoff_1.cxx;color=:black,linewidth=2.6,
-             label="nmax = 1")
+             label=ExampleMakie.latex(raw"$n_{\mathrm{max}}=1$"))
     M.lines!(cutoff_axis,results.omega_c .* results.cutoff_times,
              results.cutoff_2.cxx;color=:darkorange,linewidth=2.3,
-             linestyle=:dash,label="nmax = 2")
+             linestyle=:dash,label=ExampleMakie.latex(raw"$n_{\mathrm{max}}=2$"))
     M.axislegend(cutoff_axis;position=:rb,labelsize=12)
     M.lines!(boundary_axis,results.omega_c .* results.cutoff_times,
              max.(results.cutoff_2.top,eps(Float64));
@@ -958,9 +961,9 @@ if makie_available()
 
     ghz_figure=example_figure(size=(900,600),fontsize=17)
     ghz_axis=M.Axis(
-        ghz_figure[1,1];xlabel="J / ωc",ylabel="κ / ωc",
+        ghz_figure[1,1];xlabel=ExampleMakie.latex(raw"$J/\omega_c$"),ylabel=ExampleMakie.latex(raw"$\kappa/\omega_c$"),
         yscale=log10,
-        title="Parity-selected spin x-GHZ witness, L = σz")
+        title=ExampleMakie.latex(raw"Parity-selected spin $x$-GHZ witness, $L=\sigma_z$"))
     ghz_plot=M.heatmap!(
         ghz_axis,results.dimensionless_J,
         results.dimensionless_kappa,results.ghz_map;
@@ -986,20 +989,20 @@ if makie_available()
             color=:darkorange,linewidth=2.8,linestyle=:dashdot)
     end
     M.Colorbar(ghz_figure[1,2],ghz_plot;
-               label="maximized spin x-GHZ fidelity")
+               label=ExampleMakie.latex(raw"maximized spin $x$-GHZ fidelity"))
     ghz_fit_note=if results.ghz_half_display_model===:power_law
         power=results.ghz_half_power_law_fit
-        "Origin αx² residual = " *
+        raw"Origin $\alpha x^2$ residual = " *
         string(round(results.ghz_half_fit.relative_l2_residual;sigdigits=3)) *
         " > $(results.contour_fit_fallback_threshold).\n" *
         "Dash-dot empirical power law (no critical-exponent claim): " *
-        "α=$(round(power.alpha;sigdigits=4)), " *
-        "β=$(round(power.beta;sigdigits=4)), residual=" *
+        "\$\\alpha=$(round(power.alpha;sigdigits=4))\$, " *
+        "\$\\beta=$(round(power.beta;sigdigits=4))\$, residual=" *
         string(round(power.relative_l2_residual;sigdigits=3))
     elseif results.ghz_half_display_model===:origin_constrained
-        "Dashed origin-constrained guide: α = " *
+        raw"Dashed origin-constrained guide: $\alpha = " *
         string(round(results.ghz_half_fit.alpha;sigdigits=4)) *
-        ", relative L2 residual = " *
+        raw"$, relative $L_2$ residual = " *
         string(round(results.ghz_half_fit.relative_l2_residual;sigdigits=3))
     else
         "No fitted guide displayed; power-law fallback status = " *
@@ -1007,12 +1010,13 @@ if makie_available()
     end
     M.Label(
         ghz_figure[2,1:2],
-        "Spin-parity block $(results.ghz_reduced_dimension)/$(results.pi_dimension) PI coordinates; " *
-        "max ‖ℒρ‖ = " *
-        string(round(maximum(results.ghz_residual_map);sigdigits=3)) *
-        ", propagation check ‖Δρ‖ = " *
-        string(round(results.ghz_propagation_state_error;sigdigits=3)) *
-        "\n" * ghz_fit_note;
+        ExampleMakie.latex(
+            "Spin-parity block $(results.ghz_reduced_dimension)/$(results.pi_dimension) PI coordinates; " *
+            raw"max $\|\mathcal{L}\rho\|$ = " *
+            string(round(maximum(results.ghz_residual_map);sigdigits=3)) *
+            raw", propagation check $\|\Delta\rho\|$ = " *
+            string(round(results.ghz_propagation_state_error;sigdigits=3)) *
+            "\n" * ghz_fit_note);
         fontsize=12.5,color=:gray35,tellwidth=false)
     save_example_figure(
         ghz_figure,"all_to_all_xx_spin_local_pseudomodes_ghz")

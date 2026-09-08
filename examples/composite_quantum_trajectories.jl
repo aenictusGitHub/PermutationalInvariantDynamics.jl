@@ -100,11 +100,11 @@ if makie_available()
 
     figure=example_figure(size=(1120,440),fontsize=17)
     atom_axis=M.Axis(
-        figure[1,1];xlabel="time",ylabel="⟨Jz⟩",
-        title="Compressed ensemble")
+        figure[1,1];xlabel=ExampleMakie.latex("time"),ylabel=ExampleMakie.latex(raw"$\langle J_z\rangle$"),
+        title=ExampleMakie.latex("Compressed ensemble"))
     auxiliary_axis=M.Axis(
-        figure[1,2];xlabel="time",ylabel="ancilla excitation",
-        title="Finite auxiliary factor")
+        figure[1,2];xlabel=ExampleMakie.latex("time"),ylabel=ExampleMakie.latex("ancilla excitation"),
+        title=ExampleMakie.latex("Finite auxiliary factor"))
 
     for (axis,deterministic_values,stochastic_values,statistics) in (
         (atom_axis,deterministic_atom,stochastic_atom,atom_statistics),
@@ -114,18 +114,18 @@ if makie_available()
         M.band!(
             axis,times,statistics.lower,statistics.upper;
             color=(:dodgerblue3,0.20),
-            label="512-path 95% normal interval")
+            label=ExampleMakie.latex("512-path 95% normal interval"))
         M.lines!(
             axis,times,deterministic_values;
-            color=:black,linewidth=2.8,label="master equation")
+            color=:black,linewidth=2.8,label=ExampleMakie.latex("master equation"))
         M.scatterlines!(
             axis,times,stochastic_values;
             color=:darkorange2,linewidth=1.5,markersize=4,
-            label="1,024-path state average")
+            label=ExampleMakie.latex("1,024-path state average"))
         M.lines!(
             axis,times,statistics.mean;
             color=:dodgerblue3,linewidth=2,linestyle=:dash,
-            label="512-path online mean")
+            label=ExampleMakie.latex("512-path online mean"))
     end
     M.axislegend(atom_axis;position=:rb,labelsize=11)
     M.axislegend(auxiliary_axis;position=:rt,labelsize=11)

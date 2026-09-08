@@ -73,14 +73,14 @@ if makie_available()
     figure = example_figure(size=(1040, 420), fontsize=17)
     population_axis = M.Axis(
         figure[1, 1];
-        xlabel="time", ylabel="excited fraction",
-        title="Correlated local-reservoir dynamics")
+        xlabel=ExampleMakie.latex("time"), ylabel=ExampleMakie.latex("excited fraction"),
+        title=ExampleMakie.latex("Correlated local-reservoir dynamics"))
     kossakowski_axis = M.Axis(
         figure[1, 2];
-        xlabel="input channel", ylabel="output channel",
-        xticks=(1:2, ["σ₋", "σz"]),
-        yticks=(1:2, ["σ₋", "σz"]),
-        title="|Γab| (positive-semidefinite bath)")
+        xlabel=ExampleMakie.latex("input channel"), ylabel=ExampleMakie.latex("output channel"),
+        xticks=(1:2, ExampleMakie.latex.([raw"$\sigma_-$", raw"$\sigma_z$"])),
+        yticks=(1:2, ExampleMakie.latex.([raw"$\sigma_-$", raw"$\sigma_z$"])),
+        title=ExampleMakie.latex(raw"$|\Gamma_{ab}|$ (positive-semidefinite bath)"))
 
     M.lines!(
         population_axis, collect(times), population;
@@ -91,6 +91,6 @@ if makie_available()
     gamma_plot = M.heatmap!(
         kossakowski_axis, 1:2, 1:2, abs.(GAMMA);
         colormap=:viridis, colorrange=(0, maximum(abs, GAMMA)))
-    M.Colorbar(figure[1, 3], gamma_plot; label="magnitude")
+    M.Colorbar(figure[1, 3], gamma_plot; label=ExampleMakie.latex("magnitude"))
     save_example_figure(figure, "correlated_reservoirs")
 end

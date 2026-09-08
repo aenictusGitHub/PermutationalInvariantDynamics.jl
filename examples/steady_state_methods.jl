@@ -94,21 +94,21 @@ function main()
         M = makie_module()
         positions = collect(eachindex(solver_labels))
         figure = example_figure(size=(1260, 550))
-        M.Label(figure[0, 1:2], "Stationary-state solvers  •  N=$N, pump/decay=$(up/down)";
+        M.Label(figure[0, 1:2], ExampleMakie.latex("Stationary-state solvers  •  \$N=$N\$, pump/decay=$(up/down)");
                 fontsize=22, font=:bold, halign=:left)
         accuracy_axis = M.Axis(figure[1, 1];
-            xlabel="raw error / residual", xscale=log10, xticks=10.0 .^ (-16:2:-10),
+            xlabel=ExampleMakie.latex("raw error / residual"), xscale=log10, xticks=10.0 .^ (-16:2:-10),
             yticks=(positions, solver_labels), yreversed=true,
-            title="(a) Accuracy against the exact thermal state")
+            title=ExampleMakie.latex("(a) Accuracy against the exact thermal state"))
         iteration_axis = M.Axis(figure[1, 2];
-            xlabel="reported iterations",
+            xlabel=ExampleMakie.latex("reported iterations"),
             yticks=(positions, solver_labels), yreversed=true,
-            title="(b) Solver diagnostics")
+            title=ExampleMakie.latex("(b) Solver diagnostics"))
         # Categories have no continuous interpolation. Retain sub-epsilon
         # values and omit exact zeros only from the logarithmic axis.
         for (values, offset, color, marker, label) in (
-                (residuals, -0.13, example_colors.red, :circle, "Liouvillian residual"),
-                (exact_errors, 0.13, example_colors.blue, :diamond, "PI-state distance"))
+                (residuals, -0.13, example_colors.red, :circle, ExampleMakie.latex("Liouvillian residual")),
+                (exact_errors, 0.13, example_colors.blue, :diamond, ExampleMakie.latex("PI-state distance")))
             positive = findall(>(0), values)
             M.scatter!(accuracy_axis, values[positive], positions[positive] .+ offset;
                        color, marker, markersize=10, label)
@@ -116,21 +116,21 @@ function main()
         M.axislegend(accuracy_axis; position=:rb, labelsize=12)
         for index in positions
             if index <= 3
-                M.text!(iteration_axis, 0.2, index; text="factorization / decomposition",
+                M.text!(iteration_axis, 0.2, index; text=ExampleMakie.latex("factorization / decomposition"),
                         align=(:left, :center), fontsize=13, color=example_colors.gray)
             else
                 M.barplot!(iteration_axis, [index], [iterations[index]];
                            direction=:x, color=index == last(positions) ?
                            example_colors.orange : example_colors.blue, width=0.55)
-                M.text!(iteration_axis, iterations[index] + 0.2, index;
-                        text=string(iterations[index]), align=(:left, :center), fontsize=14)
+                        M.text!(iteration_axis, iterations[index] + 0.2, index;
+                        text=ExampleMakie.latex(string(iterations[index])), align=(:left, :center), fontsize=14)
             end
         end
         M.ylims!(accuracy_axis, length(positions)+0.5, 0.5)
         M.ylims!(iteration_axis, length(positions)+0.5, 0.5)
         M.xlims!(iteration_axis, 0, max(10, maximum(iterations)+2))
         M.Label(figure[2, 1:2],
-            "Warm preconditioned GMRES starts from the direct solution.  •  Iterations do not measure speed; no categorical lines or error floors.";
+            ExampleMakie.latex("Warm preconditioned GMRES starts from the direct solution.  •  Iterations do not measure speed; no categorical lines or error floors.");
             fontsize=13, color=example_colors.gray)
         save_example_figure(figure, "steady_state_methods")
         save_example_data("steady_state_methods", (

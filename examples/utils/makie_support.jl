@@ -2,7 +2,7 @@ module ExampleMakie
 
 import TOML
 
-export makie_available, makie_module, save_example_figure,
+export latex_text, latex, makie_available, makie_module, save_example_figure,
        figure_output_directory, example_figure, example_colors,
        save_example_data
 
@@ -10,9 +10,51 @@ export makie_available, makie_module, save_example_figure,
 const example_colors = (blue="#0072B2", orange="#E69F00", green="#009E73",
                         red="#D55E00", purple="#CC79A7", gray="#667085")
 
+raw"""
+Mark a label as LaTeX content for Makie, preserving any embedded math delimiters.
+This is a mixed text/math label, not the auto-math `L` string macro: put
+formulas inside explicit dollar delimiters, e.g. `raw"$1/N$"` or
+`raw"polarization $\langle J_z\rangle/N$"`. Prose stays upright; variables
+inside math use mathematical italics. Use real TeX subscripts (`J_z`), not
+the plain-text approximation `Jz` or an escaped underscore (`J\_z`).
+Unicode subscript/superscript runs are lowered to TeX scripts: these characters
+are not all present as standalone glyphs in the bundled Computer Modern fonts.
+Without the optional renderer, return the text for dependency-free SVG output.
+Use `renderer=:svg` explicitly for a dependency-free SVG title even when
+CairoMakie is loaded; that renderer expects Unicode text rather than TeX markup.
+Use `raw"..."` when the content includes LaTeX backslashes or dollar signs.
+"""
+function latex_text(text::AbstractString; renderer::Symbol=:makie)
+    renderer in (:makie, :svg) || throw(ArgumentError("renderer must be :makie or :svg"))
+    _available && renderer === :makie ?
+        CairoMakie.Makie.LaTeXStrings.LaTeXString(_latex_unicode_scripts(text)) : text
+end
+latex_text(text) = text
+const latex = latex_text
+
+const _subscript_characters = "₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎ₐₑₕᵢⱼₖₗₘₙₒₚᵣₛₜᵤᵥₓ"
+const _superscript_characters = "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁱⁿ"
+const _subscript_pairs = Tuple(a => b for (a, b) in
+    zip(_subscript_characters, "0123456789+-=()aehijklmnoprstuvx"))
+const _superscript_pairs = Tuple(a => b for (a, b) in
+    zip(_superscript_characters, "0123456789+-=()in"))
+
+_latex_unicode_scripts(text) = replace(text,
+    r"[₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎ₐₑₕᵢⱼₖₗₘₙₒₚᵣₛₜᵤᵥₓ]+" =>
+        run -> "_{" * replace(run, _subscript_pairs...) * "}",
+    r"[⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁱⁿ]+" =>
+        run -> "^{" * replace(run, _superscript_pairs...) * "}")
+
 const _load_error = Ref{Any}(nothing)
 const _render_enabled = lowercase(strip(get(
     ENV, "PID_EXAMPLE_RENDER", "1"))) ∉ ("0", "false", "no", "off")
+function _set_example_font!(CairoMakie_module)
+    # Resolve all four faces to Makie's bundled Computer Modern font objects.
+    # Setting only `font="..."` leaves symbolic :regular/:bold tick/title
+    # fonts unchanged, and an absent system font can silently fall back.
+    CairoMakie_module.set_theme!(CairoMakie_module.theme_latexfonts();font=:regular)
+end
+
 const _declared_in_active_project = let project=Base.active_project()
     project!==nothing&&isfile(project)&&
         haskey(get(TOML.parsefile(project),"deps",Dict{String,Any}()),
@@ -30,6 +72,7 @@ else
     try
         @eval import CairoMakie
         CairoMakie.activate!(type="png")
+        _set_example_font!(CairoMakie)
         true
     catch error
         _load_error[] = error
@@ -56,10 +99,13 @@ figure_output_directory() = get(
     ENV, "PI_EXAMPLE_FIGURE_DIR",
     normpath(joinpath(@__DIR__, "..", "figures")))
 
-"""Construct a consistently styled figure without changing Makie's global theme."""
+"""Construct a consistently styled figure using the shared example theme."""
 function example_figure(; kwargs...)
     M = makie_module()
     M.Figure(;
+        # Keep the shared constructor correct even after a caller resets the
+        # global theme. Explicit caller keywords can still override defaults.
+        fonts=M.theme_latexfonts().fonts, font=:regular,
         figure_padding=24, fontsize=18, backgroundcolor=:white,
         Axis=(titlealign=:left, titlesize=18, titlegap=12,
               xlabelsize=17, ylabelsize=17, xticklabelsize=14, yticklabelsize=14,

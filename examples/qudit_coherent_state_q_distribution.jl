@@ -51,13 +51,13 @@ println("qubit Haar/sphere sanity error: ",
 if makie_available()
     M = makie_module()
     figure = example_figure(size=(900, 470), fontsize=16)
-    axis = M.Axis(figure[1, 1]; xlabel="generator angle",
-        ylabel="Haar-normalized Q", title="Generalized qutrit Husimi data")
+    axis = M.Axis(figure[1, 1]; xlabel=ExampleMakie.latex("generator angle"),
+        ylabel=ExampleMakie.latex(raw"Haar-normalized $Q$"), title=ExampleMakie.latex("Generalized qutrit Husimi data"))
     M.lines!(axis, angles, q.values; linewidth=2.7, color=:black,
-             label="aggregate")
+             label=ExampleMakie.latex("aggregate"))
     for (sector_index, sector) in pairs(q.sectors)
         M.lines!(axis, angles, view(q.sector_values, sector_index, :);
-                 linewidth=1.5, label=string(sector.parts))
+                 linewidth=1.5, label=ExampleMakie.latex(string(sector.parts)))
     end
     M.axislegend(axis; position=:rt, labelsize=11)
     save_example_figure(figure, "qudit_coherent_state_q_distribution")

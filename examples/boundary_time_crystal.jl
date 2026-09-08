@@ -103,20 +103,20 @@ if makie_available()
     M = makie_module()
     figure = example_figure(size=(1350, 430), fontsize=17)
     gap_axis = M.Axis(
-        figure[1, 1]; xlabel="1 / N", ylabel="gap / κ",
-        title="Liouvillian gap", limits=(0, nothing, 0, nothing))
+        figure[1, 1]; xlabel=ExampleMakie.latex(raw"$1/N$"), ylabel=ExampleMakie.latex(raw"$\mathrm{gap}/\kappa$"),
+        title=ExampleMakie.latex("Liouvillian gap"), limits=(0, nothing, 0, nothing))
     damping_axis = M.Axis(
-        figure[1, 2]; xlabel="1 / N", ylabel="−Re λosc / κ",
-        title="Oscillatory-mode damping", limits=(0, nothing, 0, nothing))
+        figure[1, 2]; xlabel=ExampleMakie.latex(raw"$1/N$"), ylabel=ExampleMakie.latex(raw"$-\mathrm{Re}\,\lambda_{\mathrm{osc}}/\kappa$"),
+        title=ExampleMakie.latex("Oscillatory-mode damping"), limits=(0, nothing, 0, nothing))
     frequency_axis = M.Axis(
-        figure[1, 3]; xlabel="1 / N", ylabel="|Im λosc| / κ",
-        title="Oscillation frequency", limits=(0, nothing, 0, nothing))
+        figure[1, 3]; xlabel=ExampleMakie.latex(raw"$1/N$"), ylabel=ExampleMakie.latex(raw"$|\mathrm{Im}\,\lambda_{\mathrm{osc}}|/\kappa$"),
+        title=ExampleMakie.latex("Oscillation frequency"), limits=(0, nothing, 0, nothing))
 
     colors = (:royalblue, :firebrick)
     markers = (:circle, :rect)
     for (case, color, marker) in zip(cases, colors, markers)
         inverse_sizes = 1.0 ./ collect(case.sizes)
-        label = "ω₀ / κ = $(case.ratio)"
+        label=ExampleMakie.latex("\$\\omega_0/\\kappa=$(case.ratio)\$")
         damping = [-real(mode) / kappa for mode in case.modes]
         frequency = [abs(imag(mode)) / kappa for mode in case.modes]
         M.lines!(gap_axis, inverse_sizes, case.gaps ./ kappa;

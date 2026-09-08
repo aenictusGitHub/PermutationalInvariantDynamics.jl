@@ -148,43 +148,43 @@ function main()
 
         figure = example_figure(size=(1100, 470), fontsize=17)
         spectrum_axis = M.Axis(
-            figure[1, 1]; xlabel="Re(ε)", ylabel="Im(ε)",
-            aspect=M.DataAspect(), title="Finite-N Floquet multipliers, N=$N")
+            figure[1, 1]; xlabel=ExampleMakie.latex(raw"$\mathrm{Re}(\varepsilon)$"), ylabel=ExampleMakie.latex(raw"$\mathrm{Im}(\varepsilon)$"),
+            aspect=M.DataAspect(), title=ExampleMakie.latex("Finite-\$N\$ Floquet multipliers, \$N=$N\$"))
         signal_axis = M.Axis(
-            figure[1, 2]; xlabel="period number n",
-            ylabel="⟨Sx⟩ / N - stationary value",
-            title="Decaying subharmonic response")
+            figure[1, 2]; xlabel=ExampleMakie.latex(raw"period number $n$"),
+            ylabel=ExampleMakie.latex(raw"$\langle S_x\rangle/N$ - stationary value"),
+            title=ExampleMakie.latex("Decaying subharmonic response"))
 
         M.lines!(spectrum_axis, cos.(angles), sin.(angles);
                  color=:gray60, linestyle=:dash, linewidth=1.5,
-                 label="unit circle")
+                 label=ExampleMakie.latex("unit circle"))
         M.scatter!(spectrum_axis, real.(multipliers), imag.(multipliers);
                    color=(:royalblue, 0.65), markersize=8,
-                   label="Floquet spectrum")
+                   label=ExampleMakie.latex("Floquet spectrum"))
         M.scatter!(spectrum_axis,
                    [real(multipliers[stationary_index])],
                    [imag(multipliers[stationary_index])];
                    color=:seagreen, marker=:diamond, markersize=13,
-                   label="stationary ε₀")
+                   label=ExampleMakie.latex(raw"stationary $\varepsilon_0$"))
         M.scatter!(spectrum_axis, [real(epsilon_fine)], [imag(epsilon_fine)];
                    color=:firebrick, marker=:star5, markersize=16,
-                   label="subharmonic ε₋")
+                   label=ExampleMakie.latex(raw"subharmonic $\varepsilon_-$"))
         M.axislegend(spectrum_axis; position=:lb, labelsize=11)
 
         M.hlines!(signal_axis, [0.0];
                   color=:gray50, linestyle=:dash,
-                  label="Floquet stationary reference")
+                  label=ExampleMakie.latex("Floquet stationary reference"))
         M.lines!(signal_axis, plotted_periods, deviations;
                  color=:black, linewidth=2.2)
         M.scatter!(signal_axis, plotted_periods, deviations;
                    color=[isodd(n) ? :firebrick : :royalblue
                           for n in plotted_periods],
-                   markersize=10, label="stroboscopic PI dynamics")
+                   markersize=10, label=ExampleMakie.latex("stroboscopic PI dynamics"))
         M.axislegend(signal_axis; position=:rb, labelsize=11)
 
         M.Label(
             figure[2, 1:2],
-            "At N=4, |ε₋| < 1 and the alternating signal decays: this is a finite-size precursor.";
+            ExampleMakie.latex(raw"At $N=4$, $|\varepsilon_-|<1$ and the alternating signal decays: this is a finite-size precursor.");
             fontsize=14, color=:gray35, tellwidth=false)
         save_example_figure(
             figure, "dissipative_discrete_time_crystal")

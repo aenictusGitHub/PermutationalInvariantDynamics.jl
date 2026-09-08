@@ -75,9 +75,9 @@ if makie_available()
     figure = example_figure(size=(880, 460), fontsize=17)
     axis = M.Axis(
         figure[1, 1];
-        xlabel="time",
-        ylabel="mean excitation count",
-        title="Memory-light deterministic and trajectory output",
+        xlabel=ExampleMakie.latex("time"),
+        ylabel=ExampleMakie.latex("mean excitation count"),
+        title=ExampleMakie.latex("Memory-light deterministic and trajectory output"),
     )
     M.band!(
         axis, times,
@@ -86,15 +86,15 @@ if makie_available()
         color=(:darkorange, 0.22))
     M.lines!(
         axis, times, exact_excitations;
-        color=:black, linewidth=2.7, label="analytic")
+        color=:black, linewidth=2.7, label=ExampleMakie.latex("analytic"))
     M.scatter!(
         axis, times, deterministic_excitations;
         color=:royalblue, markersize=9,
-        label="deterministic stream")
+        label=ExampleMakie.latex("deterministic stream"))
     M.scatter!(
         axis, times, sample.mean;
         color=:darkorange, marker=:diamond, markersize=9,
-        label="trajectory stream ±1 SE")
+        label=ExampleMakie.latex("trajectory stream ±1 SE"))
     M.axislegend(axis; position=:rt, labelsize=12)
     save_example_figure(figure, "streaming_output")
 end

@@ -256,18 +256,18 @@ if render_plots && ExampleMakie.makie_available()
     M = ExampleMakie.makie_module()
     figure = ExampleMakie.example_figure(size=(1250, 850), fontsize=17)
     cavity_axis = M.Axis(
-        figure[1, 1]; xlabel="time", ylabel="Γc ⟨J₊J₋⟩",
-        title="(a) Collective cavity channel")
+        figure[1, 1]; xlabel=ExampleMakie.latex("time"), ylabel=ExampleMakie.latex(raw"$\Gamma_c\langle J_+J_-\rangle$"),
+        title=ExampleMakie.latex("(a) Collective cavity channel"))
     free_axis = M.Axis(
-        figure[1, 2]; xlabel="time", ylabel="γl ⟨Ne⟩",
-        title="(b) Sector-changing local channel")
+        figure[1, 2]; xlabel=ExampleMakie.latex("time"), ylabel=ExampleMakie.latex(raw"$\gamma_l\langle N_e\rangle$"),
+        title=ExampleMakie.latex("(b) Sector-changing local channel"))
     error_axis = M.Axis(
-        figure[2, 1]; xlabel="time", ylabel="PI-state 2-norm error",
-        yscale=log10, title="(c) Ensemble convergence")
+        figure[2, 1]; xlabel=ExampleMakie.latex("time"), ylabel=ExampleMakie.latex("PI-state 2-norm error"),
+        yscale=log10, title=ExampleMakie.latex("(c) Ensemble convergence"))
     transition_axis = M.Axis(
-        figure[2, 2]; xlabel="source total spin J",
-        ylabel="target total spin J′",
-        title="(d) Sampled sector changes")
+        figure[2, 2]; xlabel=ExampleMakie.latex(raw"source total spin $J$"),
+        ylabel=ExampleMakie.latex(raw"target total spin $J'$"),
+        title=ExampleMakie.latex("(d) Sampled sector changes"))
 
     for (axis, reference, weak, density) in
         ((cavity_axis,exact_cavity,weak_cavity,density_cavity),
@@ -276,72 +276,72 @@ if render_plots && ExampleMakie.makie_available()
                 color=(:dodgerblue, 0.16))
         M.lines!(axis, times, weak.mean; color=:dodgerblue, linewidth=1.4)
         M.scatter!(axis, times, weak.mean; color=:dodgerblue, markersize=5,
-                   label="weak-PI pseudo-kets (95% CI)")
+                   label=ExampleMakie.latex("weak-PI pseudo-kets (95% CI)"))
         M.band!(axis, times, density.lower, density.upper;
                 color=(:darkorange, 0.14))
         M.lines!(axis, times, density.mean; color=:darkorange, linewidth=1.4)
         M.scatter!(axis, times, density.mean; color=:darkorange,
                    marker=:diamond, markersize=5,
-                   label="density-valued PI paths (95% CI)")
+                   label=ExampleMakie.latex("density-valued PI paths (95% CI)"))
         M.lines!(axis, times, reference; color=:black, linewidth=2.7,
-                 label="population master equation")
+                 label=ExampleMakie.latex("population master equation"))
     end
     M.axislegend(cavity_axis; position=:rt, labelsize=11)
 
     error_floor = eps(Float64)
     M.lines!(error_axis, times, max.(weak_state_errors, error_floor);
-             color=:dodgerblue, linewidth=2.4, label="weak-PI average")
+             color=:dodgerblue, linewidth=2.4, label=ExampleMakie.latex("weak-PI average"))
     M.lines!(error_axis, times, max.(density_state_errors, error_floor);
              color=:darkorange, linewidth=2.4, linestyle=:dash,
-             label="density-valued average")
+             label=ExampleMakie.latex("density-valued average"))
     M.lines!(error_axis, times, max.(population_state_errors, error_floor);
              color=:black, linewidth=1.8, linestyle=:dot,
-             label="population vs full PI")
+             label=ExampleMakie.latex("population vs full PI"))
     M.axislegend(error_axis; position=:rc, labelsize=11)
 
     heatmap = M.heatmap!(
         transition_axis, sector_spins, sector_spins, transition_rates;
         colormap=:magma)
     M.Colorbar(figure[2, 3], heatmap;
-               label="sector-changing events / trajectory")
+               label=ExampleMakie.latex("sector-changing events / trajectory"))
     ExampleMakie.save_example_figure(
         figure, "weak_pi_decay_trajectory_comparison")
 
     comparison = ExampleMakie.example_figure(size=(1650, 480), fontsize=17)
     scaling_axis = M.Axis(
-        comparison[1, 1]; xlabel="number of qubits N",
-        ylabel="coordinates in one stored state", yscale=log10,
-        title="(a) Representation scaling")
+        comparison[1, 1]; xlabel=ExampleMakie.latex(raw"number of qubits $N$"),
+        ylabel=ExampleMakie.latex("coordinates in one stored state"), yscale=log10,
+        title=ExampleMakie.latex("(a) Representation scaling"))
     M.lines!(scaling_axis, scaling_sizes, full_density_dimensions;
              color=:gray35, linewidth=2.3, linestyle=:dot,
-             label="full density matrix 4ᴺ")
+             label=ExampleMakie.latex(raw"full density matrix $4^N$"))
     M.lines!(scaling_axis, scaling_sizes, full_ket_dimensions;
              color=:seagreen4, linewidth=2.3, linestyle=:dash,
-             label="full labeled ket 2ᴺ")
+             label=ExampleMakie.latex(raw"full labeled ket $2^N$"))
     M.lines!(scaling_axis, scaling_sizes, pi_density_dimensions;
              color=:darkorange, linewidth=2.7,
-             label="PI density ∑ν dim(Uν)²")
+             label=ExampleMakie.latex(raw"PI density $\sum_{\nu}\mathrm{dim}(U_\nu)^2$"))
     M.lines!(scaling_axis, scaling_sizes, weak_dimensions;
              color=:dodgerblue, linewidth=2.7,
-             label="weak-PI ket ∑ν dim(Uν)")
+             label=ExampleMakie.latex(raw"weak-PI ket $\sum_{\nu}\mathrm{dim}(U_\nu)$"))
     M.vlines!(scaling_axis, [N]; color=(:black, 0.35), linewidth=1.5)
     M.axislegend(scaling_axis; position=(0.3, 1.0), labelsize=11)
 
     timing_axis = M.Axis(
-        comparison[1, 2]; xlabel="prepared trajectory backend",
-        ylabel="wall time per trajectory [ms]",
+        comparison[1, 2]; xlabel=ExampleMakie.latex("prepared trajectory backend"),
+        ylabel=ExampleMakie.latex("wall time per trajectory [ms]"),
         xticks=([1, 2], ["weak-PI pseudo-ket", "density-valued PI"]),
-        title="(b) Same fixed-step controls, this run")
+        title=ExampleMakie.latex("(b) Same fixed-step controls, this run"))
     timing_values = 1e3 .* [weak_time_per_path, density_time_per_path]
     M.barplot!(timing_axis, [1, 2], timing_values;
                color=[:dodgerblue, :darkorange])
     M.ylims!(timing_axis, 0, 1.15 * maximum(timing_values))
 
     memory_axis = M.Axis(
-        comparison[1, 3]; xlabel="prepared trajectory backend",
-        ylabel="retained history [MiB]",
+        comparison[1, 3]; xlabel=ExampleMakie.latex("prepared trajectory backend"),
+        ylabel=ExampleMakie.latex("retained history [MiB]"),
         xticks=([1, 2], ["weak-PI pseudo-ket", "density-valued PI"]),
-        title="(c) Equal paths and saved times")
+        title=ExampleMakie.latex("(c) Equal paths and saved times"))
     history_values = [weak_history_bytes, density_history_bytes] ./ 2.0^20
     M.barplot!(memory_axis, [1, 2], history_values;
                color=[:dodgerblue, :darkorange])

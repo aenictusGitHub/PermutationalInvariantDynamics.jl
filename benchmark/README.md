@@ -1,6 +1,6 @@
 # Benchmarks
 
-This directory separates seven complementary internal performance tasks:
+This directory separates complementary internal performance tasks:
 
 - `performance_regression.jl` provides small deterministic CI correctness,
   equivalence, retained-storage, and hot-allocation gates. It deliberately
@@ -25,6 +25,16 @@ This directory separates seven complementary internal performance tasks:
 - `batched_trajectories.jl` compares a fixed-capacity matrix-RHS conditional
   trajectory cohort with mathematically identical repeated scalar workspaces.
   It reports timing and warmed allocations without changing path scheduling.
+- `no_jump_kernels.jl` isolates prepared physical residual norms and exact
+  diagonal no-jump resolvents against the previous scalar-scaling/general-Schur
+  reference kernels. It also measures validated prepared GMRES stationary
+  solves at `N=4,16,32`, reports eliminated diagonal scratch, compares scalar
+  and blocked forward/adjoint Sylvester kernels in both complex precisions,
+  and measures complete symmetric-sector resolvent actions at
+  `N=32,64,128,256` (including basis transformations).
+  Run `julia --project=. benchmark/no_jump_kernels.jl`; output includes warmed
+  timings, allocations, numerical agreement, and execution metadata.
+  Kernel speedups are not end-to-end steady-state speedups.
 
 The detailed suite includes an `N=64` symmetric collective group with separate
 plan construction, sparse-first materialization, `:auto` compilation, sparse

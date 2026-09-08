@@ -1511,3 +1511,122 @@ additional metadata: N=10 family setup measured 648.375 μs before and
 a reused workspace remained 1.625 μs. Repeated-use savings should therefore
 be assessed separately from setup costs. Timings are machine- and
 model-dependent; the allocation gates are the reproducible regression checks.
+
+## No-jump-resolvent kernel specialization and stationary deflation
+
+Physical residual norms now reuse the exact sector square-root multiplicity
+scales already retained by the prepared trace functional. This avoids a hook
+dimension computation per coefficient without adding a second cache. Scalar
+division, exceptional exact-scaling fallbacks, and the original physical
+certification thresholds are unchanged. The basis-only internal diagnostic
+computes the scale once per sector.
+
+Both Schur and eigen backends detect exactly diagonal effective-generator
+blocks once during preparation. Those sectors retain only their diagonal
+factor and use checked elementwise forward/adjoint division. A concrete union
+of diagonal and general factor types supports mixed sectors. Any nonzero
+off-diagonal entry, however small, retains the requested general backend;
+dark-state, condition-limit, denominator, and precision checks remain active.
+The initial specialization retained the previous workspace capacity; the
+subsequent buffer-removal and blocked-Sylvester pass is documented below.
+
+The opt-in `deflation=:auto` stationary GMRES policy prepares the same
+identity resolvent as the normal preconditioner, then chooses
+`delta=1/(2*abs(trace(R0*(I/D))))`. The rank-one denominator therefore has an
+exact-arithmetic margin of at least one half. Its computed value is still
+validated by the normal preconditioner check. Numeric values are never
+changed, and this zero-shift policy is deliberately not reused for complex
+spectral shifts or adjoint deflators. Results expose the chosen rate and
+selection policy. The default inexact-IRAM initial relative tolerance also
+now respects final relative tolerances larger than `1e-3`; explicit invalid
+initial tolerances still raise.
+
+`benchmark/no_jump_kernels.jl` provides paired, warmed kernel measurements and
+validated prepared steady-state timing, without a BenchmarkTools dependency.
+On Julia 1.12.6, Apple M4, one Julia/BLAS thread, minimum of 12 warmed samples:
+
+| Complete qubit basis | Scalar norm reference | Prepared norm | General Schur action | Diagonal action |
+|---|---:|---:|---:|---:|
+| N=4, 35 coordinates | 16.583 microseconds | 0.125 microseconds | 1.500 microseconds | 0.166 microseconds |
+| N=16, 969 coordinates | 1,038.208 microseconds | 4.167 microseconds | 35.334 microseconds | 4.167 microseconds |
+| N=32, 6,545 coordinates | 13,266.958 microseconds | 28.166 microseconds | 339.833 microseconds | 26.000 microseconds |
+
+All prepared norm and resolvent measurements allocated zero bytes; the scalar
+norm reference allocated 39,200, 1,736,448, and 19,506,728 bytes respectively.
+The measured norms agreed exactly, and all diagonal/reference action relative
+errors were zero. The separately measured driven steady-state solves used
+27, 80, and 280 GMRES iterations, with physical residuals below `5e-15` and
+trace errors below `9e-11`. Kernel ratios are not end-to-end speedups. The
+performance regression script guards allocations and numerical equivalence,
+not these hardware-dependent timings.
+
+## Diagonal scratch removal and guarded blocked Sylvester solves
+
+Exactly diagonal no-jump sectors now retain empty transformation-buffer
+placeholders rather than two unused square matrices. This removes
+`2 * r_nu^2 * sizeof(T)` numerical bytes per such sector, in both Schur and
+eigen backends. Non-diagonal sectors retain the original two matrices. The
+workspace estimate follows this actual factor layout, and workspace reuse
+requires the exact prepared plan, not merely a matching basis and scalar
+type. This prevents an all-diagonal workspace from being used by a driven
+plan requiring transformation buffers. Effective-generator storage and
+solver vectors are not eliminated.
+
+The general Schur recurrence now uses 16-by-16 Sylvester tiles for contiguous
+`ComplexF32`/`ComplexF64` blocks of dimension at least 64. Inter-tile matrix
+products reuse the transformed right-hand side; intra-tile products,
+accumulations, and divisions retain the checked scalar recurrence. Small
+blocks and other scalar/layout combinations retain the original scalar path.
+The adjoint traversal reverses the dependency order and conjugates the
+appropriate triangular factor. No inverse, extra matrix scratch, numerical
+dropping tolerance, precision conversion, or global BLAS-thread change is
+introduced by the production kernel.
+
+Before `C += A*B`, a sufficient component bound establishes that every
+intermediate product and partial sum remains within the floating range. For
+inner dimension `k` and real-component maximum `M`, each real/imaginary
+component of `A` and `B` must be at most `sqrt(M/(16*k))`, and those of `C`
+must be at most `M/4`. Otherwise the update falls back to individually checked
+scalar products and sums. A large-times-small finite contribution is therefore
+not rejected solely by a norm bound. The BLAS result is also checked for
+nonfinite output. Zero/nonfinite denominators, division overflow, dark-state
+rejection, and the original physical stationary/eigenpair certificates remain
+unchanged. Blocked summation can change rounding at working precision; it
+does not promise bitwise equality or remove sensitivity near a resolvent pole.
+
+The extended `benchmark/no_jump_kernels.jl` separately measures triangular
+kernels and complete symmetric-sector resolvent actions. The latter include
+all four basis transformations, comparing against the original checked
+scalar recurrence on the same prepared Schur factors. Measurements on
+2026-09-08, Julia 1.12.6, Apple M4, one Julia thread and one BLAS thread,
+minimum of 12 warmed samples, with no concurrent test process:
+
+| Symmetric qubits | Hilbert block dimension | Scalar full action | Blocked full action | Speedup |
+|---|---:|---:|---:|---:|
+| N=32 | 33 | 0.0598 ms | 0.0605 ms (scalar path retained) | 0.99x |
+| N=64 | 65 | 0.4627 ms | 0.3522 ms | 1.31x |
+| N=128 | 129 | 3.6298 ms | 2.5326 ms | 1.43x |
+| N=256 | 257 | 28.0850 ms | 17.9442 ms | 1.57x |
+
+These cases use a collective x/z Hamiltonian and collective emission/pumping.
+All selected actions allocated zero bytes. Relative differences from the
+scalar action were below `2.5e-16`, and original shifted-Sylvester equation
+residuals were below `5.4e-15`. Isolated forward/adjoint triangular solves at
+dimensions 64--256 improved by 1.66--2.98x for `ComplexF64` and 2.17--7.07x for
+`ComplexF32`; their relative equation residuals remained below `3.6e-16` and
+`2.2e-7`, respectively. A separate Julia 1.10.11 run on the same machine
+measured full-action speedups of 1.28x, 1.46x, and 1.59x at N=64,128,256,
+also with zero hot allocations and equation residuals below `5.4e-15`.
+These are kernel/action measurements, not claims of the same speedup for
+a complete stationary or spectral solve.
+
+The fully diagonal complete-qubit cases at N=4,16,32 reduced transformation
+scratch from 1,120, 31,008, and 209,440 bytes to zero, respectively. Forward
+actions still agreed exactly with the general Schur reference. Tests also
+cover mixed diagonal/general factors, exact memory-budget boundaries,
+plan-mismatch rejection, ragged tiles, complex shifts, forward/adjoint duality,
+non-contiguous fallback, defective triangular generators, nearby poles, and
+product/sum/division/denominator overflow. The focused no-jump and complex
+shift-invert suites passed 1,141 assertions on each of Julia 1.10.11 and
+1.12.6. The four-thread Julia 1.10 performance regression script and the local
+Documenter build also passed; the full package suite was not rerun in this pass.

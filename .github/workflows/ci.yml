@@ -133,6 +133,8 @@ jobs:
       - uses: julia-actions/cache@a45e8fa8be21c18a06b7177052533149e61e9b38 # v3
         with:
           delete-old-caches: 'false'
+      - name: Enforce LaTeX example plot labels
+        run: julia --startup-file=no test/test_example_plot_label_lint.jl
       - name: Instantiate quality environment
         run: >-
           julia --project=quality -e 'using Pkg; Pkg.develop(path=pwd());
@@ -187,6 +189,29 @@ jobs:
         run: >-
           julia --startup-file=no --project=.
           test/run_quick_examples.jl --shard "${{ matrix.shard }}"
+
+  example-fonts:
+    name: example LaTeX fonts
+    runs-on: ubuntu-latest
+    env:
+      JULIA_NUM_THREADS: 1
+      PID_EXAMPLE_RENDER: 1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: julia-actions/setup-julia@fa02766e078afaaf09b14210362cee14137e6a32 # v3
+        with:
+          version: '1.10'
+      - uses: julia-actions/cache@a45e8fa8be21c18a06b7177052533149e61e9b38 # v3
+        with:
+          delete-old-caches: 'false'
+      - name: Instantiate rendering environment
+        run: >-
+          julia --startup-file=no --project=examples -e 'using Pkg;
+          Pkg.develop(path=pwd()); Pkg.instantiate()'
+      - name: Check bundled fonts and render a temporary smoke figure
+        run: julia --startup-file=no --project=examples test/test_example_fonts.jl
 
   threaded:
     runs-on: ubuntu-latest

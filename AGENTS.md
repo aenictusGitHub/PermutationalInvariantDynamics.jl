@@ -484,6 +484,18 @@ pattern.
   Bartels--Stewart recurrence. The optional eigen backend must reject singular
   or over-limit eigenvector conditioning rather than return an uncertified
   inverse. Preserve plan precision in both routes.
+- Both no-jump backends specialize exactly diagonal effective-generator
+  blocks to checked elementwise forward/adjoint division. Detect exact zeros
+  at preparation; never drop small off-diagonal entries. Physical residual
+  norms reuse the prepared trace-functional multiplicity scales, retaining
+  the checked exact fallback for exceptional scalar ranges.
+- Diagonal no-jump factors retain no numerical transformation scratch. Bind
+  workspaces to their exact prepared plan and charge only the buffers that
+  its factor layout requires. Large standard-complex Schur blocks may use
+  tiled Sylvester updates, but a BLAS update requires a conservative bound
+  excluding intermediate overflow; exceptional magnitudes keep checked
+  scalar accumulation. Preserve checked divisions, the small-block/generic
+  recurrence, adjoint consistency, and original physical residual checks.
 - A zero-shift resolvent requires strict stability of every `G_nu`. An
   imaginary-axis eigenvalue is the theorem's dark-state branch and must raise
   with an alternative-solver explanation; positive shifts remain valid.
@@ -491,6 +503,11 @@ pattern.
   Keep this normalization explicit: it is the paper's unnormalized identity
   after rescaling the deflation coefficient, and it avoids constructing or
   converting `d^N`.
+- Stationary GMRES alone accepts opt-in `deflation=:auto`: choose
+  `delta=1/(2*abs(trace(R0*(I/D))))` and retain the ordinary denominator and
+  true-residual checks. Numeric requests, including the default `1`, are
+  never changed. Report the selected rate and policy; do not extend this
+  zero-shift choice implicitly to complex shifts or adjoint deflators.
 - The fixed-point action is applied directly as `Phi=K*R0`; `I+L*R0` is only
   its algebraic identity and must not be used by the hot kernel because it
   introduces avoidable cancellation. Select the Ritz value nearest one and
@@ -815,6 +832,26 @@ Finite-size gap plots against `1/N` anchor both axes at zero. A plot of an
 approximately size-independent nonzero quantity, such as the imaginary part
 of a slow Liouvillian mode, must include zero on its value axis rather than
 magnifying small variations with a narrow automatic range.
+
+Example `label`/`xlabel`/`ylabel`/`title`/`text` values use
+`ExampleMakie.latex(...)` or an explicit LaTeXStrings constructor. Wrap the
+complete string expression, including concatenation. The shared helper must
+keep core-only examples usable without plotting dependencies. The standalone
+`test/test_example_plot_label_lint.jl` parses all example scripts without
+executing them and is enforced by the quality job and workflow tests; see
+`CONTRIBUTING.md` for its syntax coverage and rendering limitations.
+The shared CairoMakie constructor pins all four bundled Computer Modern faces
+using `theme_latexfonts()`, including symbolic regular/bold tick and title
+fonts; do not rely on a system font-name search or set only `font`. The
+rendering smoke test `test/test_example_fonts.jl` checks the resolved faces
+even after a global theme reset. Regenerate saved files after changing their
+rendering source; the label lint cannot certify existing PNG/PDF artifacts.
+Math fonts alone are not math mode: `ExampleMakie.latex` preserves mixed
+text/math content and requires explicit dollar-delimited formulas. Write
+`J_z` and `\langle J_z\rangle`, never baseline `Jz` or literal `J\_z`;
+keep prose and operator names upright but variables mathematical. The label
+tests check known templates and actual italic/subscript/bracket glyph roles,
+not just the `LaTeXString` type.
 
 `examples/catalog.toml` is the complete machine-readable inventory of paired
 scripts and guides. `scripts/generate_example_gallery.jl` deterministically

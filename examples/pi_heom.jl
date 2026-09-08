@@ -171,24 +171,24 @@ println("HEOM batched forward/adjoint errors = ",
 if makie_available()
     M = makie_module()
     figure = example_figure(size=(1260, 520))
-    M.Label(figure[0, 1:3], "PI–HEOM collective dephasing  •  N=$N";
+    M.Label(figure[0, 1:3], ExampleMakie.latex("PI–HEOM collective dephasing  •  \$N=$N\$");
             fontsize=22, font=:bold, halign=:left)
     signal_axis = M.Axis(
-        figure[1, 1]; xlabel="νt", ylabel="2⟨Jx⟩ / N",
-        title="(a) Normalized coherence")
+        figure[1, 1]; xlabel=ExampleMakie.latex(raw"$\nu t$"), ylabel=ExampleMakie.latex(raw"$2\langle J_x\rangle/N$"),
+        title=ExampleMakie.latex("(a) Normalized coherence"))
     error_axis = M.Axis(
-        figure[1, 2]; xlabel="νt", ylabel="absolute error",
-        yscale=log10, title="(b) Observable error")
-    state_axis = M.Axis(figure[1, 3]; xlabel="hierarchy depth",
-        ylabel="successive-depth root-state distance", yscale=log10,
-        xticks=collect(depths), title="(c) Full-state convergence")
+        figure[1, 2]; xlabel=ExampleMakie.latex(raw"$\nu t$"), ylabel=ExampleMakie.latex("absolute error"),
+        yscale=log10, title=ExampleMakie.latex("(b) Observable error"))
+    state_axis = M.Axis(figure[1, 3]; xlabel=ExampleMakie.latex("hierarchy depth"),
+        ylabel=ExampleMakie.latex("successive-depth root-state distance"), yscale=log10,
+        xticks=collect(depths), title=ExampleMakie.latex("(c) Full-state convergence"))
 
     scaled_times = frequency .* collect(times)
     M.lines!(signal_axis, scaled_times, exact;
-             color=:black, linewidth=3, label="analytic")
+             color=:black, linewidth=3, label=ExampleMakie.latex("analytic"))
     colors = (example_colors.red, example_colors.blue, example_colors.green)
     for (curve, color) in zip(curves, colors)
-        label = "depth $(curve.depth)"
+        label=ExampleMakie.latex("depth $(curve.depth)")
         M.lines!(signal_axis, scaled_times, curve.normalized_Jx;
                  color, linewidth=2, linestyle=:dash, label)
         pointwise_error = abs.(curve.normalized_Jx .- exact)
@@ -202,11 +202,11 @@ if makie_available()
     root_errors = collect(skipmissing(depth_report.pairwise_errors))
     M.scatterlines!(state_axis, collect(depths[2:end]), root_errors;
                     color=example_colors.purple, marker=:diamond,
-                    label="successive depths at final time")
+                    label=ExampleMakie.latex("successive depths at final time"))
     M.hlines!(state_axis, [1e-7]; color=:black, linestyle=:dash,
-              label="requested state tolerance")
+              label=ExampleMakie.latex("requested state tolerance"))
     M.axislegend(state_axis; position=:rc, labelsize=11)
-    M.Label(figure[2, 1:3], "The coherence is accurate; the stronger root-state test has not converged.  •  Exact zeros omitted only on log axes.";
+    M.Label(figure[2, 1:3], ExampleMakie.latex("The coherence is accurate; the stronger root-state test has not converged.  •  Exact zeros omitted only on log axes.");
             fontsize=13, color=example_colors.gray)
     save_example_figure(figure, "pi_heom")
     save_example_data("pi_heom", (

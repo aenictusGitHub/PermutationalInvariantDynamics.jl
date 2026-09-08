@@ -102,28 +102,28 @@ function main()
         M = makie_module()
         figure = example_figure(size=(1150, 470), fontsize=17)
         spectrum_axis = M.Axis(
-            figure[1, 1]; xlabel="Re(λ)", ylabel="Im(λ)",
-            title="Balanced finite-N spectrum, N=$N")
+            figure[1, 1]; xlabel=ExampleMakie.latex(raw"$\mathrm{Re}(\lambda)$"), ylabel=ExampleMakie.latex(raw"$\mathrm{Im}(\lambda)$"),
+            title=ExampleMakie.latex("Balanced finite-\$N\$ spectrum, \$N=$N\$"))
         dynamics_axis = M.Axis(
-            figure[1, 2]; xlabel="time", ylabel="⟨Sz⟩ / S",
-            title="Damped collective oscillation, N=$Ndyn")
+            figure[1, 2]; xlabel=ExampleMakie.latex("time"), ylabel=ExampleMakie.latex(raw"$\langle S_z\rangle/S$"),
+            title=ExampleMakie.latex("Damped collective oscillation, \$N=$Ndyn\$"))
 
         M.vlines!(spectrum_axis, [0.0]; color=:gray65, linestyle=:dash)
         M.scatter!(spectrum_axis, real.(exact), imag.(exact);
                    marker=:circle, color=(:white, 0.0),
                    strokecolor=:firebrick, strokewidth=1.7,
-                   markersize=11, label="Eq. (14)")
+                   markersize=11, label=ExampleMakie.latex("Eq. (14)"))
         M.scatter!(spectrum_axis, real.(numerical), imag.(numerical);
                    marker=:cross, color=:black, markersize=8,
-                   label="PI diagonalization")
+                   label=ExampleMakie.latex("PI diagonalization"))
         M.axislegend(spectrum_axis; position=:lt, labelsize=12)
 
         M.lines!(dynamics_axis, times, exact_magnetization;
                  color=:black, linewidth=2.7,
-                 label="exp(-4κt/N) cos(gt)")
+                 label=ExampleMakie.latex(raw"$\exp(-4\kappa t/N)\cos(gt)$"))
         M.scatter!(dynamics_axis, times, magnetization;
                    color=:royalblue, markersize=9,
-                   label="matrix-free PI dynamics")
+                   label=ExampleMakie.latex("matrix-free PI dynamics"))
         M.hlines!(dynamics_axis, [0.0]; color=:gray70, linewidth=1)
         M.axislegend(dynamics_axis; position=:rt, labelsize=12)
 

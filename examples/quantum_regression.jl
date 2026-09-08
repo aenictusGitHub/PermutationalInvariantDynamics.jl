@@ -85,43 +85,43 @@ if makie_available()
     M = makie_module()
     figure = example_figure(size=(1480, 440), fontsize=17)
     correlation_axis = M.Axis(
-        figure[1, 1]; xlabel="delay τ", ylabel="C(τ)",
-        title="First-order quantum regression")
+        figure[1, 1]; xlabel=ExampleMakie.latex(raw"delay $\tau$"), ylabel=ExampleMakie.latex(raw"$C(\tau)$"),
+        title=ExampleMakie.latex("First-order quantum regression"))
     antibunching_axis = M.Axis(
-        figure[1, 2]; xlabel="delay τ", ylabel="g²(τ)",
-        title="Single-emitter antibunching")
+        figure[1, 2]; xlabel=ExampleMakie.latex(raw"delay $\tau$"), ylabel=ExampleMakie.latex(raw"$g^{(2)}(\tau)$"),
+        title=ExampleMakie.latex("Single-emitter antibunching"))
     spectrum_axis = M.Axis(
-        figure[1, 3]; xlabel="frequency ω", ylabel="S(ω)",
-        title="One-sided matrix-free spectrum")
+        figure[1, 3]; xlabel=ExampleMakie.latex(raw"frequency $\omega$"), ylabel=ExampleMakie.latex(raw"$S(\omega)$"),
+        title=ExampleMakie.latex("One-sided matrix-free spectrum"))
 
     M.lines!(correlation_axis, delays, real.(correlation_exact);
-             color=:black, linewidth=2.5, label="Re analytic")
+             color=:black, linewidth=2.5, label=ExampleMakie.latex("Re analytic"))
     M.lines!(correlation_axis, delays, imag.(correlation_exact);
              color=:gray45, linewidth=2.3, linestyle=:dash,
-             label="Im analytic")
+             label=ExampleMakie.latex("Im analytic"))
     M.scatter!(correlation_axis, delays, real.(correlation);
-               color=:royalblue, markersize=5, label="Re PI")
+               color=:royalblue, markersize=5, label=ExampleMakie.latex("Re PI"))
     M.scatter!(correlation_axis, delays, imag.(correlation);
                color=:darkorange, markersize=5, marker=:utriangle,
-               label="Im PI")
+               label=ExampleMakie.latex("Im PI"))
     M.axislegend(correlation_axis; position=:rt, labelsize=10)
 
     M.lines!(antibunching_axis, delays, g2_exact;
-             color=:black, linewidth=2.6, label="analytic")
+             color=:black, linewidth=2.6, label=ExampleMakie.latex("analytic"))
     M.scatter!(antibunching_axis, delays, real.(g2);
-               color=:firebrick, markersize=6, label="PI")
+               color=:firebrick, markersize=6, label=ExampleMakie.latex("PI"))
     M.axislegend(antibunching_axis; position=:rb, labelsize=11)
 
     M.lines!(spectrum_axis, frequencies, real.(spectrum_exact);
-             color=:black, linewidth=2.5, label="Re analytic")
+             color=:black, linewidth=2.5, label=ExampleMakie.latex("Re analytic"))
     M.lines!(spectrum_axis, frequencies, imag.(spectrum_exact);
              color=:gray45, linewidth=2.3, linestyle=:dash,
-             label="Im analytic")
+             label=ExampleMakie.latex("Im analytic"))
     M.scatter!(spectrum_axis, frequencies, real.(spectrum.values);
-               color=:seagreen, markersize=5, label="Re GMRES")
+               color=:seagreen, markersize=5, label=ExampleMakie.latex("Re GMRES"))
     M.scatter!(spectrum_axis, frequencies, imag.(spectrum.values);
                color=:purple, markersize=5, marker=:diamond,
-               label="Im GMRES")
+               label=ExampleMakie.latex("Im GMRES"))
     M.axislegend(spectrum_axis; position=:rt, labelsize=10)
     save_example_figure(figure, "quantum_regression")
 end

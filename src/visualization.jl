@@ -525,6 +525,10 @@ end
 const _SCHUR_SVG_PALETTE=("#eff6ff","#dbeafe","#bfdbfe","#93c5fd",
                           "#60a5fa","#3b82f6","#2563eb","#1d4ed8",
                           "#1e40af","#1e3a8a")
+const _SCHUR_SVG_FONT_STACK_SERIF =
+    "Latin Modern Roman, STIX Two Text, Times New Roman, serif"
+const _SCHUR_SVG_FONT_STACK_MONO =
+    "Latin Modern Mono, Courier New, Courier, monospace"
 
 function _schur_color(value)
     index=clamp(floor(Int,value*(length(_SCHUR_SVG_PALETTE)-1))+1,
@@ -570,7 +574,7 @@ function _show_young_diagram(io,structure,index,center_x,center_y,
         # N=0 has the empty partition.  There are deliberately no box nodes.
         print(io,"<text class=\"young-empty-diagram\" x=\"",center_x,
               "\" y=\"",center_y+3,"\" text-anchor=\"middle\" ",
-              "font-family=\"serif\" font-size=\"11\">∅</text></g>")
+              "font-family=\"",_SCHUR_SVG_FONT_STACK_SERIF,"\" font-size=\"11\">∅</text></g>")
         return
     end
     longest=first(rows);row_count=length(rows)
@@ -622,21 +626,24 @@ function show(io::IO,::MIME"image/svg+xml",visualization::SchurBlockVisualizatio
           "\" role=\"img\">")
     print(io,"<rect width=\"100%\" height=\"100%\" fill=\"#ffffff\"/>")
     print(io,"<text x=\"",width/2,"\" y=\"30\" text-anchor=\"middle\" ",
-          "font-family=\"sans-serif\" font-size=\"18\" font-weight=\"600\">",
+          "font-family=\"",_SCHUR_SVG_FONT_STACK_SERIF,"\" font-size=\"18\" font-weight=\"600\">",
           _svg_escape(visualization.title),"</text>")
     subtitle=structure.kind===:superoperator ? "columns: input sector · rows: output sector" :
                                                "diagonal PI Schur sectors"
     print(io,"<text x=\"",width/2,"\" y=\"52\" text-anchor=\"middle\" ",
-          "font-family=\"sans-serif\" font-size=\"12\" fill=\"#475569\">",
+          "font-family=\"",_SCHUR_SVG_FONT_STACK_SERIF,
+          "\" font-size=\"12\" fill=\"#475569\">",
           subtitle,"</text>")
     for (index,sector) in pairs(structure.sectors)
         label=_svg_escape(_schur_label(sector));center=x0+(index-0.5)*cell
         print(io,"<text x=\"",center,"\" y=\"",y0-10,
-              "\" text-anchor=\"middle\" font-family=\"monospace\" font-size=\"11\">",
+              "\" text-anchor=\"middle\" font-family=\"",_SCHUR_SVG_FONT_STACK_MONO,
+              "\" font-size=\"11\">",
               label,"</text>")
         center_y=y0+(index-0.5)*cell
         print(io,"<text x=\"",x0-10,"\" y=\"",center_y+4,
-              "\" text-anchor=\"end\" font-family=\"monospace\" font-size=\"11\">",
+              "\" text-anchor=\"end\" font-family=\"",_SCHUR_SVG_FONT_STACK_MONO,
+              "\" font-size=\"11\">",
               label,"</text>")
         if diagrams
             thumbnail_width=min(34.0,0.78cell)
@@ -670,12 +677,14 @@ function show(io::IO,::MIME"image/svg+xml",visualization::SchurBlockVisualizatio
         if visualization.show_values
             text_color=active&&normalized[row,column]>0.55 ? "#ffffff" : "#0f172a"
             print(io,"<text x=\"",x+cell/2,"\" y=\"",y+cell/2+4,
-                  "\" text-anchor=\"middle\" font-family=\"sans-serif\" font-size=\"10\" fill=\"",
+                  "\" text-anchor=\"middle\" font-family=\"",_SCHUR_SVG_FONT_STACK_MONO,
+                  "\" font-size=\"10\" fill=\"",
                   text_color,"\">",_svg_escape(label),"</text>")
         end
     end
     print(io,"<text x=\"",width/2,"\" y=\"",height-24,
-          "\" text-anchor=\"middle\" font-family=\"sans-serif\" font-size=\"11\" fill=\"#475569\">",
+          "\" text-anchor=\"middle\" font-family=\"",_SCHUR_SVG_FONT_STACK_SERIF,
+          "\" font-size=\"11\" fill=\"#475569\">",
           "metric: ",structure.metric," · representation: ",structure.representation,
           " · threshold: ",_svg_escape(structure.threshold),"</text></svg>")
 end

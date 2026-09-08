@@ -32,6 +32,39 @@ entropy_alloc=@allocated von_neumann_entropy(entropy_state)
 @assert entropy_alloc<=2400*1024 "validated entropy allocated $entropy_alloc bytes"
 println("Preparation/analysis gates: support_count_alloc=$support_count_alloc, preflight_alloc=$preflight_alloc, entropy_alloc=$entropy_alloc")
 
+# Prepared no-jump diagnostics reuse existing trace-functional scales. A
+# coefficient-by-coefficient hook-formula regression allocates megabytes here.
+function no_jump_kernel_gates()
+    basis=PIBasis(16,2);spin=spin_matrices(2)
+    plan=NoJumpIterativePlan(PIModel(basis,(
+        LocalHamiltonian(0.23spin.jz),LocalJump(spin.jm;rate=0.31),
+        LocalJump(spin.jp;rate=0.09))))
+    work=NoJumpResolventWorkspace(plan.no_jump)
+    x=randn(MersenneTwister(0x6a7e),ComplexF64,length(basis));y=similar(x)
+    physical_maximum=PermutationalInvariantDynamics._no_jump_iterative_physical_maximum
+    @assert physical_maximum(plan,x)==physical_maximum(basis,x)
+    physical_maximum(plan,x)
+    norm_alloc=@allocated physical_maximum(plan,x)
+    @assert norm_alloc<=1024 "prepared physical norm allocated $norm_alloc bytes"
+    @assert plan.metadata.diagonal_sectors==length(basis.sectors)
+    @assert all(pair->all(isempty,pair),work.blocks)
+    @assert PermutationalInvariantDynamics._no_jump_iterative_workspace_estimate(
+        plan.no_jump)==0
+    no_jump_resolvent!(y,plan.no_jump,x,0.4,work)
+    action_alloc=@allocated no_jump_resolvent!(y,plan.no_jump,x,0.4,work)
+    @assert action_alloc<=2048 "diagonal no-jump action allocated $action_alloc bytes"
+    for (sector,G) in pairs(plan.no_jump.generator_blocks)
+        n=size(G,1);offset=basis.offsets[sector]-1
+        for column in 1:n,row in 1:n
+            index=offset+row+(column-1)*n
+            @assert isapprox((0.4-G[row,row]-conj(G[column,column]))*y[index],
+                x[index];atol=1e-12,rtol=1e-12)
+        end
+    end
+    println("No-jump kernel gates: norm_alloc=$norm_alloc, action_alloc=$action_alloc")
+end
+no_jump_kernel_gates()
+
 b=PIBasis(6,2)
 sm=ComplexF64[0 1;0 0]
 sx=ComplexF64[0 1;1 0]

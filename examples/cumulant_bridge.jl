@@ -84,29 +84,29 @@ if makie_available()
 
     figure=example_figure(size=(1080,430),fontsize=17)
     error_axis=M.Axis(
-        figure[1,1];xlabel="moment order",
-        ylabel="maximum absolute closure error",yscale=log10,
-        xticks=orders,title="Product closure (display floor ε)")
+        figure[1,1];xlabel=ExampleMakie.latex("moment order"),
+        ylabel=ExampleMakie.latex("maximum absolute closure error"),yscale=log10,
+        xticks=orders,title=ExampleMakie.latex(raw"Product closure (display floor $\epsilon$)"))
     count_axis=M.Axis(
-        figure[1,2];xlabel="moment order",ylabel="stored values",
-        xticks=orders,title="Permutation-symmetric moment table")
+        figure[1,2];xlabel=ExampleMakie.latex("moment order"),ylabel=ExampleMakie.latex("stored values"),
+        xticks=orders,title=ExampleMakie.latex("Permutation-symmetric moment table"))
 
     M.scatterlines!(
         error_axis,orders,max.(product_errors,eps(Float64));
         color=:seagreen4,linewidth=2.2,markersize=10,
-        label="product input")
+        label=ExampleMakie.latex("product input"))
     M.scatterlines!(
         error_axis,orders,max.(correlated_errors,eps(Float64));
         color=:firebrick3,linewidth=2.2,markersize=10,
-        label="GHZ input")
+        label=ExampleMakie.latex("GHZ input"))
     M.scatterlines!(
         count_axis,orders,canonical_counts;
         color=:dodgerblue3,linewidth=2.2,markersize=10,
-        label="canonical multisets")
+        label=ExampleMakie.latex("canonical multisets"))
     M.scatterlines!(
         count_axis,orders,ordered_counts;
         color=:gray35,linewidth=2,markersize=9,linestyle=:dash,
-        label="all ordered words")
+        label=ExampleMakie.latex("all ordered words"))
     M.axislegend(error_axis;position=:lt)
     M.axislegend(count_axis;position=:lt)
     save_example_figure(figure,"cumulant_bridge")

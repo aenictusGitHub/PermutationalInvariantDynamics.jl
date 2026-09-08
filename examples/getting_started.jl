@@ -73,30 +73,30 @@ println("8-versus-16-step excitation difference: ", step_error)
 if makie_available()
     M = makie_module()
     figure = example_figure(size=(1120, 490))
-    M.Label(figure[0, 1:2], "Prepared PI dynamics  •  N=$N, Ω=0.7, decay=0.12, pump=0.02";
+    M.Label(figure[0, 1:2], ExampleMakie.latex("Prepared PI dynamics  •  \$N=$N,\\;\\Omega=0.7\$, decay=0.12, pump=0.02");
             fontsize=22, font=:bold, halign=:left)
     dynamics_axis = M.Axis(
-        figure[1, 1]; xlabel="time", ylabel="excited fraction",
-        title="(a) Excitation and stationary value")
+        figure[1, 1]; xlabel=ExampleMakie.latex("time"), ylabel=ExampleMakie.latex("excited fraction"),
+        title=ExampleMakie.latex("(a) Excitation and stationary value"))
     convergence_axis = M.Axis(
-        figure[1, 2]; xlabel="time",
-        ylabel="|8-step − 16-step result|",
-        title="(b) RK4 step refinement")
+        figure[1, 2]; xlabel=ExampleMakie.latex("time"),
+        ylabel=ExampleMakie.latex("|8-step − 16-step result|"),
+        title=ExampleMakie.latex("(b) RK4 step refinement"))
 
     M.lines!(dynamics_axis, times, excited_fraction;
-             color=example_colors.blue, linewidth=2.7, label="16 steps / interval")
+             color=example_colors.blue, linewidth=2.7, label=ExampleMakie.latex("16 steps / interval"))
     M.scatter!(dynamics_axis, times, coarse_excited_fraction;
-               color=example_colors.orange, markersize=6, label="8 steps / interval")
+               color=example_colors.orange, markersize=6, label=ExampleMakie.latex("8 steps / interval"))
     M.hlines!(dynamics_axis, [steady_excited_fraction];
               color=:black, linewidth=2, linestyle=:dash,
-              label="stationary state")
+              label=ExampleMakie.latex("stationary state"))
     M.axislegend(dynamics_axis; position=:rt, labelsize=11)
 
     M.lines!(convergence_axis, times, pointwise_step_error;
              color=example_colors.red, linewidth=2.4)
     M.scatter!(convergence_axis, times, pointwise_step_error;
                color=example_colors.red, markersize=6)
-    M.Label(figure[2, 1:2], "Step difference is a refinement diagnostic, not an error bound.  •  Output spacing: Δt=0.1.";
+    M.Label(figure[2, 1:2], ExampleMakie.latex(raw"Step difference is a refinement diagnostic, not an error bound.  •  Output spacing: $\Delta t=0.1$.");
             fontsize=13, color=example_colors.gray)
     save_example_figure(figure, "getting_started")
     save_example_data("getting_started", (;

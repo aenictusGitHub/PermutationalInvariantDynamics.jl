@@ -58,6 +58,7 @@ const TEST_FILES=(
     (:workflows,"test_examples.jl"),
     (:workflows,"test_examples_catalog.jl"),
     (:workflows,"test_example_output.jl"),
+    (:workflows,"test_example_plot_label_lint.jl"),
     (:workflows,"test_model_code_generator.jl"),
     (:workflows,"test_model_code_generator_productization.jl"),
     (:workflows,"test_benchmark_sources.jl"),

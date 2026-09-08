@@ -51,24 +51,24 @@ if makie_available()
     pump_ratios = [result.pump / GammaC for result in results]
     figure = example_figure(size=(1350, 430), fontsize=17)
     intensity_axis = M.Axis(
-        figure[1, 1]; xlabel="w / Γc", ylabel="I / Γc",
-        xscale=log10, title="Steady radiated intensity")
+        figure[1, 1]; xlabel=ExampleMakie.latex(raw"$w/\Gamma_c$"), ylabel=ExampleMakie.latex(raw"$I/\Gamma_c$"),
+        xscale=log10, title=ExampleMakie.latex("Steady radiated intensity"))
     excitation_axis = M.Axis(
-        figure[1, 2]; xlabel="w / Γc", ylabel="Ne / N",
-        xscale=log10, title="Excited-state fraction")
+        figure[1, 2]; xlabel=ExampleMakie.latex(raw"$w/\Gamma_c$"), ylabel=ExampleMakie.latex(raw"$N_e/N$"),
+        xscale=log10, title=ExampleMakie.latex("Excited-state fraction"))
     enhancement_axis = M.Axis(
-        figure[1, 3]; xlabel="w / Γc", ylabel="I / (Ne Γc)",
-        xscale=log10, title="Collective enhancement")
+        figure[1, 3]; xlabel=ExampleMakie.latex(raw"$w/\Gamma_c$"), ylabel=ExampleMakie.latex(raw"$I/(N_e\Gamma_c)$"),
+        xscale=log10, title=ExampleMakie.latex("Collective enhancement"))
 
     M.lines!(intensity_axis, pump_ratios,
              [result.intensity / GammaC for result in results];
              color=:firebrick, linewidth=2.7)
     M.scatter!(intensity_axis, pump_ratios,
                [result.intensity / GammaC for result in results];
-               color=:firebrick, markersize=5, label="finite N = $N")
+               color=:firebrick, markersize=5, label=ExampleMakie.latex("finite \$N=$N\$"))
     M.hlines!(intensity_axis, [large_N_maximum];
               color=:gray45, linestyle=:dash,
-              label="large-N peak N²/8")
+              label=ExampleMakie.latex(raw"large-$N$ peak $N^2/8$"))
     M.axislegend(intensity_axis; position=:lc, labelsize=12)
 
     M.lines!(excitation_axis, pump_ratios,
@@ -83,10 +83,10 @@ if makie_available()
              color=:seagreen, linewidth=2.7)
     M.scatter!(enhancement_axis, pump_ratios,
                [result.enhancement for result in results];
-               color=:seagreen, markersize=5, label="collective result")
+               color=:seagreen, markersize=5, label=ExampleMakie.latex("collective result"))
     M.hlines!(enhancement_axis, [1.0];
               color=:gray45, linestyle=:dash,
-              label="independent emission")
+              label=ExampleMakie.latex("independent emission"))
     M.axislegend(enhancement_axis; position=:lt, labelsize=12)
 
     save_example_figure(figure, "steady_superradiance")

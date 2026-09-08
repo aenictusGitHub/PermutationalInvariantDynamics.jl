@@ -93,21 +93,21 @@ if makie_available()
     M = makie_module()
     figure = example_figure(size=(1380, 430), fontsize=17)
     population_axis = M.Axis(
-        figure[1, 1]; xlabel="time",
-        ylabel="excitation / photon number",
-        title="Shared-cavity exchange and decay")
+        figure[1, 1]; xlabel=ExampleMakie.latex("time"),
+        ylabel=ExampleMakie.latex("excitation / photon number"),
+        title=ExampleMakie.latex("Shared-cavity exchange and decay"))
     flux_axis = M.Axis(
-        figure[1, 2]; xlabel="time",
-        ylabel="κ ⟨a†a⟩", title="Radiated cavity flux")
+        figure[1, 2]; xlabel=ExampleMakie.latex("time"),
+        ylabel=ExampleMakie.latex(raw"$\kappa\langle a^\dagger a\rangle$"), title=ExampleMakie.latex("Radiated cavity flux"))
     cutoff_axis = M.Axis(
-        figure[1, 3]; xlabel="time",
-        ylabel="highest-level population",
-        yscale=log10, title="Pseudomode-cutoff diagnostic")
+        figure[1, 3]; xlabel=ExampleMakie.latex("time"),
+        ylabel=ExampleMakie.latex("highest-level population"),
+        yscale=log10, title=ExampleMakie.latex("Pseudomode-cutoff diagnostic"))
 
     M.lines!(population_axis, times, atom_population;
-             color=:firebrick, linewidth=2.7, label="atomic excitation")
+             color=:firebrick, linewidth=2.7, label=ExampleMakie.latex("atomic excitation"))
     M.lines!(population_axis, times, cavity_population;
-             color=:royalblue, linewidth=2.7, label="cavity photons")
+             color=:royalblue, linewidth=2.7, label=ExampleMakie.latex("cavity photons"))
     M.axislegend(population_axis; position=:rt, labelsize=11)
     M.lines!(flux_axis, times, radiated_flux;
              color=:darkorange, linewidth=2.7)

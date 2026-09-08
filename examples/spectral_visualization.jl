@@ -1,5 +1,6 @@
 using LinearAlgebra
 using PermutationalInvariantDynamics
+include(joinpath(@__DIR__, "utils", "makie_support.jl"))
 
 # A complete N=3 qubit PI spectrum has dimension 20, so dense diagonalization
 # is inexpensive and gives every mode rather than a selected Krylov window.
@@ -33,7 +34,7 @@ nonstationary = liouvillian_values[eachindex(liouvillian_values) .!= stationary_
 
 liouvillian_figure = visualize_spectrum(
     liouvillian_data;
-    title="N=3 driven-decaying Liouvillian spectrum",
+    title=ExampleMakie.latex("N=3 driven-decaying Liouvillian spectrum"; renderer=:svg),
     show_indices=true,
 )
 
@@ -92,11 +93,11 @@ principal_log_error = maximum(
 
 multiplier_figure = visualize_spectrum(
     multiplier_data;
-    title="Floquet multipliers (unit disk)",
+    title=ExampleMakie.latex("Floquet multipliers (unit disk)"),
 )
 exponent_figure = visualize_spectrum(
     exponent_data;
-    title="Floquet exponents (principal branch)",
+    title=ExampleMakie.latex("Floquet exponents (principal branch)"),
 )
 
 # Generated figures are deliberately temporary: running an example must not

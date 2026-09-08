@@ -128,12 +128,42 @@ shifted = no_jump_resolvent(
 Use [`no_jump_resolvent!`](@ref) with separate source and destination vectors
 inside a hot loop. Source and destination may not alias.
 
+Exactly diagonal effective-generator blocks use checked elementwise division
+in either backend. The specialization is selected once during preparation,
+using exact structural zeros; nearly diagonal blocks keep the requested
+Schur or eigen solver. `resolvent_plan.metadata.diagonal_sectors` reports the
+number of specialized sectors. Their action costs $O(r_\nu^2)$ instead of
+$O(r_\nu^3)$, without changing the dark-state, denominator, or precision checks.
+Their workspaces also omit both transformation buffers, saving
+`2 * r_nu^2 * sizeof(T)` bytes of numerical scratch per diagonal sector.
+The effective-generator blocks and input/output vectors remain stored.
+
+For standard complex precision, contiguous Schur blocks of dimension 64 or
+larger currently use 16-by-16 Sylvester tiles. Updates between tiles use
+matrix multiplication only after conservative component bounds rule out
+intermediate overflow. Exceptional magnitudes retain checked scalar products
+and sums; every tile still uses checked scalar divisions. The adjoint route
+uses the reverse dependency order. This preserves the Schur backend, needs no
+additional matrix scratch, and leaves small blocks and unsupported layouts
+on the original recurrence. Reordering floating-point sums can change rounding
+at working precision; the final physical solver certificates are unchanged.
+
+For dynamics confined to the fully symmetric qubit Hilbert subspace, construct
+`PIBasis(N, 2; sectors=[(N, 0)])` before the model. The solver then handles one
+`(N+1)`-dimensional Hilbert block. A symmetric initial state does not implicitly
+restrict a complete PI basis, and independent local jumps generally do not
+preserve this Hilbert subspace. The same optimization applies to symmetric
+qudits with block dimension $\binom{N+d-1}{d-1}$.
+
 ## One prepared solver family
 
 [`NoJumpIterativePlan`](@ref) combines the no-jump factorization, the exact matrix-free
 PI Liouvillian, the physical trace functional, and a trace-one identity
 direction. [`NoJumpIterativeWorkspace`](@ref) owns all mutable sector, Liouvillian, and
 recycled-GMRES scratch.
+Because diagonal and non-diagonal plans require different buffer layouts,
+each no-jump workspace belongs to its exact prepared plan; sharing a basis
+and scalar type is not sufficient for reuse with another plan.
 
 ```julia
 plan = NoJumpIterativePlan(model; backend=:schur)
@@ -178,9 +208,35 @@ steady.physical_residual_inf
 steady.state_diagnostics.valid
 ```
 
+The numeric default `deflation=1` is kept for compatibility. It can coincide
+with a pole of the rank-one **preconditioner**, even when the physical
+stationary problem is nonsingular after trace fixing. For example, a single
+qubit with equal unit pumping and decay rates has this coincidence. Opt into
+automatic selection for a zero-shift GMRES stationary solve:
+
+```julia
+steady = no_jump_iterative_steady_state(
+    plan; method=:gmres, workspace, deflation=:auto, return_info=true)
+steady.deflation             # actual positive rate used
+steady.deflation_selection   # :auto (or :explicit for a numeric request)
+steady.linear_solver.preconditioner_denominator
+```
+
+Writing $a=\mathrm{Tr}(R_0^{\mathcal S}(I/D))$, the automatic choice is
+$\delta=1/(2|a|)$. Thus $|\delta a|=1/2$ and the Sherman--Morrison denominator
+satisfies $|1-\delta a|\geq 1/2$ in exact arithmetic. Preparation reuses the
+identity resolvent already required by the preconditioner. The actual
+floating-point denominator is still checked; unrepresentable choices raise.
+This policy does not certify optimal conditioning or uniqueness. It never
+modifies a numeric request, relaxes solver tolerances, or bypasses the
+zero-shift dark-state rejection. `:auto` applies only to this stationary
+GMRES API, not to fixed-point or spectral solvers.
+
 The returned convergence decision includes a fresh residual of the original,
 undeflated $\mathcal L$. A small transformed or preconditioned residual alone
-is never accepted as physical convergence.
+is never accepted as physical convergence. Repeated physical residual norms
+reuse the sector multiplicities already prepared in the trace functional;
+exceptional scalar ranges retain the checked exact-scaling fallback.
 
 ### Stationary state from the CPTP fixed-point map
 
@@ -340,7 +396,11 @@ residual. Inspect `inner_tolerance_history`, `inner_iterations`, and
 is the worst achieved inner residual divided by the tolerance requested for
 that solve. Set
 `adaptive_inner=false` to use the final `inner_atol` and `inner_rtol` from the
-first solve. The default `inner_recycle_dim=0` avoids treating different
+first solve. When omitted, the initial relative tolerance is
+`max(inner_rtol, min(1e-3, sqrt(inner_rtol)))`, so it never contradicts a
+looser requested final tolerance. Explicit initial tolerances are still
+validated against the final tolerances, including with adaptation disabled.
+The default `inner_recycle_dim=0` avoids treating different
 Arnoldi right-hand sides as one linear sequence. Enabling recycling is an
 explicit heuristic and requires both a positive `inner_recycle_dim` and
 `reuse_inner=true`. When a prepared workspace is supplied, leaving either

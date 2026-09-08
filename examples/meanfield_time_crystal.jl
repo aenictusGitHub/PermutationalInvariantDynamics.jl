@@ -105,43 +105,43 @@ function main()
 
         figure = example_figure(size=(1180, 470), fontsize=17)
         magnetization_axis = M.Axis(
-            figure[1, 1]; xlabel="time", ylabel="longitudinal magnetization",
-            title="Finite and thermodynamic predictions")
+            figure[1, 1]; xlabel=ExampleMakie.latex("time"), ylabel=ExampleMakie.latex("longitudinal magnetization"),
+            title=ExampleMakie.latex("Finite and thermodynamic predictions"))
         error_axis = M.Axis(
-            figure[1, 2]; xlabel="time", ylabel="absolute curve error",
-            yscale=log10, title="Analytical validation")
+            figure[1, 2]; xlabel=ExampleMakie.latex("time"), ylabel=ExampleMakie.latex("absolute curve error"),
+            yscale=log10, title=ExampleMakie.latex("Analytical validation"))
 
         M.lines!(magnetization_axis, times, exact_finite;
-                 color=:black, linewidth=2.8, label="exact finite-N")
+                 color=:black, linewidth=2.8, label=ExampleMakie.latex(raw"exact finite-$N$"))
         M.scatter!(magnetization_axis, times, pi_magnetization;
-                   color=:royalblue, markersize=7, label="exact PI, N=$N")
+                   color=:royalblue, markersize=7, label=ExampleMakie.latex("exact PI, \$N=$N\$"))
         M.lines!(magnetization_axis, times, finite_magnetization;
                  color=:darkorange, linewidth=2.1, linestyle=:dash,
-                 label="finite product closure")
+                 label=ExampleMakie.latex("finite product closure"))
         M.lines!(magnetization_axis, times, exact_thermodynamic;
                  color=:seagreen, linewidth=2.5,
-                 label="thermodynamic cos(gt)")
+                 label=ExampleMakie.latex(raw"thermodynamic $\cos(gt)$"))
         M.scatter!(magnetization_axis, times, thermodynamic_magnetization;
                    color=:seagreen, marker=:diamond, markersize=6,
-                   label="thermodynamic closure")
+                   label=ExampleMakie.latex("thermodynamic closure"))
         M.hlines!(magnetization_axis, [0.0]; color=:gray75, linewidth=1)
         M.axislegend(magnetization_axis; position=:lb, labelsize=11)
 
         M.lines!(error_axis, times, max.(finite_curve_error, error_floor);
                  color=:darkorange, linewidth=2.3,
-                 label="finite product vs formula")
+                 label=ExampleMakie.latex("finite product vs formula"))
         M.lines!(error_axis, times, max.(pi_curve_error, error_floor);
                  color=:royalblue, linewidth=2.3,
-                 label="exact PI vs formula")
+                 label=ExampleMakie.latex("exact PI vs formula"))
         M.lines!(error_axis, times,
                  max.(thermodynamic_curve_error, error_floor);
                  color=:seagreen, linewidth=2.3,
-                 label="thermodynamic vs cos(gt)")
+                 label=ExampleMakie.latex(raw"thermodynamic vs $\cos(gt)$"))
         M.axislegend(error_axis; position=:rt, labelsize=11)
 
         M.Label(
             figure[2, 1:2],
-            "The undamped curve is a thermodynamic closure; both finite-N curves decay.";
+            ExampleMakie.latex(raw"The undamped curve is a thermodynamic closure; both finite-$N$ curves decay.");
             fontsize=14, color=:gray35, tellwidth=false)
         save_example_figure(figure, "meanfield_time_crystal")
     end

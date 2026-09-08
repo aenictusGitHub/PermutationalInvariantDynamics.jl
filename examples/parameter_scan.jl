@@ -96,25 +96,26 @@ if makie_available()
     fraction_errors = abs.(streamed_fractions .- exact_fractions)
 
     figure = example_figure(size=(1200, 510))
-    M.Label(figure[0, 1:3], "Thermal stationary scan  •  N=$(basis.N), $(length(pump_rates)) pump rates";
-            fontsize=22, font=:bold, halign=:left)
+    M.Label(figure[0, 1:3],
+        ExampleMakie.latex("Thermal stationary scan  •  \$N=$(basis.N)\$, $(length(pump_rates)) pump rates");
+        fontsize=22, font=:bold, halign=:left)
     fraction_axis = M.Axis(
         figure[1, 1];
-        xlabel="pump / decay rate r", ylabel="stationary excited fraction",
-        title="(a) Prepared continuation")
+        xlabel=ExampleMakie.latex(raw"pump / decay rate $r$"), ylabel=ExampleMakie.latex("stationary excited fraction"),
+        title=ExampleMakie.latex("(a) Prepared continuation"))
     residual_axis = M.Axis(
         figure[1, 2];
-        xlabel="pump / decay rate r", ylabel="stationary residual",
-        yscale=log10, title="(b) Solver residual")
-    error_axis = M.Axis(figure[1, 3]; xlabel="pump / decay rate r",
-        ylabel="absolute fraction error", title="(c) Observable accuracy")
+        xlabel=ExampleMakie.latex(raw"pump / decay rate $r$"), ylabel=ExampleMakie.latex("stationary residual"),
+        yscale=log10, title=ExampleMakie.latex("(b) Solver residual"))
+    error_axis = M.Axis(figure[1, 3]; xlabel=ExampleMakie.latex(raw"pump / decay rate $r$"),
+        ylabel=ExampleMakie.latex("absolute fraction error"), title=ExampleMakie.latex("(c) Observable accuracy"))
 
     M.lines!(
         fraction_axis, streamed_pumps, exact_fractions;
-        color=:black, linewidth=2.7, label="exact r / (1 + r)")
+        color=:black, linewidth=2.7, label=ExampleMakie.latex(raw"exact $r/(1+r)$"))
     M.scatter!(
         fraction_axis, streamed_pumps, streamed_fractions;
-        color=example_colors.blue, markersize=8, label="PI scan")
+        color=example_colors.blue, markersize=8, label=ExampleMakie.latex("PI scan"))
     M.lines!(
         residual_axis, streamed_pumps, [iszero(r) ? NaN : r for r in streamed_residuals];
         color=example_colors.orange)
@@ -124,8 +125,10 @@ if makie_available()
     M.lines!(error_axis, streamed_pumps, fraction_errors; color=example_colors.red)
     M.scatter!(error_axis, streamed_pumps, fraction_errors; color=example_colors.red, markersize=6)
     M.axislegend(fraction_axis; position=:lt)
-    M.Label(figure[2, 1:3], "Recycled GMRES: atol=10⁻¹¹, rtol=10⁻⁸  •  $(count(iszero, streamed_residuals)) zero residuals omitted only on the log axis; raw values are exported.";
-            fontsize=13, color=example_colors.gray)
+    M.Label(figure[2, 1:3],
+        ExampleMakie.latex(raw"Recycled GMRES: atol=$10^{-11}$, rtol=$10^{-8}$  •  " *
+            "$(count(iszero, streamed_residuals)) zero residuals omitted only on the log axis; raw values are exported.");
+        fontsize=13, color=example_colors.gray)
     save_example_figure(figure, "parameter_scan")
     save_example_data("parameter_scan", (;
         pump_over_decay=streamed_pumps, excited_fraction=streamed_fractions,

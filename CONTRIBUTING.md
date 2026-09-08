@@ -71,6 +71,49 @@ julia --startup-file=no --project=. test/run_quick_examples.jl --shard 2/2
 See `docs/src/releasing.md` for the complete clean-checkout gate and the
 maintainer-only General registration step.
 
+### Example plot labels
+
+Wrap the complete value of `label`, `xlabel`, `ylabel`, `title`, and `text`
+with `ExampleMakie.latex(...)`, including dynamically constructed labels:
+
+```julia
+M.Axis(figure[1, 1]; xlabel=ExampleMakie.latex(raw"$\kappa t$"),
+       ylabel=ExampleMakie.latex(raw"$\langle J_z\rangle/N$"),
+       title=ExampleMakie.latex("Collective dynamics, \$N=$N\$"))
+M.lines!(axis, times, values; label=ExampleMakie.latex(raw"$N=" * string(N) * raw"$"))
+```
+
+The helper uses Makie's LaTeXStrings support when rendering and keeps the
+core-only, non-rendering example route dependency-free. Put scientific
+formulas inside math delimiters; use `raw"..."` for literal LaTeX. An explicit
+`LaTeXStrings.L"..."` or `latexstring(...)` is also accepted in environments
+that provide LaTeXStrings. Keep concatenation **inside** the wrapper so it
+does not turn the formatted label back into an ordinary string.
+Unlike `L"..."`, the mixed-label helper does not automatically enter math mode.
+Use `J_z` for a subscript and `\langle`/`\rangle` for expectation brackets;
+`J\_z` prints an underscore. Keep variables out of `\mathrm{...}`.
+
+Run the fast lint without installing package or plotting dependencies:
+
+```bash
+julia --startup-file=no test/test_example_plot_label_lint.jl
+```
+
+CI runs this in the quality job and the ordinary `workflows` tests. It parses
+every `.jl` file recursively under `examples/`, flags literal/interpolated/raw
+strings and common string-building expressions in these fields, and covers
+property/Observable assignments and positional `text`/`text!` arguments.
+It also checks known label templates for common scientific syntax outside math
+delimiters and unclosed math spans; explicit `renderer=:svg` keeps the Unicode
+SVG route exempt. Malformed Julia also fails the gate. Diagnostics report the file and the
+enclosing expression's line. Comments and documentation strings are ignored;
+examples and macros are never executed. This is a syntax check: the types of
+arbitrary variables and function results still require review.
+`julia --project=examples test/test_example_fonts.jl` additionally checks the
+rendered glyph roles and parses literal/interpolated label templates through
+Makie's TeX engine without executing the scientific examples. Interpolation
+uses placeholder values, so this does not replace reviewing actual figures.
+
 ## Inbound license and origin certification
 
 Contributions are accepted under `GPL-3.0-only`, the same license as the

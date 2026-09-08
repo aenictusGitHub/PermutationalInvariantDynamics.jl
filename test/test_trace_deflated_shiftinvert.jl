@@ -183,6 +183,25 @@ end
     @test result.original_residual_certification
     @test result.trace_deflated
 
+    # A loose requested final tolerance must not be rejected because the
+    # automatic initial tolerance used to be capped below it. This also
+    # applies when adaptation is disabled. Explicit invalid initial values
+    # retain their validation; final physical certification is unchanged.
+    for adaptive_inner in (false,true)
+        loose=trace_deflated_shiftinvert_spectrum(plan;nev=1,workspace=work,
+            krylovdim=4,retained_dimension=2,maxrestarts=8,
+            candidate_oversampling=2,inner_maxiter=100,
+            inner_atol=1e-12,inner_rtol=0.01,adaptive_inner,
+            atol=1e-10,rtol=1e-8,memory_budget=Inf,rng=MersenneTwister(443))
+        @test loose.converged
+        @test only(loose.values)≈reference_value atol=2e-8 rtol=2e-7
+        @test only(loose.physical_residuals)<2e-9
+        @test first(loose.inner_tolerance_history).inner_rtol==0.01
+        @test_throws ArgumentError trace_deflated_shiftinvert_spectrum(plan;
+            nev=1,workspace=work,krylovdim=4,inner_rtol=0.01,
+            inner_initial_rtol=0.001,adaptive_inner,memory_budget=Inf)
+    end
+
     huge_initial=fill(ComplexF64(floatmax(Float64),0),length(basis))
     huge_start=trace_deflated_shiftinvert_spectrum(plan;nev=1,
         workspace=work,krylovdim=4,retained_dimension=2,maxrestarts=8,

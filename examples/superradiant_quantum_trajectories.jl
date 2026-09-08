@@ -121,28 +121,28 @@ if makie_available()
     cases = ((comparable_rates, 1), (dominant_local_decay, 10))
     for (column, (case, ratio)) in enumerate(cases)
         axis = M.Axis(
-            figure[1, column]; xlabel="Γc t", ylabel="radiated intensity / Γc",
-            title="γl / Γc = $ratio")
+            figure[1, column]; xlabel=ExampleMakie.latex(raw"$\Gamma_c t$"), ylabel=ExampleMakie.latex(raw"radiated intensity $/\Gamma_c$"),
+            title=ExampleMakie.latex("\$\\gamma_l/\\Gamma_c=$ratio\$"))
         M.band!(axis, case.times,
                 case.cavity.mean .- case.cavity.standard_error,
                 case.cavity.mean .+ case.cavity.standard_error;
                 color=(:firebrick, 0.20))
         M.lines!(axis, case.times, case.reference_cavity;
                  color=:firebrick, linewidth=2.7,
-                 label="cavity master equation")
+                 label=ExampleMakie.latex("cavity master equation"))
         M.scatter!(axis, case.times, case.cavity.mean;
                    color=:firebrick, markersize=6,
-                   label="cavity trajectories")
+                   label=ExampleMakie.latex("cavity trajectories"))
         M.band!(axis, case.times,
                 case.free_space.mean .- case.free_space.standard_error,
                 case.free_space.mean .+ case.free_space.standard_error;
                 color=(:royalblue, 0.18))
         M.lines!(axis, case.times, case.reference_free_space;
                  color=:royalblue, linewidth=2.7,
-                 label="free-space master equation")
+                 label=ExampleMakie.latex("free-space master equation"))
         M.scatter!(axis, case.times, case.free_space.mean;
                    color=:royalblue, markersize=6,
-                   label="free-space trajectories")
+                   label=ExampleMakie.latex("free-space trajectories"))
         M.axislegend(axis; position=:rt, labelsize=13)
     end
     save_example_figure(figure, "superradiant_quantum_trajectories")

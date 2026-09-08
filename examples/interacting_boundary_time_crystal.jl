@@ -65,29 +65,30 @@ if makie_available()
     plotted_sizes = collect(sizes)
     figure = example_figure(size=(1050, 450), fontsize=17)
     decay_axis = M.Axis(
-        figure[1, 1]; xlabel="particle number N", ylabel="decay rate -Re(λ)",
-        title="Slow oscillatory-mode decay")
+        figure[1, 1]; xlabel=ExampleMakie.latex(raw"particle number $N$"), ylabel=ExampleMakie.latex(raw"decay rate $-\mathrm{Re}(\lambda)$"),
+        title=ExampleMakie.latex("Slow oscillatory-mode decay"))
     frequency_axis = M.Axis(
-        figure[1, 2]; xlabel="particle number N", ylabel="frequency |Im(λ)|",
-        title="Slow oscillatory-mode frequency",
+        figure[1, 2]; xlabel=ExampleMakie.latex(raw"particle number $N$"), ylabel=ExampleMakie.latex(raw"frequency $|\mathrm{Im}(\lambda)|$"),
+        title=ExampleMakie.latex("Slow oscillatory-mode frequency"),
         limits=(nothing, nothing, 0, nothing))
 
     M.lines!(decay_axis, plotted_sizes, decay_rates;
              color=:firebrick, linewidth=2.7)
     M.scatter!(decay_axis, plotted_sizes, decay_rates;
-               color=:firebrick, markersize=8, label="finite-N PI spectrum")
+               color=:firebrick, markersize=8, label=ExampleMakie.latex(raw"finite-$N$ PI spectrum"))
     M.axislegend(decay_axis; position=:rt, labelsize=12)
 
     M.lines!(frequency_axis, plotted_sizes, frequencies;
              color=:royalblue, linewidth=2.7)
     M.scatter!(frequency_axis, plotted_sizes, frequencies;
-               color=:royalblue, markersize=8, label="finite-N PI spectrum")
+               color=:royalblue, markersize=8, label=ExampleMakie.latex(raw"finite-$N$ PI spectrum"))
     M.axislegend(frequency_axis; position=:rb, labelsize=12)
 
     M.Label(
         figure[2, 1:2],
-        "Nine default sizes through N=24 resolve the finite-size trend; " *
-        "no asymptotic exponent is fitted.";
+        ExampleMakie.latex(
+            raw"Nine default sizes through $N=24$ resolve the finite-size trend; " *
+            "no asymptotic exponent is fitted.");
         fontsize=14, color=:gray35, tellwidth=false)
     save_example_figure(figure, "interacting_boundary_time_crystal")
 end

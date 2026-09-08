@@ -121,20 +121,20 @@ exact_count_probability = [Float64(exact_binomial(N, k)) *
 if makie_available()
     M = makie_module()
     figure = example_figure(size=(1150, 830))
-    M.Label(figure[0, 1:2], "Independent-emitter trajectories  •  N=$N, $ntrajectories paths, seed=2025";
+    M.Label(figure[0, 1:2], ExampleMakie.latex("Independent-emitter trajectories  •  \$N=$N\$, $ntrajectories paths, seed=2025");
             fontsize=22, font=:bold, halign=:left)
     excitation_axis = M.Axis(
-        figure[1, 1]; xlabel="γt", ylabel="excited fraction",
-        title="(a) Excitation and sampling uncertainty")
+        figure[1, 1]; xlabel=ExampleMakie.latex(raw"$\gamma t$"), ylabel=ExampleMakie.latex("excited fraction"),
+        title=ExampleMakie.latex("(a) Excitation and sampling uncertainty"))
     state_axis = M.Axis(
-        figure[1, 2]; xlabel="γt", ylabel="PI-state 2-norm error",
+        figure[1, 2]; xlabel=ExampleMakie.latex(raw"$\gamma t$"), ylabel=ExampleMakie.latex("PI-state 2-norm error"),
         yscale=log10, yticks=(10.0 .^ [-12, -9, -6, -3],
-                             ["10⁻¹²", "10⁻⁹", "10⁻⁶", "10⁻³"]),
-        title="(b) Ensemble and integration errors")
-    difference_axis = M.Axis(figure[2, 1]; xlabel="γt",
-        ylabel="excitation fraction − exact", title="(c) Difference from the exact mean")
-    count_axis = M.Axis(figure[2, 2]; xlabel="emitted photons at γT=$(gamma*last(times))",
-        ylabel="probability", xticks=0:2:N, title="(d) Photon-count distribution")
+                             ExampleMakie.latex.([raw"$10^{-12}$", raw"$10^{-9}$", raw"$10^{-6}$", raw"$10^{-3}$"])),
+        title=ExampleMakie.latex("(b) Ensemble and integration errors"))
+    difference_axis = M.Axis(figure[2, 1]; xlabel=ExampleMakie.latex(raw"$\gamma t$"),
+        ylabel=ExampleMakie.latex("excitation fraction − exact"), title=ExampleMakie.latex("(c) Difference from the exact mean"))
+    count_axis = M.Axis(figure[2, 2]; xlabel=ExampleMakie.latex("emitted photons at \$\\gamma T=$(gamma*last(times))\$"),
+        ylabel=ExampleMakie.latex("probability"), xticks=0:2:N, title=ExampleMakie.latex("(d) Photon-count distribution"))
 
     excitation_mean = observable.mean ./ N
     excitation_sem = observable.standard_error ./ N
@@ -142,18 +142,18 @@ if makie_available()
     M.band!(excitation_axis, scaled_times,
             excitation_mean .- excitation_sem,
             excitation_mean .+ excitation_sem;
-            color=(example_colors.blue, 0.22), label="trajectory ±1 SE")
+            color=(example_colors.blue, 0.22), label=ExampleMakie.latex("trajectory ±1 SE"))
     M.scatter!(excitation_axis, scaled_times, excitation_mean;
-               color=example_colors.blue, markersize=5, label="trajectory mean")
+               color=example_colors.blue, markersize=5, label=ExampleMakie.latex("trajectory mean"))
     M.lines!(excitation_axis, scaled_times, excited_probability;
-             color=:black, linewidth=2.5, label="exact exp(-γt)")
+             color=:black, linewidth=2.5, label=ExampleMakie.latex(raw"exact $\exp(-\gamma t)$"))
     M.axislegend(excitation_axis; position=:rt)
 
     M.lines!(state_axis, scaled_times, [iszero(e) ? NaN : e for e in ensemble_errors];
-             color=example_colors.orange, linewidth=2.5, label="trajectory average")
+             color=example_colors.orange, linewidth=2.5, label=ExampleMakie.latex("trajectory average"))
     M.lines!(state_axis, scaled_times, [iszero(e) ? NaN : e for e in deterministic_errors];
              color=example_colors.green, linewidth=2.5, linestyle=:dash,
-             label="deterministic RK4")
+             label=ExampleMakie.latex("deterministic RK4"))
     M.axislegend(state_axis; position=:rc)
     difference = excitation_mean .- excited_probability
     M.band!(difference_axis, scaled_times, difference .- excitation_sem,
@@ -161,11 +161,11 @@ if makie_available()
     M.lines!(difference_axis, scaled_times, difference; color=example_colors.blue)
     M.hlines!(difference_axis, [0]; color=:black, linestyle=:dash)
     M.barplot!(count_axis, count_grid, sample_count_probability;
-               color=(example_colors.blue, 0.6), width=0.75, label="sample frequency")
+               color=(example_colors.blue, 0.6), width=0.75, label=ExampleMakie.latex("sample frequency"))
     M.scatter!(count_axis, count_grid, exact_count_probability;
-               color=:black, marker=:diamond, markersize=8, label="exact binomial law")
+               color=:black, marker=:diamond, markersize=8, label=ExampleMakie.latex("exact binomial law"))
     M.axislegend(count_axis; position=:lt, labelsize=12)
-    M.Label(figure[3, 1:2], "Bands: pointwise ±1 standard error, not simultaneous confidence bounds.  •  Exact zeros omitted only from the log-error panel.";
+    M.Label(figure[3, 1:2], ExampleMakie.latex("Bands: pointwise ±1 standard error, not simultaneous confidence bounds.  •  Exact zeros omitted only from the log-error panel.");
             fontsize=13, color=example_colors.gray)
     save_example_figure(figure, "independent_emitter_quantum_trajectories")
     save_example_data("independent_emitter_quantum_trajectories", (;

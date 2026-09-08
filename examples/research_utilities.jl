@@ -64,10 +64,10 @@ if makie_available()
     figure = example_figure(size=(820, 450), fontsize=17)
     axis = M.Axis(
         figure[1, 1];
-        xlabel="POVM outcome",
-        ylabel="probability",
-        xticks=([1, 2], ["E₀", "E₁"]),
-        title="PI channel and constrained tomography",
+        xlabel=ExampleMakie.latex("POVM outcome"),
+        ylabel=ExampleMakie.latex("probability"),
+        xticks=([1, 2], ExampleMakie.latex.([raw"$E_0$", raw"$E_1$"])),
+        title=ExampleMakie.latex("PI channel and constrained tomography"),
     )
     offsets = (-0.22, 0.0, 0.22)
     width = 0.19

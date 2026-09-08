@@ -18,6 +18,314 @@ function no_jump_generator_matrix(plan)
     matrix
 end
 
+# Keep the old scalar-by-scalar diagnostic as a bounded regression oracle:
+# prepared scaling must retain both its values and exceptional arithmetic.
+function no_jump_physical_maximum_oracle(basis,data)
+    R=typeof(real(zero(eltype(data))));result=zero(R)
+    for (sector,partition) in pairs(basis.sectors)
+        for index in basis.offsets[sector]:basis.offsets[sector+1]-1
+            value=PermutationalInvariantDynamics._divide_by_schur_multiplicity_scale(
+                data[index],R,partition)
+            result=max(result,abs(value))
+        end
+    end
+    result
+end
+
+@testset "Prepared no-jump scaling and exact diagonal sectors" begin
+    PID=PermutationalInvariantDynamics
+    rng=MersenneTwister(0xd1a6)
+    for R in (Float32,Float64), (N,d) in ((3,2),(2,3)), backend in (:schur,:eigen)
+        spin=spin_matrices(d;T=R);basis=PIBasis(N,d)
+        model=PIModel(basis,(
+            LocalHamiltonian(R(0.23)*spin.jz),
+            LocalJump(spin.jm;rate=R(0.31)),
+            LocalJump(spin.jp;rate=R(0.09))))
+        plan=NoJumpIterativePlan(model;backend,memory_budget=Inf)
+        resolvent=plan.no_jump
+        @test plan.metadata.diagonal_sectors==length(basis.sectors)
+        @test all(f->f isa PID._NoJumpDiagonalSector,resolvent.factors)
+        if backend===:eigen
+            @test all(==(one(R)),plan.metadata.condition_numbers)
+        end
+        work=NoJumpResolventWorkspace(resolvent;memory_budget=Inf)
+        @test work.plan===resolvent
+        @test all(pair->all(isempty,pair),work.blocks)
+        @test PID._no_jump_iterative_workspace_estimate(resolvent)==0
+        @test work.accounted_peak_bytes==Base.summarysize(resolvent)
+        exact_budget=Int(work.accounted_peak_bytes)
+        @test NoJumpResolventWorkspace(resolvent;memory_budget=exact_budget).plan===resolvent
+        @test_throws ArgumentError NoJumpResolventWorkspace(
+            resolvent;memory_budget=exact_budget-1)
+        x=randn(rng,Complex{R},length(basis));x[2]=0
+        y=similar(x)
+        reference=no_jump_physical_maximum_oracle(basis,x)
+        @test PID._no_jump_iterative_physical_maximum(basis,x)==reference
+        @test PID._no_jump_iterative_physical_maximum(plan,x)==reference
+        PID._no_jump_iterative_physical_maximum(plan,x)
+        @test (@allocated PID._no_jump_iterative_physical_maximum(plan,x))<=1024
+        S=no_jump_generator_matrix(resolvent)
+        tol=R===Float32 ? R(3e-5) : R(3e-12)
+        for shift in (zero(R),R(0.4)), adjoint_action in (false,true)
+            PID._no_jump_resolvent_complex!(y,resolvent,x,shift,work;adjoint_action)
+            A=shift*I-(adjoint_action ? adjoint(S) : S)
+            @test y≈A\x atol=tol rtol=tol
+            @test eltype(y)===Complex{R}
+        end
+        shift=Complex{R}(-0.4,0.7)
+        for adjoint_action in (false,true)
+            PID._no_jump_resolvent_complex!(y,resolvent,x,shift,work;adjoint_action)
+            A=shift*I-(adjoint_action ? adjoint(S) : S)
+            @test y≈A\x atol=tol rtol=tol
+        end
+        nonfinite=copy(x);nonfinite[1]=R(NaN)
+        @test_throws ArgumentError no_jump_resolvent!(y,resolvent,nonfinite,R(0.4),work)
+        @test_throws ArgumentError no_jump_resolvent!(x,resolvent,x,R(0.4),work)
+    end
+
+    # A mixed factorization must retain the general Schur/eigen route in
+    # every sector with even a tiny nonzero off-diagonal entry.
+    spin=spin_matrices(2);basis=PIBasis(4,2)
+    model=PIModel(basis,(LocalHamiltonian(0.7spin.jx),
+        LocalJump(spin.jm;rate=0.31),LocalJump(spin.jp;rate=0.09)))
+    for backend in (:schur,:eigen)
+        plan=NoJumpResolventPlan(model;backend,memory_budget=Inf)
+        @test 0<plan.metadata.diagonal_sectors<length(basis.sectors)
+        work=NoJumpResolventWorkspace(plan)
+        for (index,factor) in pairs(plan.factors)
+            expected_size=factor isa PID._NoJumpDiagonalSector ?
+                (0,0) : size(plan.generator_blocks[index])
+            @test all(matrix->size(matrix)==expected_size,work.blocks[index])
+        end
+        payload=sum(pair->sum(sizeof,pair),work.blocks)
+        @test PID._no_jump_iterative_workspace_estimate(plan)==payload
+        x=randn(rng,ComplexF64,length(basis))
+        S=no_jump_generator_matrix(plan)
+        y=no_jump_resolvent(plan,x;shift=0.4)
+        @test y≈(0.4I-S)\x atol=3e-12 rtol=3e-12
+    end
+    # Same basis and scalar type do not imply the same required scratch layout.
+    symmetric=PIBasis(8,2;sectors=[(8,0)])
+    diagonal=NoJumpResolventPlan(PIModel(symmetric,(
+        CollectiveJump(spin.jm),CollectiveJump(spin.jp))))
+    driven=NoJumpResolventPlan(PIModel(symmetric,(
+        CollectiveHamiltonian(spin.jx),CollectiveJump(spin.jm))))
+    diagonal_work=NoJumpResolventWorkspace(diagonal)
+    @test all(isempty,only(diagonal_work.blocks))
+    x=randn(rng,ComplexF64,length(symmetric));y=fill(7+0im,length(x))
+    saved=copy(y)
+    @test_throws ArgumentError no_jump_resolvent!(y,driven,x,0.4,diagonal_work)
+    @test y==saved
+    @test_throws ArgumentError PID._no_jump_resolvent_complex!(
+        y,driven,x,0.4+0.2im,diagonal_work;adjoint_action=true)
+    tiny=ComplexF64[-1 1e-100;0 -2]
+    factors=PID._no_jump_iterative_sector_factors([tiny],:schur,1e8)
+    @test only(factors) isa PID._NoJumpSchurSector
+    @test !iszero(only(factors).triangular[1,2])
+
+    # Preserve the checked exact fallback, including nonzero underflow.
+    b=PIBasis(6,2)
+    p=NoJumpIterativePlan(PIModel(b,(LocalJump(spin.jm),LocalJump(spin.jp))))
+    extreme=zeros(ComplexF64,length(b))
+    extreme[b.offsets[end-1]]=nextfloat(0.0)
+    @test_throws ArgumentError no_jump_physical_maximum_oracle(b,extreme)
+    @test_throws ArgumentError PID._no_jump_iterative_physical_maximum(b,extreme)
+    @test_throws ArgumentError PID._no_jump_iterative_physical_maximum(p,extreme)
+    extreme[b.offsets[end-1]]=complex(floatmax(Float64)/4,-floatmax(Float64)/4)
+    @test PID._no_jump_iterative_physical_maximum(p,extreme)==
+        no_jump_physical_maximum_oracle(b,extreme)
+end
+
+@testset "Blocked no-jump Sylvester solves retain numerical safeguards" begin
+    PID=PermutationalInvariantDynamics
+    rng=MersenneTwister(0x5a1)
+    for R in (Float32,Float64),n in (1,2,15,16,17,63,64,65,96),
+            adjoint_action in (false,true)
+        T=triu(randn(rng,Complex{R},n,n)*(R(0.05)/sqrt(R(n))))
+        for i in 1:n
+            T[i,i]=complex(-one(R)-R(i)/R(n),R(0.2))
+        end
+        target=randn(rng,Complex{R},n,n)
+        A=adjoint_action ? adjoint(T) : T
+        scalar! = adjoint_action ? PID._solve_nojump_adjoint_sector_scalar! :
+                                  PID._solve_nojump_sector_scalar!
+        selected! = adjoint_action ? PID._solve_nojump_adjoint_sector! :
+                                    PID._solve_nojump_sector!
+        tol=R===Float32 ? R(5e-5) : R(2e-12)
+        for shift in (zero(R),Complex{R}(-0.2,0.7))
+            rhs=shift*target-A*target-target*adjoint(A)
+            reference=scalar!(copy(rhs),T,shift)
+            X=copy(rhs)
+            PID._solve_nojump_sector_blocked!(X,T,shift;adjoint_action)
+            @test X≈target atol=tol rtol=tol
+            @test X≈reference atol=tol rtol=tol
+            @test norm(shift*X-A*X-X*adjoint(A)-rhs)<=tol*norm(rhs)
+            selected=selected!(copy(rhs),T,shift)
+            @test selected≈X atol=tol rtol=tol
+            @test eltype(selected)===Complex{R}
+            if n<64
+                @test selected==reference
+            end
+        end
+        if n==65
+            shift=Complex{R}(0.4,0.7)
+            rhs=copy(target);X=copy(rhs)
+            selected!(copyto!(X,rhs),T,shift)
+            @test (@allocated selected!(copyto!(X,rhs),T,shift))<=4096
+            @test PID._no_jump_iterative_uses_blocked_sylvester(X,T)
+            if !adjoint_action
+                y=randn(rng,Complex{R},n,n)
+                forward=PID._solve_nojump_sector!(copy(rhs),T,shift)
+                backward=PID._solve_nojump_adjoint_sector!(copy(y),T,conj(shift))
+                @test dot(y,forward)≈dot(backward,rhs) atol=tol rtol=tol
+            end
+        end
+    end
+
+    # A defective, dissipative triangular generator is valid for Schur solves.
+    for R in (Float32,Float64),adjoint_action in (false,true)
+        n=65
+        T=Matrix(Diagonal(fill(-one(Complex{R}),n)))
+        for i in 1:n-1
+            T[i,i+1]=R(0.75)
+        end
+        A=adjoint_action ? adjoint(T) : T
+        rhs=randn(rng,Complex{R},n,n);X=copy(rhs)
+        PID._solve_nojump_sector_blocked!(X,T,zero(R);adjoint_action)
+        tol=R===Float32 ? R(5e-5) : R(2e-12)
+        @test norm(-A*X-X*adjoint(A)-rhs)<=tol*norm(rhs)
+
+        # Exceptional magnitudes take checked scalar updates, and a large
+        # factor balanced by a tiny factor is not rejected just by the bound.
+        huge=floatmax(R)/R(8)
+        C=zeros(Complex{R},1,1)
+        PID._no_jump_iterative_checked_muladd!(C,fill(complex(huge),1,1),
+                                               fill(complex(inv(huge)),1,1))
+        @test C[1]≈one(R) atol=tol rtol=tol
+        @test_throws ArgumentError PID._no_jump_iterative_checked_muladd!(
+            zeros(Complex{R},1,1),
+            reshape(Complex{R}[floatmax(R)/2,-floatmax(R)/2],1,2),
+            fill(Complex{R}(4),2,1))
+        @test_throws ArgumentError PID._no_jump_iterative_checked_muladd!(
+            fill(Complex{R}(floatmax(R)*R(0.75)),1,1),
+            fill(Complex{R}(floatmax(R)/2),1,1),ones(Complex{R},1,1))
+
+        # Force overflow in an off-tile product (not only inside a tile).
+        T=Matrix(Diagonal(fill(-one(Complex{R}),n)))
+        T[1,n]=floatmax(R)
+        rhs=zeros(Complex{R},n,n)
+        rhs[adjoint_action ? 1 : n,adjoint_action ? n : 1]=4
+        @test_throws ArgumentError PID._solve_nojump_sector_blocked!(
+            copy(rhs),T,zero(R);adjoint_action)
+        T=zeros(Complex{R},n,n)
+        @test_throws ArgumentError PID._solve_nojump_sector_blocked!(
+            ones(Complex{R},n,n),T,zero(R);adjoint_action)
+        @test_throws ArgumentError PID._solve_nojump_sector_blocked!(
+            ones(Complex{R},n,n),T,nextfloat(zero(R));adjoint_action)
+        enormous=Matrix(Diagonal(fill(Complex{R}(-floatmax(R)),n)))
+        @test_throws ArgumentError PID._solve_nojump_sector_blocked!(
+            ones(Complex{R},n,n),enormous,floatmax(R);adjoint_action)
+        rhs[1,1]=R(NaN)
+        @test_throws ArgumentError PID._solve_nojump_sector_blocked!(
+            rhs,T,one(R);adjoint_action)
+
+        # Closely separated resolvent pole, including ragged off-diagonal tiles.
+        n=17;delta=sqrt(eps(R))
+        T=Matrix(Diagonal(fill(Complex{R}(-1,2),n)))
+        for i in 1:n-1
+            T[i,i+1]=delta/8
+        end
+        shift=Complex{R}(-2+delta,0)
+        rhs=randn(rng,Complex{R},n,n)
+        X=PID._solve_nojump_sector_blocked!(copy(rhs),T,shift;
+                                          blocksize=3,adjoint_action)
+        scalar! = adjoint_action ? PID._solve_nojump_adjoint_sector_scalar! :
+                                  PID._solve_nojump_sector_scalar!
+        reference=scalar!(copy(rhs),T,shift)
+        @test X≈reference atol=tol rtol=tol
+        @test_throws ArgumentError PID._solve_nojump_sector_blocked!(
+            copy(rhs),T,Complex{R}(-2,0);blocksize=3,adjoint_action)
+    end
+    # Non-contiguous layouts keep the original scalar recurrence.
+    T=Matrix(Diagonal(fill(-1.0+0im,64)))
+    X=view(ones(ComplexF64,128,64),1:2:128,:)
+    @test !PID._no_jump_iterative_uses_blocked_sylvester(X,T)
+    PID._solve_nojump_sector!(X,T,0.0)
+    @test all(==(0.5),X)
+end
+
+@testset "Symmetric-sector no-jump blocked actions and stationary state" begin
+    PID=PermutationalInvariantDynamics
+    spin=spin_matrices(2);N=63
+    basis=PIBasis(N,2;sectors=[(N,0)])
+    model=PIModel(basis,(CollectiveHamiltonian(0.7spin.jx+0.23spin.jz),
+        CollectiveJump(spin.jm;rate=0.31),CollectiveJump(spin.jp;rate=0.09)))
+    plan=NoJumpIterativePlan(model)
+    work=NoJumpResolventWorkspace(plan.no_jump)
+    G=only(plan.no_jump.generator_blocks);n=size(G,1)
+    @test PID._no_jump_iterative_uses_blocked_sylvester(
+        only(work.blocks)[2],only(plan.no_jump.factors).triangular)
+    rng=MersenneTwister(63)
+    x=randn(rng,ComplexF64,length(basis));y=similar(x)
+    for adjoint_action in (false,true),shift in (0.0,0.4+0.2im)
+        PID._no_jump_resolvent_complex!(y,plan.no_jump,x,shift,work;adjoint_action)
+        A=adjoint_action ? adjoint(G) : G
+        X=reshape(x,n,n);Y=reshape(y,n,n)
+        @test norm(shift*Y-A*Y-Y*adjoint(A)-X)<=2e-11*norm(X)
+    end
+    steady=no_jump_iterative_steady_state(plan;deflation=:auto,krylovdim=40,
+        maxiter=1000,atol=1e-9,rtol=1e-7,return_info=true)
+    @test steady.converged&&steady.state_diagnostics.valid
+    @test steady.trace_error<=1e-7
+    @test steady.physical_residual_inf<=1e-7
+end
+
+@testset "Automatic stationary no-jump deflation" begin
+    for R in (Float32,Float64), backend in (:schur,:eigen), rate in (R(1e-6),R(1),R(1e6))
+        spin=spin_matrices(2;T=R);basis=PIBasis(1,2)
+        model=PIModel(basis,(LocalJump(spin.jm;rate),LocalJump(spin.jp;rate)))
+        plan=NoJumpIterativePlan(model;backend,memory_budget=Inf)
+        work=NoJumpIterativeWorkspace(plan;krylovdim=4,recycle_dim=0,memory_budget=Inf)
+        tol=R===Float32 ? R(1e-5) : R(1e-10)
+        result=no_jump_iterative_steady_state(plan;deflation=:auto,workspace=work,
+            atol=tol,rtol=tol,return_info=true,memory_budget=Inf)
+        @test result.converged
+        @test result.state_diagnostics.valid
+        @test result.deflation_selection===:auto
+        @test result.deflation isa R
+        @test result.deflation≈rate/2 rtol=16eps(R)
+        @test result.linear_solver.deflation==result.deflation
+        @test abs(result.linear_solver.preconditioner_denominator)>=R(0.49)
+        @test result.state.data≈maximally_mixed_state(basis;T=R).data atol=tol rtol=tol
+        if rate==1
+            # Preserve the deliberate numeric request (and its failure), even
+            # with a workspace previously prepared by automatic selection.
+            @test_throws ArgumentError no_jump_iterative_steady_state(plan;
+                deflation=one(R),workspace=work,memory_budget=Inf)
+            explicit=no_jump_iterative_steady_state(plan;deflation=R(2),workspace=work,
+                atol=tol,rtol=tol,return_info=true,memory_budget=Inf)
+            @test explicit.deflation==R(2)
+            @test explicit.deflation_selection===:explicit
+            again=no_jump_iterative_steady_state(plan;deflation=:auto,workspace=work,
+                atol=tol,rtol=tol,return_info=true,memory_budget=Inf)
+            @test again.state.data≈result.state.data atol=tol rtol=tol
+            @test again.deflation==result.deflation
+        end
+    end
+    spin=spin_matrices(2);basis=PIBasis(2,2)
+    model=PIModel(basis,(LocalHamiltonian(0.7spin.jx+0.23spin.jz),
+        LocalJump(spin.jm;rate=0.31),LocalJump(spin.jp;rate=0.09)))
+    automatic=no_jump_iterative_steady_state(model;deflation=:auto,return_info=true)
+    @test automatic.state.data≈steady_state(model;method=:direct) atol=3e-10 rtol=3e-9
+    @test_throws ArgumentError no_jump_iterative_steady_state(model;deflation=:unknown)
+    @test_throws ArgumentError no_jump_iterative_steady_state(model;
+        deflation=:auto,method=:fixed_point)
+    @test_throws ArgumentError no_jump_iterative_steady_state(model;
+        deflation=:auto,memory_budget=1)
+    dark=PIModel(PIBasis(1,2),(LocalJump(spin.jm),))
+    @test_throws ArgumentError no_jump_iterative_steady_state(dark;deflation=:auto)
+end
+
 @testset "No-jump-resolvent iterative methods" begin
     basis=PIBasis(3,2)
     spin=spin_matrices(2)

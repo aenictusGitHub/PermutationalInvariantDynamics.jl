@@ -98,8 +98,8 @@ peak_structure = schur_block_structure(
     rho_peak; metric=:population, threshold=1e-13)
 peak_figure = visualize_schur_blocks(
     peak_structure;
-    title="Damanet 2016: N=$N, Δγ/γ₀=$(delta_gamma / gamma0), " *
-          "peak γ₀t=$(gamma0 * peak_time)",
+    title=ExampleMakie.latex("Damanet 2016: N=$N, Δγ/γ₀=$(delta_gamma / gamma0), " *
+          "peak γ₀t=$(gamma0 * peak_time)"; renderer=:svg),
     scale=:log, normalize=:global, show_values=false,
     show_young_diagrams=true, width=1200, height=1000)
 peak_sector_populations = diag(peak_structure.weights)
@@ -134,18 +134,18 @@ if makie_available()
     M = makie_module()
     figure = example_figure(size=(1450, 450), fontsize=17)
     small_axis = M.Axis(
-        figure[1, 1]; xlabel="γ₀t", ylabel="I / γ₀",
-        title="Two-atom analytical benchmark")
+        figure[1, 1]; xlabel=ExampleMakie.latex(raw"$\gamma_0 t$"), ylabel=ExampleMakie.latex(raw"$I/\gamma_0$"),
+        title=ExampleMakie.latex("Two-atom analytical benchmark"))
     pulse_axis = M.Axis(
-        figure[1, 2]; xlabel="γ₀t", ylabel="I / (Nγ₀)",
-        title="Altered-superradiance pulse, N=30")
+        figure[1, 2]; xlabel=ExampleMakie.latex(raw"$\gamma_0 t$"), ylabel=ExampleMakie.latex(raw"$I/(N\gamma_0)$"),
+        title=ExampleMakie.latex(raw"Altered-superradiance pulse, $N=30$"))
     sector_axis = M.Axis(
-        figure[1, 3]; xlabel="total spin j", ylabel="sector population",
-        yscale=log10, title="Peak-state Schur populations")
+        figure[1, 3]; xlabel=ExampleMakie.latex(raw"total spin $j$"), ylabel=ExampleMakie.latex("sector population"),
+        yscale=log10, title=ExampleMakie.latex("Peak-state Schur populations"))
 
     colors = (:firebrick, :royalblue, :seagreen)
     for (curve, color) in zip(small_curves, colors)
-        label = "γ/γ₀ = $(curve.gamma / gamma0)"
+        label=ExampleMakie.latex("\$\\gamma/\\gamma_0=$(curve.gamma / gamma0)\$")
         M.lines!(small_axis, small_times, curve.exact;
                  color, linewidth=2.7, label)
         marker_indices = 1:8:length(small_times)
@@ -156,11 +156,11 @@ if makie_available()
     M.axislegend(small_axis; position=:rt, labelsize=12)
 
     M.lines!(pulse_axis, pulse.times, pulse.normalized_intensity;
-             color=:black, linewidth=2.7, label="population dynamics")
+             color=:black, linewidth=2.7, label=ExampleMakie.latex("population dynamics"))
     M.hlines!(pulse_axis, [1.0]; color=:gray50, linestyle=:dash,
-              label="independent-emitter level")
+              label=ExampleMakie.latex("independent-emitter level"))
     M.scatter!(pulse_axis, [peak_time], [peak_intensity/(N*gamma0)];
-               color=:firebrick, markersize=12, label="pulse maximum")
+               color=:firebrick, markersize=12, label=ExampleMakie.latex("pulse maximum"))
     M.axislegend(pulse_axis; position=:rt, labelsize=12)
 
     sector_spins = [

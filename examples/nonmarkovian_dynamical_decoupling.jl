@@ -567,23 +567,23 @@ if makie_available()
     for (column, result) in enumerate((cpmg, udd4))
         axis = M.Axis(
             figure[1, column];
-            xlabel="Omega t", ylabel="fidelity",
-            title="$(result.label), $(length(result.pulse_times)) pulses")
+            xlabel=ExampleMakie.latex(raw"$\Omega t$"), ylabel=ExampleMakie.latex("fidelity"),
+            title=ExampleMakie.latex("$(result.label), $(length(result.pulse_times)) pulses"))
         M.vlines!(
             axis, Omega .* result.pulse_times;
             color=(:gray45, 0.18), linewidth=0.8)
         M.lines!(
             axis, scaled_times, result.exact;
             color=:black, linewidth=3, linestyle=:dash,
-            label="full-line analytic")
+            label=ExampleMakie.latex("full-line analytic"))
         M.lines!(
             axis, scaled_times, result.positive;
             color=:firebrick, linewidth=2.5,
-            label="positive-frequency analytic")
+            label=ExampleMakie.latex("positive-frequency analytic"))
         M.lines!(
             axis, scaled_times, result.heom_fidelity;
             color=:darkorange2, linewidth=2.2, linestyle=:dash,
-            label="PI--HEOM")
+            label=ExampleMakie.latex("PI--HEOM"))
         shown = 1:4:length(times)
         M.errorbars!(
             axis, scaled_times[shown], result.hops_fidelity[shown],
@@ -592,26 +592,26 @@ if makie_available()
         M.scatter!(
             axis, scaled_times[shown], result.hops_fidelity[shown];
             color=:dodgerblue3, markersize=7,
-            label="$trajectories PI--HOPS paths")
+            label=ExampleMakie.latex("$trajectories PI--HOPS paths"))
         M.axislegend(axis; position=:lb, labelsize=12)
     end
 
     tedd_axis = M.Axis(
         figure[2, 1:2];
-        xlabel="Omega t", ylabel="stroboscopic fidelity",
-        title="Finite-bath ideal-kick TEDD at closed-cycle outputs")
+        xlabel=ExampleMakie.latex(raw"$\Omega t$"), ylabel=ExampleMakie.latex("stroboscopic fidelity"),
+        title=ExampleMakie.latex("Finite-bath ideal-kick TEDD at closed-cycle outputs"))
     M.vlines!(
         tedd_axis, Omega .* tedd.cycle_times[2:end];
         color=(:gray45, 0.20), linewidth=1)
     M.lines!(
         tedd_axis, scaled_times, uncontrolled_fidelity;
         color=:black, linewidth=2.5, linestyle=:dash,
-        label="uncontrolled full-line analytic")
+        label=ExampleMakie.latex("uncontrolled full-line analytic"))
     M.lines!(
         tedd_axis, Omega .* tedd.cycle_times,
         tedd.heom_stroboscopic;
         color=:darkorange2, linewidth=2.5,
-        label="$(comparison_cycles)-cycle TEDD, PI--HEOM")
+        label=ExampleMakie.latex("$(comparison_cycles)-cycle TEDD, PI--HEOM"))
     M.scatter!(
         tedd_axis, Omega .* tedd.cycle_times,
         tedd.heom_stroboscopic;
@@ -620,7 +620,7 @@ if makie_available()
         tedd_axis, Omega .* tedd_refined.cycle_times,
         tedd_refined.heom_stroboscopic;
         color=:seagreen4, linewidth=2.2,
-        label="$(2comparison_cycles)-cycle TEDD, PI--HEOM")
+        label=ExampleMakie.latex("$(2comparison_cycles)-cycle TEDD, PI--HEOM"))
     M.scatter!(
         tedd_axis, Omega .* tedd_refined.cycle_times,
         tedd_refined.heom_stroboscopic;
@@ -634,8 +634,8 @@ if makie_available()
         tedd_axis, Omega .* tedd.cycle_times,
         tedd.hops_stroboscopic;
         color=:dodgerblue3, markersize=8,
-        label="$(comparison_cycles)-cycle TEDD, " *
-              "$trajectories PI--HOPS paths")
+        label=ExampleMakie.latex("$(comparison_cycles)-cycle TEDD, " *
+              "$trajectories PI--HOPS paths"))
     M.ylims!(tedd_axis, 0.45, 1.02)
     M.axislegend(tedd_axis; position=:rb, labelsize=12)
     save_example_figure(figure, "nonmarkovian_dynamical_decoupling")

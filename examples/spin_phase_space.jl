@@ -1,4 +1,5 @@
 using PermutationalInvariantDynamics
+include(joinpath(@__DIR__, "utils", "makie_support.jl"))
 
 # A genuinely multi-sector PI state: a coherent state in j=N/2 and a Dicke
 # state uniformly repeated over the multiplicity copies of j=N/2-1.
@@ -39,11 +40,11 @@ peak = spin_husimi_q(
 @assert peak.values[1, 1] ≈ coherent_weight * (N + 1) / (4pi) atol=2e-13
 
 q_figure = visualize_spin_phase_space(
-    q; title="Multi-sector Husimi-Q marginal")
+    q; title=ExampleMakie.latex("Multi-sector Husimi-Q marginal"))
 w_figure = visualize_spin_phase_space(
-    w; title="Multi-sector spin-Wigner marginal")
+    w; title=ExampleMakie.latex("Multi-sector spin-Wigner marginal"))
 symmetric_wigner_figure = visualize_spin_phase_space(
-    w; sector=Partition((N, 0)), title="Symmetric-sector spin Wigner")
+    w; sector=Partition((N, 0)), title=ExampleMakie.latex("Symmetric-sector spin Wigner"))
 
 # Exercise the dependency-free writers without leaving generated repository
 # artifacts behind.

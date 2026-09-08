@@ -144,28 +144,28 @@ if makie_available()
     figure = example_figure(size=(1120, 440), fontsize=17)
     signal_axis = M.Axis(
         figure[1, 1];
-        xlabel="time", ylabel="collective excitation",
-        title="One-excitation collective emission (N=$N)")
+        xlabel=ExampleMakie.latex("time"), ylabel=ExampleMakie.latex("collective excitation"),
+        title=ExampleMakie.latex("One-excitation collective emission (\$N=$N\$)"))
     error_axis = M.Axis(
         figure[1, 2];
-        xlabel="time", ylabel="absolute error",
-        yscale=log10, title="Hard hierarchy boundary")
+        xlabel=ExampleMakie.latex("time"), ylabel=ExampleMakie.latex("absolute error"),
+        yscale=log10, title=ExampleMakie.latex("Hard hierarchy boundary"))
 
     M.lines!(
         signal_axis, times, exact_excitation;
-        color=:black, linewidth=3, label="analytic")
+        color=:black, linewidth=3, label=ExampleMakie.latex("analytic"))
     colors = (:gray45, :dodgerblue3, :darkorange2)
     for (index, depth) in pairs(depths)
         M.lines!(
             signal_axis, times, path_excitation[index];
             color=colors[index], linewidth=2,
             linestyle=depth == 0 ? :dash : :solid,
-            label="HOPS depth $depth")
+            label=ExampleMakie.latex("HOPS depth $depth"))
         M.lines!(
             error_axis, times,
             max.(abs.(path_excitation[index] .- exact_excitation),
                  eps(Float64));
-            color=colors[index], linewidth=2, label="depth $depth")
+            color=colors[index], linewidth=2, label=ExampleMakie.latex("depth $depth"))
     end
     M.axislegend(signal_axis; position=:lb)
     M.axislegend(error_axis; position=:rt)

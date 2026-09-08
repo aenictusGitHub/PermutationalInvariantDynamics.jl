@@ -122,18 +122,18 @@ if makie_available()
     figure = example_figure(size=(1320, 400), fontsize=16)
     convergence_axis = M.Axis(
         figure[1, 1];
-        xlabel="RK4 steps per period", ylabel="‖Fsteps − Fexact‖",
+        xlabel=ExampleMakie.latex("RK4 steps per period"), ylabel=ExampleMakie.latex(raw"$\|F_{\mathrm{steps}}-F_{\mathrm{exact}}\|$"),
         xscale=log2, yscale=log10,
         xticks=(collect(step_counts), string.(collect(step_counts))),
-        title="Period-map convergence")
+        title=ExampleMakie.latex("Period-map convergence"))
     spectrum_axis = M.Axis(
         figure[1, 2];
-        xlabel="Re μ", ylabel="Im μ",
-        title="Floquet multipliers (selected set is partial)")
+        xlabel=ExampleMakie.latex(raw"$\mathrm{Re}\,\mu$"), ylabel=ExampleMakie.latex(raw"$\mathrm{Im}\,\mu$"),
+        title=ExampleMakie.latex("Floquet multipliers (selected set is partial)"))
     dynamics_axis = M.Axis(
         figure[1, 3];
-        xlabel="period index", ylabel="excited fraction",
-        title="Matrix-free stroboscopic decay")
+        xlabel=ExampleMakie.latex("period index"), ylabel=ExampleMakie.latex("excited fraction"),
+        title=ExampleMakie.latex("Matrix-free stroboscopic decay"))
 
     M.lines!(
         convergence_axis, collect(step_counts),
@@ -148,13 +148,13 @@ if makie_available()
     M.lines!(
         spectrum_axis, cos.(angles), sin.(angles);
         color=:gray55, linewidth=1.5, linestyle=:dash,
-        label="unit circle")
+        label=ExampleMakie.latex("unit circle"))
     M.scatter!(
         spectrum_axis, real.(dense_values), imag.(dense_values);
-        color=(:gray45, 0.45), markersize=6, label="dense small-N oracle")
+        color=(:gray45, 0.45), markersize=6, label=ExampleMakie.latex(raw"dense small-$N$ oracle"))
     M.scatter!(
         spectrum_axis, real.(selected.values), imag.(selected.values);
-        color=:dodgerblue3, markersize=11, label="matrix-free Arnoldi")
+        color=:dodgerblue3, markersize=11, label=ExampleMakie.latex("matrix-free Arnoldi"))
     M.axislegend(spectrum_axis; position=:lb, labelsize=10)
 
     period_indices = collect(0:(length(populations) - 1))

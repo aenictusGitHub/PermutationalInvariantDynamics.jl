@@ -248,11 +248,11 @@ function _shiftinvert_candidate_diagnostics!(operator,V,Y,transformed_values)
         @. work.residual=work.image-value*work.rhs
         residual=R(norm(work.residual))
         physical=_no_jump_iterative_physical_maximum(
-            operator.plan.no_jump_iterative.basis,work.residual)
+            operator.plan.no_jump_iterative,work.residual)
         vector_scale=_no_jump_iterative_physical_maximum(
-            operator.plan.no_jump_iterative.basis,work.rhs)
+            operator.plan.no_jump_iterative,work.rhs)
         image_scale=_no_jump_iterative_physical_maximum(
-            operator.plan.no_jump_iterative.basis,work.image)
+            operator.plan.no_jump_iterative,work.image)
         scale=max(image_scale,abs(value)*vector_scale,floatmin(R))
         overlap=R(abs(dot(functional,work.rhs)))
         normalized=functional_norm>zero(R) ?
@@ -362,7 +362,7 @@ function _run_trace_deflated_shiftinvert_side(plan,work;
     R=_real_float_type(eltype(plan))
     current_atol=_shiftinvert_initial_tolerance(
         inner_initial_atol,inner_atol,R,"inner_initial_atol")
-    default_initial_rtol=min(R(1e-3),max(inner_rtol,sqrt(inner_rtol)))
+    default_initial_rtol=max(inner_rtol,min(R(1e-3),sqrt(inner_rtol)))
     current_rtol=_shiftinvert_initial_tolerance(
         inner_initial_rtol===nothing ? default_initial_rtol :
             inner_initial_rtol,inner_rtol,R,"inner_initial_rtol")

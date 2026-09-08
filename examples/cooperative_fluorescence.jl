@@ -53,23 +53,23 @@ if makie_available()
     controls = [result.gamma / Omega for result in results]
     figure = example_figure(size=(1000, 430), fontsize=17)
     spin_axis = M.Axis(
-        figure[1, 1]; xlabel="γ / Ω", ylabel="collective spin / j",
-        title="Finite-size stationary polarization, N=$N")
+        figure[1, 1]; xlabel=ExampleMakie.latex(raw"$\gamma/\Omega$"), ylabel=ExampleMakie.latex(raw"collective spin $/j$"),
+        title=ExampleMakie.latex("Finite-size stationary polarization, \$N=$N\$"))
     error_axis = M.Axis(
-        figure[1, 2]; xlabel="γ / Ω", ylabel="‖ρPI − ρexact‖₂",
-        yscale=log10, title="Exact-state validation")
+        figure[1, 2]; xlabel=ExampleMakie.latex(raw"$\gamma/\Omega$"), ylabel=ExampleMakie.latex(raw"$\|\rho_{\mathrm{PI}}-\rho_{\mathrm{exact}}\|_2$"),
+        yscale=log10, title=ExampleMakie.latex("Exact-state validation"))
 
     M.lines!(spin_axis, controls, [result.exact_Y for result in results];
-             color=:royalblue, linewidth=2.7, label="⟨Jy⟩/j exact")
+             color=:royalblue, linewidth=2.7, label=ExampleMakie.latex(raw"$\langle J_y\rangle/j$ exact"))
     M.scatter!(spin_axis, controls, [result.Y for result in results];
                color=:royalblue, marker=:circle, markersize=6,
-               label="⟨Jy⟩/j PI solve")
+               label=ExampleMakie.latex(raw"$\langle J_y\rangle/j$ PI solve"))
     M.lines!(spin_axis, controls, [result.exact_Z for result in results];
              color=:firebrick, linewidth=2.7, linestyle=:dash,
-             label="⟨Jz⟩/j exact")
+             label=ExampleMakie.latex(raw"$\langle J_z\rangle/j$ exact"))
     M.scatter!(spin_axis, controls, [result.Z for result in results];
                color=:firebrick, marker=:rect, markersize=6,
-               label="⟨Jz⟩/j PI solve")
+               label=ExampleMakie.latex(raw"$\langle J_z\rangle/j$ PI solve"))
     M.axislegend(spin_axis; position=:rc, labelsize=12)
 
     error_floor = eps(Float64)

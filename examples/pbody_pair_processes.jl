@@ -58,18 +58,18 @@ if makie_available()
     M=makie_module()
     figure=example_figure(size=(1050,430),fontsize=17)
     storage_axis=M.Axis(
-        figure[1,1];xlabel="Appendix-D representation",
-        ylabel="stored path entries",
+        figure[1,1];xlabel=ExampleMakie.latex("Appendix-D representation"),
+        ylabel=ExampleMakie.latex("stored path entries"),
         xticks=([1,2],["exact-support CSC","dense reference"]),
-        title="Prepared p-body geometry")
+        title=ExampleMakie.latex(raw"Prepared $p$-body geometry"))
     validation_axis=M.Axis(
-        figure[1,2];xlabel="validation quantity",ylabel="absolute error",
+        figure[1,2];xlabel=ExampleMakie.latex("validation quantity"),ylabel=ExampleMakie.latex("absolute error"),
         yscale=log10,
         xticks=(
             1:3,
             ["operator","action","trace"],
         ),
-        title="Backend agreement (display floor ε)")
+        title=ExampleMakie.latex(raw"Backend agreement (display floor $\epsilon$)"))
 
     M.barplot!(
         storage_axis,[1,2],

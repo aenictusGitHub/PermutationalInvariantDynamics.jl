@@ -9,6 +9,10 @@
 
 abstract type _AbstractNoJumpSectorFactorization end
 
+struct _NoJumpDiagonalSector{V} <: _AbstractNoJumpSectorFactorization
+    values::V
+end
+
 struct _NoJumpSchurSector{M,V} <: _AbstractNoJumpSectorFactorization
     triangular::M
     vectors::M
@@ -39,6 +43,8 @@ eigendecomposition route used in the no-jump-resolvent iterative algorithm; it r
 overly ill-conditioned eigenvector matrices instead of returning an
 uncertified inverse. Set `condition_limit=Inf` only to opt out of the finite
 conditioning threshold explicitly.
+Both backends specialize exactly diagonal `G` blocks to checked elementwise
+division, without basis transformations or a numerical dropping tolerance.
 
 Only fixed GKSL generators with Hermitian Hamiltonians and finite nonnegative
 jump rates are accepted. For a driven `PIModel`, pass an explicit finite
@@ -64,13 +70,15 @@ eltype(plan::NoJumpResolventPlan)=plan.Ttype
     NoJumpResolventWorkspace(plan; memory_budget=512*1024^2)
 
 Task-owned matrix scratch for [`no_jump_resolvent!`](@ref). It retains two
-matrices per Schur sector and is tied to the exact plan basis and scalar type.
+matrices per non-diagonal sector and no numerical buffers for exactly diagonal
+sectors. It is tied to the exact prepared plan, basis, and scalar type.
 """
-struct NoJumpResolventWorkspace{B,W,T}
+struct NoJumpResolventWorkspace{B,W,T,P}
     basis::B
     blocks::W
     Ttype::Type{T}
     accounted_peak_bytes::BigInt
+    plan::P
 end
 
 function _no_jump_iterative_add_scaled_matrix!(destination,source,scale)
@@ -309,6 +317,34 @@ function _no_jump_iterative_eigen_factor(block,condition_limit)
                        Vector(decomposition.values),condition_number)
 end
 
+function _no_jump_iterative_sector_factors(blocks,backend,condition_limit)
+    T=eltype(eltype(blocks));R=_real_float_type(T)
+    D=_NoJumpDiagonalSector{Vector{T}}
+    F=backend===:schur ? _NoJumpSchurSector{Matrix{T},Vector{T}} :
+        _NoJumpEigenSector{Matrix{T},Vector{T},R}
+    # A concrete small union avoids abstract-element dispatch when diagonal
+    # and general sectors coexist. Detect structure only once, at setup.
+    factors=Vector{Union{D,F}}(undef,length(blocks))
+    for (index,block) in pairs(blocks)
+        factors[index]=if isdiag(block)
+            backend===:eigen&&one(R)>condition_limit&&throw(ArgumentError(
+                "a diagonal no-jump block has eigenvector condition number " *
+                "1, above condition_limit=$condition_limit"))
+            D(Vector(diag(block)))
+        elseif backend===:schur
+            _no_jump_iterative_schur_factor(block)
+        else
+            _no_jump_iterative_eigen_factor(block,condition_limit)
+        end
+    end
+    factors
+end
+
+_no_jump_iterative_factor_condition(factor::_NoJumpEigenSector)=
+    factor.condition_number
+_no_jump_iterative_factor_condition(factor::_NoJumpDiagonalSector)=
+    one(_real_float_type(eltype(factor.values)))
+
 function _no_jump_iterative_plan_storage_estimate(basis,::Type{T}) where T
     n=BigInt(length(basis))
     largest=BigInt(maximum(length,basis.patterns;init=1))
@@ -318,7 +354,12 @@ function _no_jump_iterative_plan_storage_estimate(basis,::Type{T}) where T
 end
 
 function _no_jump_iterative_workspace_estimate(plan::NoJumpResolventPlan)
-    _performance_entries_bytes(2BigInt(length(plan.basis)),plan.Ttype)
+    entries=big(0)
+    for (index,factor) in pairs(plan.factors)
+        factor isa _NoJumpDiagonalSector&&continue
+        entries+=2BigInt(length(plan.generator_blocks[index]))
+    end
+    _performance_entries_bytes(entries,plan.Ttype)
 end
 
 function _prepare_nojump_resolvent_plan(plan::LiouvillianPlan,parameters;
@@ -366,8 +407,7 @@ function _prepare_nojump_resolvent_plan(plan::LiouvillianPlan,parameters;
     _require_performance_budget("no-jump-resolvent iterative no-jump factorization",estimate,
         memory_budget;guidance="Reduce the retained basis or increase the budget.")
     blocks,jump_channels=_no_jump_iterative_generator_blocks(plan,parameters)
-    factors=backend===:schur ? map(_no_jump_iterative_schur_factor,blocks) :
-        map(block->_no_jump_iterative_eigen_factor(block,limit),blocks)
+    factors=_no_jump_iterative_sector_factors(blocks,backend,limit)
     spectral_abscissae=R[
         maximum(real,factor.values;init=-R(Inf)) for factor in factors]
     block_scales=R[max(norm(block,Inf),floatmin(R)) for block in blocks]
@@ -377,12 +417,13 @@ function _prepare_nojump_resolvent_plan(plan::LiouvillianPlan,parameters;
         spectral_abscissae[index]<-stability_tolerances[index],
         eachindex(spectral_abscissae))
     condition_numbers=backend===:eigen ?
-        R[factor.condition_number for factor in factors] : missing
+        R[_no_jump_iterative_factor_condition(factor) for factor in factors] : missing
     metadata=(backend,jump_channels,strictly_stable,spectral_abscissae,
         stability_tolerances,condition_numbers,condition_limit=limit,
         retained_coefficients=sum(length,blocks;init=0),
         largest_schur_dimension=maximum(size.(blocks,1);init=0),
         scaling=:sum_of_sector_cubes,
+        diagonal_sectors=count(factor->factor isa _NoJumpDiagonalSector,factors),
         generator_mode=:autonomous,
         unique_steady_state=:not_applicable)
     NoJumpResolventPlan(plan.basis,blocks,factors,T,metadata)
@@ -464,15 +505,22 @@ function NoJumpResolventWorkspace(plan::NoJumpResolventPlan;
         _no_jump_iterative_workspace_estimate(plan)
     _require_performance_budget("no-jump resolvent workspace",estimate,
         memory_budget;guidance="Reduce the retained basis or increase the budget.")
-    blocks=[(zeros(plan.Ttype,size(block)),zeros(plan.Ttype,size(block)))
-            for block in plan.generator_blocks]
-    NoJumpResolventWorkspace(plan.basis,blocks,plan.Ttype,BigInt(estimate))
+    # Empty placeholders keep one concrete buffer-pair type and allocate no
+    # matrix payload for diagonal sectors, whose action never uses scratch.
+    empty_block=zeros(plan.Ttype,0,0)
+    blocks=[plan.factors[index] isa _NoJumpDiagonalSector ?
+                (empty_block,empty_block) :
+                (zeros(plan.Ttype,size(block)),zeros(plan.Ttype,size(block)))
+            for (index,block) in pairs(plan.generator_blocks)]
+    NoJumpResolventWorkspace(plan.basis,blocks,plan.Ttype,BigInt(estimate),plan)
 end
 
 isautonomous(::NoJumpResolventPlan)=true
 
 function _check_nojump_workspace(work::NoJumpResolventWorkspace,
                                  plan::NoJumpResolventPlan)
+    work.plan===plan||throw(ArgumentError(
+        "no-jump workspace belongs to a different prepared plan"))
     work.basis===plan.basis||throw(ArgumentError(
         "no-jump workspace belongs to a different PI basis"))
     work.Ttype===plan.Ttype||throw(ArgumentError(
@@ -589,7 +637,7 @@ function _no_jump_iterative_check_resolvent_output(destination,backend::Symbol)
     destination
 end
 
-function _solve_nojump_sector!(transformed,triangular,shift)
+function _solve_nojump_sector_scalar!(transformed,triangular,shift)
     n=size(triangular,1)
     @inbounds for column in n:-1:1,row in n:-1:1
         value=transformed[row,column]
@@ -609,6 +657,127 @@ function _solve_nojump_sector!(transformed,triangular,shift)
             value,denominator,:Schur)
     end
     transformed
+end
+
+# Keep the small-sector recurrence and generic scalar/strided layouts intact.
+# Larger ordinary complex Schur blocks use tiled Sylvester solves, with GEMM
+# updates only after an absolute bound rules out intermediate overflow.
+const _NO_JUMP_SYLVESTER_BLOCK_SIZE=16
+const _NO_JUMP_SYLVESTER_BLOCK_THRESHOLD=64
+
+function _no_jump_iterative_uses_blocked_sylvester(X,T)
+    eltype(X)===eltype(T)&&eltype(X) in (ComplexF32,ComplexF64)&&
+        X isa StridedMatrix&&T isa StridedMatrix&&
+        stride(X,1)==1&&stride(T,1)==1&&
+        size(T,1)>=_NO_JUMP_SYLVESTER_BLOCK_THRESHOLD
+end
+
+function _solve_nojump_sector!(X,T,shift)
+    _no_jump_iterative_uses_blocked_sylvester(X,T) ?
+        _solve_nojump_sector_blocked!(X,T,shift;
+            blocksize=_NO_JUMP_SYLVESTER_BLOCK_SIZE) :
+        _solve_nojump_sector_scalar!(X,T,shift)
+end
+
+function _solve_nojump_adjoint_sector!(X,T,shift)
+    _no_jump_iterative_uses_blocked_sylvester(X,T) ?
+        _solve_nojump_sector_blocked!(X,T,shift;
+            blocksize=_NO_JUMP_SYLVESTER_BLOCK_SIZE,adjoint_action=true) :
+        _solve_nojump_adjoint_sector_scalar!(X,T,shift)
+end
+
+@inline function _no_jump_iterative_component_bound(A,bound)
+    @inbounds for x in A
+        (abs(real(x))<=bound&&abs(imag(x))<=bound)||return false
+    end
+    true
+end
+
+function _no_jump_iterative_checked_muladd!(C,A,B)
+    k=size(A,2)
+    k==0&&return C
+    R=typeof(real(zero(eltype(C))))
+    # If each real/imaginary component of A and B is <= sqrt(M/(16k)),
+    # every k-term complex dot-product component has magnitude <= M/8.
+    # With |C_component| <= M/4, arbitrary summation prefixes remain
+    # separated from overflow (including rounding and complex-GEMM temporaries).
+    # If this sufficient bound fails, check every product and sum explicitly;
+    # do not reject a finite result just because its factors have large norms.
+    limit=sqrt(floatmax(R)/(R(16)*R(k)))
+    if _no_jump_iterative_component_bound(A,limit)&&
+            _no_jump_iterative_component_bound(B,limit)&&
+            _no_jump_iterative_component_bound(C,floatmax(R)/R(4))
+        mul!(C,A,B,one(eltype(C)),one(eltype(C)))
+        _no_jump_iterative_check_resolvent_output(C,:blocked_Schur)
+    else
+        @inbounds for j in axes(C,2),i in axes(C,1)
+            value=C[i,j]
+            for p in 1:k
+                value=_no_jump_iterative_checked_resolvent_accumulate(
+                    value,A[i,p],B[p,j],:blocked_Schur)
+            end
+            C[i,j]=value
+        end
+    end
+    C
+end
+
+# For a tile (I,J), solve
+# (shift*I-T_II)*X_IJ-X_IJ*T_JJ' = B_IJ + T_IK*X_KJ + X_IL*T_JL'
+# after tiles to its right and below are available. For the adjoint, traverse
+# from the top left and conjugate the first triangular factor instead.
+# The updates reuse the existing transformed RHS; no extra matrix is retained.
+function _solve_nojump_sector_blocked!(X,T,shift;
+        blocksize::Int=_NO_JUMP_SYLVESTER_BLOCK_SIZE,adjoint_action::Bool=false)
+    blocksize>0||throw(ArgumentError("no-jump block size must be positive"))
+    _no_jump_iterative_check_resolvent_output(X,:blocked_Schur)
+    n=size(T,1)
+    if adjoint_action
+        for jlo in 1:blocksize:n,ilo in 1:blocksize:n
+            jhi=min(n,jlo+blocksize-1);ihi=min(n,ilo+blocksize-1)
+            rows=ilo:ihi;cols=jlo:jhi
+            _no_jump_iterative_checked_muladd!(view(X,rows,cols),
+                adjoint(view(T,1:ilo-1,rows)),view(X,1:ilo-1,cols))
+            _no_jump_iterative_checked_muladd!(view(X,rows,cols),
+                view(X,rows,1:jlo-1),view(T,1:jlo-1,cols))
+            @inbounds for j in cols,i in rows
+                v=X[i,j]
+                for k in ilo:i-1
+                    v=_no_jump_iterative_checked_resolvent_accumulate(
+                        v,conj(T[k,i]),X[k,j],:blocked_adjoint)
+                end
+                for k in jlo:j-1
+                    v=_no_jump_iterative_checked_resolvent_accumulate(
+                        v,X[i,k],T[k,j],:blocked_adjoint)
+                end
+                X[i,j]=_no_jump_iterative_checked_resolvent_division(
+                    v,shift-conj(T[i,i])-T[j,j],:blocked_adjoint)
+            end
+        end
+    else
+        for jhi in n:-blocksize:1,ihi in n:-blocksize:1
+            jlo=max(1,jhi-blocksize+1);ilo=max(1,ihi-blocksize+1)
+            rows=ilo:ihi;cols=jlo:jhi
+            _no_jump_iterative_checked_muladd!(view(X,rows,cols),
+                view(T,rows,ihi+1:n),view(X,ihi+1:n,cols))
+            _no_jump_iterative_checked_muladd!(view(X,rows,cols),
+                view(X,rows,jhi+1:n),adjoint(view(T,cols,jhi+1:n)))
+            @inbounds for j in jhi:-1:jlo,i in ihi:-1:ilo
+                v=X[i,j]
+                for k in i+1:ihi
+                    v=_no_jump_iterative_checked_resolvent_accumulate(
+                        v,T[i,k],X[k,j],:blocked_Schur)
+                end
+                for k in j+1:jhi
+                    v=_no_jump_iterative_checked_resolvent_accumulate(
+                        v,X[i,k],conj(T[j,k]),:blocked_Schur)
+                end
+                X[i,j]=_no_jump_iterative_checked_resolvent_division(
+                    v,shift-T[i,i]-conj(T[j,j]),:blocked_Schur)
+            end
+        end
+    end
+    X
 end
 
 function _apply_nojump_sector!(destination,source,
@@ -635,7 +804,17 @@ function _apply_nojump_sector!(destination,source,
     _no_jump_iterative_check_resolvent_output(destination,:eigen)
 end
 
-function _solve_nojump_adjoint_sector!(transformed,triangular,shift)
+function _apply_nojump_sector!(destination,source,
+        factor::_NoJumpDiagonalSector,shift,left,right)
+    @inbounds for column in axes(source,2),row in axes(source,1)
+        denominator=shift-factor.values[row]-conj(factor.values[column])
+        destination[row,column]=_no_jump_iterative_checked_resolvent_division(
+            source[row,column],denominator,:diagonal)
+    end
+    destination
+end
+
+function _solve_nojump_adjoint_sector_scalar!(transformed,triangular,shift)
     n=size(triangular,1)
     @inbounds for column in 1:n,row in 1:n
         value=transformed[row,column]
@@ -681,6 +860,16 @@ function _apply_nojump_adjoint_sector!(destination,source,
     mul!(left,adjoint(factor.inverse_vectors),right)
     mul!(destination,left,factor.inverse_vectors)
     _no_jump_iterative_check_resolvent_output(destination,:adjoint_eigen)
+end
+
+function _apply_nojump_adjoint_sector!(destination,source,
+        factor::_NoJumpDiagonalSector,shift,left,right)
+    @inbounds for column in axes(source,2),row in axes(source,1)
+        denominator=shift-conj(factor.values[row])-factor.values[column]
+        destination[row,column]=_no_jump_iterative_checked_resolvent_division(
+            source[row,column],denominator,:adjoint_diagonal)
+    end
+    destination
 end
 
 function _no_jump_resolvent_complex!(destination::AbstractVector,
@@ -1389,18 +1578,42 @@ function _apply_no_jump_iterative_shifted_deflated!(destination,plan::NoJumpIter
     destination
 end
 
-function _no_jump_iterative_physical_maximum(basis,data)
+function _no_jump_iterative_physical_maximum(basis,data,tracevec=nothing)
     R=_real_float_type(eltype(data));maximum_value=zero(R)
     for (sector,partition) in pairs(basis.sectors)
         range=basis.offsets[sector]:basis.offsets[sector+1]-1
+        # A prepared trace functional already owns sqrt(f^nu), at every
+        # sector diagonal. The basis-only diagnostic computes it once per
+        # sector, not once per coefficient. Keep scalar division and the
+        # exact fused fallback unchanged, including underflow checks.
+        scale=if tracevec===nothing
+            try
+                _checked_sqrt_exact_integer(R,symmetric_group_dimension(partition);
+                    context="square root of the sector multiplicity for $partition")
+            catch error
+                error isa ArgumentError||rethrow()
+                nothing
+            end
+        else
+            real(tracevec[first(range)])
+        end
         @inbounds for coordinate in range
-            physical=_divide_by_schur_multiplicity_scale(
-                data[coordinate],R,partition)
+            value=data[coordinate]
+            physical=if scale===nothing
+                _divide_by_schur_multiplicity_scale(value,R,partition)
+            else
+                candidate=value/scale
+                _ordinary_scaled_value_safe(candidate,value) ? candidate :
+                    _divide_by_schur_multiplicity_scale(value,R,partition)
+            end
             maximum_value=max(maximum_value,abs(physical))
         end
     end
     maximum_value
 end
+
+_no_jump_iterative_physical_maximum(plan::NoJumpIterativePlan,data)=
+    _no_jump_iterative_physical_maximum(plan.basis,data,plan.tracevec)
 
 function _no_jump_iterative_reset_linear_workspace!(work::NoJumpIterativeWorkspace)
     fill!(work.transformed_solution,zero(eltype(work.transformed_solution)))
@@ -1522,7 +1735,7 @@ function no_jump_iterative_resolvent!(destination::AbstractVector,plan::NoJumpIt
     @. work.residual=work.residual-work.rhs
     residual=norm(work.residual)
     residual_inf=norm(work.residual,Inf)
-    physical_residual_inf=_no_jump_iterative_physical_maximum(plan.basis,work.residual)
+    physical_residual_inf=_no_jump_iterative_physical_maximum(plan,work.residual)
     image_scale=zero(_real_float_type(plan.Ttype))
     @inbounds for index in eachindex(work.residual,work.rhs)
         image_scale=max(image_scale,abs(work.residual[index]+work.rhs[index]))
@@ -1604,7 +1817,7 @@ function _no_jump_iterative_stationary_diagnostics(plan,state,work,atol,rtol)
         work.residual,plan,state.data,work.liouvillian)
     residual=norm(work.residual)
     residual_inf=norm(work.residual,Inf)
-    physical_residual_inf=_no_jump_iterative_physical_maximum(plan.basis,work.residual)
+    physical_residual_inf=_no_jump_iterative_physical_maximum(plan,work.residual)
     trace_error=abs(dot(plan.tracevec,state.data)-one(plan.Ttype))
     diagnostics=state_diagnostics(state;atol,rtol)
     (;residual,residual_inf,physical_residual_inf,trace_error,
@@ -1658,6 +1871,36 @@ function _no_jump_iterative_stationary_linear_tolerances(plan::NoJumpIterativePl
       residual_target=target,inner_atol,inner_rtol)
 end
 
+function _no_jump_iterative_auto_stationary_deflation!(work,plan)
+    # For e=I/D, a=<trace|R_0^S|e>, choose delta=1/(2|a|).
+    # Then |delta*a|=1/2 and |1-delta*a| >= 1/2. This avoids
+    # the Sherman--Morrison pole without a parameter search, a new solve,
+    # or a change to L. The usual singularity/physical checks still run.
+    # Invalidate before writing scratch, including on a failed preparation.
+    work.cache_valid=false
+    _no_jump_resolvent_complex!(work.identity_resolvent,plan.no_jump,
+        plan.deflation_vector,zero(plan.Ttype),work.no_jump)
+    overlap=dot(plan.tracevec,work.identity_resolvent)
+    magnitude=abs(overlap)
+    isfinite(magnitude)&&magnitude>zero(magnitude)||throw(ArgumentError(
+        "automatic stationary deflation requires a finite nonzero " *
+        "trace of the identity resolvent; use wider precision or an " *
+        "explicit deflation"))
+    R=_real_float_type(plan.Ttype)
+    delta=R(0.5)/magnitude
+    isfinite(delta)&&delta>zero(R)||throw(ArgumentError(
+        "automatic stationary deflation is not representable in the " *
+        "prepared precision; use a wider scalar type or explicit deflation"))
+    # Retain exactly the same resolvent needed by the next preconditioner
+    # preparation. The cached numeric value is still checked there.
+    work.denominator=one(plan.Ttype)-delta*overlap
+    work.cached_shift=zero(plan.Ttype)
+    work.cached_deflation=delta
+    work.cached_adjoint_action=false
+    work.cache_valid=true
+    delta
+end
+
 """
     no_jump_iterative_steady_state(source; method=:gmres, ...)
 
@@ -1679,15 +1922,30 @@ requested state tolerance and the norm of the physical trace functional. This
 prevents a small coefficient-space absolute residual from being amplified
 into an unacceptable trace error at larger `N`; the solution is not normalized
 or otherwise repaired after the solve.
+
+For GMRES, `deflation=:auto` chooses a positive rate from the trace of the
+zero-shift identity resolvent, targeting a Sherman--Morrison correction of
+magnitude one half. This avoids a singular rank-one preconditioner without
+changing the Liouvillian or relaxing tolerances. Numeric `deflation` values
+(including the default `1`) are never changed. With `return_info=true`,
+`deflation` and `deflation_selection` report the chosen rate and policy.
+The automatic option is specific to the zero-shift GMRES stationary solve;
+it is not used by `method=:fixed_point` or the spectral solvers.
 """
 function no_jump_iterative_steady_state(plan::NoJumpIterativePlan;method::Symbol=:gmres,
         workspace=nothing,krylovdim::Integer=30,recycle_dim::Integer=8,
-        deflation::Real=1,maxiter::Integer=500,maxrestarts::Integer=20,
+        deflation::Union{Real,Symbol}=1,maxiter::Integer=500,maxrestarts::Integer=20,
         atol::Real=1e-10,rtol::Real=1e-8,return_info::Bool=false,
         memory_budget=_DEFAULT_HIGHLEVEL_MEMORY_BUDGET,
         rng=Random.default_rng())
     method in (:gmres,:fixed_point)||throw(ArgumentError(
         "no-jump-resolvent iterative steady-state method must be :gmres or :fixed_point"))
+    if deflation isa Symbol
+        deflation===:auto||throw(ArgumentError(
+            "deflation must be a positive real number or :auto"))
+        method===:gmres||throw(ArgumentError(
+            "deflation=:auto is only used by method=:gmres"))
+    end
     R=_real_float_type(plan.Ttype)
     atolT,rtolT=_no_jump_iterative_check_tolerances(atol,rtol,R)
     # The fixed-point route uses outer Arnoldi but not the embedded GMRES
@@ -1704,7 +1962,9 @@ function no_jump_iterative_steady_state(plan::NoJumpIterativePlan;method::Symbol
                 _no_jump_iterative_stationary_output_bytes(plan),
             memory_budget;guidance=
                 "Reduce Krylov capacity or increase the budget.")
-        delta=_no_jump_iterative_solver_scalar(plan,deflation,"no-jump-resolvent iterative deflation")
+        delta=deflation===:auto ?
+            _no_jump_iterative_auto_stationary_deflation!(work,plan) :
+            _no_jump_iterative_solver_scalar(plan,deflation,"no-jump-resolvent iterative deflation")
         iszero(delta)&&throw(ArgumentError(
             "steady-state trace deflation must be positive"))
         @. work.rhs=-delta*plan.deflation_vector
@@ -1723,6 +1983,8 @@ function no_jump_iterative_steady_state(plan::NoJumpIterativePlan;method::Symbol
         # later solve with the same workspace cannot mutate an older result.
         detached_linear=merge(linear,(solution=state.data,))
         info=(state,method=:no_jump_iterative_gmres,converged=true,
+              deflation=delta,
+              deflation_selection=deflation===:auto ? :auto : :explicit,
               residual=stationary.residual,
               residual_inf=stationary.residual_inf,
               physical_residual_inf=stationary.physical_residual_inf,
@@ -1920,10 +2182,10 @@ function no_jump_iterative_liouvillian_spectrum(plan::NoJumpIterativePlan;nev::I
             work.image,plan,vector,work.liouvillian)
         @. work.residual=work.image-value*vector
         residual=norm(work.residual)
-        physical=_no_jump_iterative_physical_maximum(plan.basis,work.residual)
+        physical=_no_jump_iterative_physical_maximum(plan,work.residual)
         trace_error=abs(dot(plan.tracevec,vector))
-        scale=max(_no_jump_iterative_physical_maximum(plan.basis,work.image),
-                  abs(value)*_no_jump_iterative_physical_maximum(plan.basis,vector),
+        scale=max(_no_jump_iterative_physical_maximum(plan,work.image),
+                  abs(value)*_no_jump_iterative_physical_maximum(plan,vector),
                   floatmin(R))
         tolerance=atolT+rtolT*scale
         # The deflated stationary direction is not traceless and also fails

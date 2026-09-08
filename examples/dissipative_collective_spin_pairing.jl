@@ -162,21 +162,21 @@ if makie_available()
     controls = [result.control for result in results]
     figure = example_figure(size=(1350, 430), fontsize=17)
     gap_axis = M.Axis(
-        figure[1, 1]; ylabel="Liouvillian gap",
-        title="Finite-N relaxation")
+        figure[1, 1]; ylabel=ExampleMakie.latex("Liouvillian gap"),
+        title=ExampleMakie.latex(raw"Finite-$N$ relaxation"))
     z_axis = M.Axis(
-        figure[1, 2]; xlabel="(γᵢ + γc) / |V|", ylabel="Z",
-        title="Longitudinal polarization")
+        figure[1, 2]; xlabel=ExampleMakie.latex(raw"$(\gamma_i+\gamma_c)/|V|$"), ylabel=ExampleMakie.latex(raw"$Z$"),
+        title=ExampleMakie.latex("Longitudinal polarization"))
     order_axis = M.Axis(
-        figure[1, 3]; ylabel="C⊥",
-        title="Parity-even transverse order")
+        figure[1, 3]; ylabel=ExampleMakie.latex(raw"$C_\perp$"),
+        title=ExampleMakie.latex("Parity-even transverse order"))
 
     M.lines!(gap_axis, controls, [result.gap for result in results];
              color=:black, linewidth=2.5)
     M.scatter!(gap_axis, controls, [result.gap for result in results];
-               color=:black, markersize=5, label="exact PI, N=$plot_N")
+               color=:black, markersize=5, label=ExampleMakie.latex("exact PI, \$N=$plot_N\$"))
     M.vlines!(gap_axis, [2.0]; color=:gray50, linestyle=:dash,
-              label="mean-field transition")
+              label=ExampleMakie.latex("mean-field transition"))
     M.axislegend(gap_axis; position=:lt, labelsize=12)
 
     predictions = (

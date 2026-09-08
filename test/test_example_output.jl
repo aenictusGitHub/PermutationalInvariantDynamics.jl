@@ -9,6 +9,17 @@ end
     support = ExampleOutputTestSupport.ExampleMakie
     @test !support.makie_available()
     @test !isdefined(support, :CairoMakie)
+    @test !isdefined(support, :LaTeXStrings)
+    @test support.latex("N=4") == "N=4"
+    @test support.latex(raw"$\kappa t$") == raw"$\kappa t$"
+    @test support.latex("ρ₁²") == "ρ₁²" # Preserve dependency-free SVG text.
+    @test support.latex("ρ₁²"; renderer=:svg) == "ρ₁²"
+    @test_throws ArgumentError support.latex("ρ₁²"; renderer=:unknown)
+    @test support._latex_unicode_scripts("ρ₁²") == "ρ_{1}^{2}"
+    @test support._latex_unicode_scripts("10⁻¹², J₊J₋, ω₀") == "10^{-12}, J_{+}J_{-}, ω_{0}"
+    @test support._latex_unicode_scripts(raw"$\rho_1^2$") == raw"$\rho_1^2$"
+    @test length(support._subscript_pairs) == length(support._subscript_characters)
+    @test length(support._superscript_pairs) == length(support._superscript_characters)
     mktempdir() do directory
         setprecision(BigFloat, 192) do
             values = [BigFloat("1.000000000000000000000000000000000000001"), BigFloat(0)]
